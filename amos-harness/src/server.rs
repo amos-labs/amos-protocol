@@ -21,7 +21,7 @@ use amos_core::{AppConfig, Result};
 use axum::{
     http::{
         header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE},
-        Method,
+        HeaderValue, Method,
     },
     Router,
 };
@@ -263,20 +263,51 @@ pub async fn create_server(
         api_routes = api_routes.nest(&path, router);
     }
 
-    // Configure CORS (using permissive settings for now)
-    let cors = CorsLayer::new()
-        .allow_origin(tower_http::cors::Any)
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::PATCH,
-            Method::DELETE,
-            Method::OPTIONS,
-        ])
-        .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
-        .allow_credentials(false)
-        .max_age(Duration::from_secs(3600));
+    // Configure CORS — restrict origins in production, allow any in dev
+    let platform_url = std::env::var("AMOS__PLATFORM__URL")
+        .unwrap_or_else(|_| "https://app.amoslabs.com".to_string());
+    let env = std::env::var("AMOS__ENV").unwrap_or_else(|_| "development".to_string());
+
+    let cors = if env == "production" {
+        // Production: only allow the platform origin and localhost
+        let origins: Vec<HeaderValue> = [
+            platform_url.as_str(),
+            "https://app.amoslabs.com",
+            "https://amoslabs.com",
+        ]
+        .iter()
+        .filter_map(|o| o.parse::<HeaderValue>().ok())
+        .collect();
+
+        CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+                Method::OPTIONS,
+            ])
+            .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
+            .allow_credentials(true)
+            .max_age(Duration::from_secs(3600))
+    } else {
+        // Development: permissive for local dev
+        CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+                Method::OPTIONS,
+            ])
+            .allow_headers([AUTHORIZATION, ACCEPT, CONTENT_TYPE])
+            .allow_credentials(false)
+            .max_age(Duration::from_secs(3600))
+    };
 
     // Configure tracing
     let trace_layer = TraceLayer::new_for_http()

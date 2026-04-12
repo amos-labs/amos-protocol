@@ -169,18 +169,22 @@ impl Tool for ListAgentsTool {
     async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
         let status_filter = params.get("status_filter").and_then(|v| v.as_str());
 
-        let query = if let Some(status) = status_filter {
-            format!(
+        let rows = if let Some(status) = status_filter {
+            sqlx::query(
                 "SELECT id, name, display_name, role, model, capabilities, status, trust_level, created_at \
-                 FROM openclaw_agents WHERE status = '{}' ORDER BY created_at DESC",
-                status.replace('\'', "''")
+                 FROM openclaw_agents WHERE status = $1 ORDER BY created_at DESC",
             )
+            .bind(status)
+            .fetch_all(&self.db_pool)
+            .await
         } else {
-            "SELECT id, name, display_name, role, model, capabilities, status, trust_level, created_at \
-             FROM openclaw_agents ORDER BY created_at DESC".to_string()
+            sqlx::query(
+                "SELECT id, name, display_name, role, model, capabilities, status, trust_level, created_at \
+                 FROM openclaw_agents ORDER BY created_at DESC",
+            )
+            .fetch_all(&self.db_pool)
+            .await
         };
-
-        let rows = sqlx::query(&query).fetch_all(&self.db_pool).await;
 
         match rows {
             Ok(rows) => {
