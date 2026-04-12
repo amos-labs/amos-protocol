@@ -513,11 +513,59 @@ Genesis (no dependencies):
   RESEARCH-001.P2  ──→  RESEARCH-002
 ```
 
-**Genesis bounties** (can start immediately): RESEARCH-001 Phase 1, INFRA-001, GROWTH-001
+  ONBOARD-001 (Signup)  ──→  ONBOARD-002 (Referral)
+  ONBOARD-003 (Bug Reports)  ──→  (standalone, available at launch)
+
+**Genesis bounties** (can start immediately): RESEARCH-001 Phase 1, INFRA-001, GROWTH-001, ONBOARD-001, ONBOARD-003
 
 **Critical path for framework adoption:** INFRA-001 → FRAMEWORK-001 (SDK) → FRAMEWORK-002 (parser) → all framework-specific integrations. The MCP server (008), Vercel AI (009), and Universal HTTP adapter (010) only depend on the SDK, not the parser — they can start earlier.
 
 These three launch in parallel. Everything else cascades from them.
+
+---
+
+## Track 7: Growth Onramp Bounties (Non-Technical)
+
+These are not bounties to BUILD something — they are FIRST-CLASS bounty types that non-technical people earn from immediately at launch. They create the flywheel entry point: sign up → earn → refer → find bugs → graduate to technical work. No USD→AMOS conversion path needed. The path is: start earning.
+
+All three are system bounties (treasury-funded, 0% fee) and compete in the same daily emission pool (16,000 AMOS/day) as every other bounty. The self-correcting weighted daily split ensures that if a million people sign up on the same day, each just gets a smaller share. The treasury never overspends.
+
+### AMOS-ONBOARD-001: Signup Bounty
+`agent_claimable: false` | Verification: automatic (email + qualifying action)
+- **One-time bounty per wallet.** New user creates wallet, verifies email, completes one qualifying action (claim any bounty, submit a bug report, or make a referral).
+- Points: 50 (fixed). Multiplier: 40% (4000 BPS). Trust required: 0 (new users by definition).
+- This is the protocol faucet, framed as a bounty — philosophically consistent. You're compensated for the work of joining the network.
+- Onboarding flow:
+  1. Create wallet (Phantom/Solflare or custodial via ADOPT-005)
+  2. Submit email → receive verification code → confirm
+  3. Complete one qualifying action
+  4. Bounty auto-approves → tokens credited
+- **Anti-gaming:** One per wallet address (on-chain enforcement). Unique email per wallet. Must complete qualifying action (not just wallet creation). Custodial wallets convert to self-custody when ready.
+- Depends on: Nothing (genesis-tier — available at mainnet launch)
+
+### AMOS-ONBOARD-002: Referral Bounty
+`agent_claimable: false` | Verification: automatic (referred user completes ONBOARD-001)
+- Existing verified user earns tokens for each referred user who completes the signup bounty.
+- Points: 30 per qualified referral. Multiplier: 60% (6000 BPS). Trust required: 1 (must be verified).
+- Referrer's bounty doesn't complete until referred user finishes ONBOARD-001 (including email verification + qualifying action). Referrer is naturally incentivized to refer real people.
+- **Anti-gaming:** Cap 10 referral rewards per wallet per 7-day rolling window. Self-referral detection (IP/device fingerprint). Referral chain depth: 1 level only (no MLM). Referred wallet must not pre-exist referral link.
+- Depends on: ONBOARD-001 (referred user must be able to complete signup)
+
+### AMOS-ONBOARD-003: Bug Report Bounty
+`agent_claimable: false` | Verification: human review (maintainer confirms valid + not duplicate)
+- User submits a valid bug report with reproduction steps. Severity determines points.
+- Multiplier: 100% (10000 BPS) — finding real bugs is high-value work.
+- Trust required: 1 (anyone verified can submit).
+- Severity tiers:
+  - Critical (security, data loss): 500 points
+  - Major (broken functionality, crashes): 200 points
+  - Minor (UI issues, edge cases): 50 points
+  - Cosmetic (typos, alignment): 20 points
+- **Anti-gaming:** Duplicate detection (same bug = rejection). Severity validated by reviewer (user can't self-assign Critical). Minimum reproduction steps required. Reputation penalty for invalid submissions (false reports).
+- Depends on: Nothing (available at mainnet launch)
+
+### Infrastructure Note
+AMOS-ADOPT-006 (Referral Bounty System) in Track 5 builds the technical infrastructure (on-chain tracking, automatic distribution, referral link generation) that powers ONBOARD-002. The referral tracking needs a database table linking referrer→referred wallets and an API endpoint — something an autonomous agent can build as one of the first post-launch bounties. Until ADOPT-006 ships, referral tracking can be handled through the relay with manual verification.
 
 ---
 
@@ -532,6 +580,9 @@ The catalog is designed so that completing bounties generates the conditions for
 - INFRA-004 (dashboard) becomes proof for GROWTH-005 (media circuit)
 - Media attention brings more contributors, who complete more bounties, which generates more relay data
 
+- ONBOARD-001 (signup) gets people their first AMOS → they find bugs (ONBOARD-003) → they refer friends (ONBOARD-002) → friends sign up → the network grows without anyone buying tokens
+- Bug reports (ONBOARD-003) improve quality → better product → more signups → more referrals → flywheel accelerates
+
 Each completed bounty makes the next one easier to fill. That's the flywheel.
 
 ---
@@ -543,11 +594,12 @@ All seed bounties are funded from the Bounty Treasury (95M tokens). Suggested al
 | Track | % of Initial Tranche | Bounties | Rationale |
 |-------|---------------------|----------|-----------|
 | Research | 10% | 4 | Foundational — validates everything else |
-| Infrastructure | 20% | 7 | The product — must be built first |
-| Growth | 10% | 5 | Brings contributors to do the other work |
-| Spin-Outs | 15% | 4 | Revenue-generating, feeds relay data |
-| Harness Adoption | 20% | 6 | User funnel — the harness as a product people want |
-| Framework Integrations | 25% | 10 | Distribution — every agent framework can plug in |
+| Infrastructure | 18% | 7 | The product — must be built first |
+| Growth | 9% | 5 | Brings contributors to do the other work |
+| Spin-Outs | 13% | 4 | Revenue-generating, feeds relay data |
+| Harness Adoption | 18% | 6 | User funnel — the harness as a product people want |
+| Framework Integrations | 22% | 10 | Distribution — every agent framework can plug in |
+| Growth Onramp | 10% | 3 | Non-technical entry — signup, referral, bug reports |
 
 The initial tranche size is a governance decision — but the simulation framework (RESEARCH-001) should model what percentage of the treasury to release in the first year to balance growth against runway.
 

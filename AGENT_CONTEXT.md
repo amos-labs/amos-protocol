@@ -217,6 +217,7 @@ reviewer_reward: 5%             # Of bounty tokens go to human reviewer
 Different work types earn at different rates:
 ```yaml
 multipliers:
+  # === Technical Work ===
   infrastructure: 130%    # Highest — core platform work
   bug_fix: 120%           # Bonus for fixing
   testing_qa: 110%        # Bonus for quality assurance
@@ -224,7 +225,72 @@ multipliers:
   design: 100%            # Baseline
   content_marketing: 90%  # Slightly below baseline
   documentation: 80%      # Important but lower multiplier
-  support: 70%            # Lowest multiplier
+  support: 70%            # Lowest technical multiplier
+
+  # === Growth & Onboarding (non-technical onramp) ===
+  bug_report: 100%        # User-submitted valid bug report (baseline — high value)
+  referral: 60%           # Referred user completes onboarding verification
+  signup: 40%             # One-time: new user completes onboarding verification
+```
+
+### Growth Bounty Details
+
+These three categories create a non-technical onramp into the AMOS economy.
+The path is: sign up → earn your first tokens → refer others → find bugs → graduate to technical work.
+No USD→AMOS conversion needed. Everyone starts by earning.
+
+```yaml
+growth_bounties:
+
+  bug_report:
+    type: system          # Treasury-funded, 0% fee
+    multiplier_bps: 10000 # 100% — finding real bugs is high-value work
+    trust_required: 1     # Anyone can submit
+    verification: human_review  # Requires maintainer confirmation (valid + not duplicate)
+    one_time: false       # Ongoing — submit as many valid bugs as you find
+    severity_points:
+      critical: 500       # Security vulnerabilities, data loss
+      major: 200          # Broken functionality, crashes
+      minor: 50           # UI issues, edge cases
+      cosmetic: 20        # Typos, alignment, minor polish
+    anti_gaming:
+      - Duplicate detection (same bug = rejection, no points)
+      - Severity validated by reviewer (user can't self-assign Critical)
+      - Minimum reproduction steps required in submission proof
+      - Reputation penalty for invalid submissions (false bug reports)
+
+  referral:
+    type: system          # Treasury-funded, 0% fee
+    multiplier_bps: 6000  # 60% — growth work, lower than technical
+    trust_required: 1     # Must be a verified user to refer
+    verification: automatic  # Triggers when referred user completes signup bounty
+    one_time: false       # Ongoing — refer as many people as you want (with caps)
+    points_per_referral: 30
+    anti_gaming:
+      - Cap: 10 referral rewards per wallet per 7-day rolling window
+      - Referred user MUST complete signup bounty (email verification + first action)
+      - Self-referral detection (same IP/device fingerprint within window = flagged)
+      - Referral chain depth: 1 level only (no MLM pyramids)
+      - Referred wallet must not have existed before referral link creation
+
+  signup:
+    type: system          # Treasury-funded, 0% fee
+    multiplier_bps: 4000  # 40% — lowest multiplier, one-time token grant
+    trust_required: 0     # New users by definition
+    verification: automatic  # Email verification + first action completion
+    one_time: true        # Strictly one per wallet, ever
+    points: 50            # Fixed — everyone gets the same signup bounty
+    onboarding_flow:
+      1: Create wallet (Phantom/Solflare or custodial)
+      2: Submit email for verification
+      3: Receive verification code, confirm
+      4: Complete one qualifying action (claim a bounty, submit a bug report, or make a referral)
+      5: Signup bounty auto-approves, tokens credited
+    anti_gaming:
+      - One signup bounty per wallet address, enforced on-chain
+      - Email verification required (unique email per wallet)
+      - Must complete qualifying action (not just wallet creation)
+      - Custodial wallets convert to self-custody when user is ready
 ```
 
 ### Emission Schedule
@@ -233,6 +299,91 @@ initial_daily_emission: 16,000 AMOS/day  # From treasury
 halving_interval: 365 days               # Annual halving
 minimum_daily_emission: 100 AMOS/day     # Floor
 max_halving_epochs: 10                   # Prevents underflow
+```
+
+### Emission Pool Separation
+Daily emission is split into two pools to prevent growth floods from diluting technical work.
+The growth cap follows a **bell curve** (implemented as a 4-phase step function): low at launch, peaks during growth phase, then tapers as the network matures.
+
+```yaml
+pool_separation:
+  # Growth cap changes over time (bell curve approximation):
+  phase_1:  # Month 0-6 — Launch, infrastructure focus
+    growth_cap_bps: 1000     # 10% growth, 90% technical
+  phase_2:  # Month 6-24 — Peak growth incentive
+    growth_cap_bps: 2000     # 20% growth, 80% technical (maximum)
+  phase_3:  # Month 24-36 — Tapering
+    growth_cap_bps: 1000     # 10% growth, 90% technical
+  phase_4:  # Month 36+ — Mature, permanent floor
+    growth_cap_bps: 500      # 5% growth, 95% technical
+
+  pool_categories:
+    technical: [infrastructure, bug_fix, testing_qa, feature, design, content_marketing, documentation, support, verification]
+    growth: [signup, referral, bug_report]
+
+  # On normal days: growth pool gets its natural weighted share (may be below cap)
+  # On viral days: growth pool capped at phase limit, technical workers protected
+  # Unused growth allocation rolls into technical pool
+  # Without this: 1M signups would reduce infrastructure rewards by 99.99%
+  # Phase boundaries are governance-updatable (before registry freeze)
+```
+
+### Claim Mechanics
+```yaml
+claim_timeout:
+  default_hours: 72           # 3 days to complete after claiming
+  min_hours: 1                # Bounty poster can set shorter windows
+  max_hours: 720              # 30 days max
+  release: permissionless     # Anyone can release an expired claim
+  penalty: none               # Timeout ≠ rejection — no reputation hit
+
+concurrent_claim_limits:      # Maximum active (uncompleted) claims per wallet
+  trust_level_1: 3
+  trust_level_2: 5
+  trust_level_3: 8
+  trust_level_4: 12
+  trust_level_5: 20
+```
+
+### Dispute Mechanism
+```yaml
+dispute_window:
+  hours: 48                   # Worker has 48h after rejection to file dispute
+  stake_bps: 500              # 5% of bounty value staked to dispute (anti-frivolous)
+  resolution_timeout_hours: 168  # 7 days max for resolution
+  default_on_timeout: upheld  # Worker-favorable — ignoring a dispute costs you
+
+dispute_outcomes:
+  upheld:  # Worker wins
+    - Bounty pays out to worker
+    - Dispute stake returned to worker
+    - Reviewer reputation penalty
+  denied:  # Reviewer wins
+    - Bounty returns to board
+    - Dispute stake burned
+    - Worker reputation unaffected (filing a dispute is not penalized)
+```
+
+### Anti-Gaming Measures (Relay-Level)
+```yaml
+# These are enforced at the relay level, not on-chain.
+# Can be adjusted post-launch without program upgrades.
+
+false_submission_penalty:
+  reputation_hit_bps: 500       # 5% reputation penalty per invalid submission
+  applies_to: [bug_report, bounty_submission]
+  # Prevents spam: submitting 1000 garbage bug reports hoping some stick
+
+self_dealing_prevention:
+  cooldown_hours: 24            # Poster cannot claim their own bounty for 24h
+  applies_to: commercial        # Only commercial bounties (system bounties are treasury-posted)
+  # Prevents wash trading: posting and completing your own bounty to manipulate π
+
+verification_contribution_type:
+  multiplier_bps: 11000         # 110% — same as testing_qa
+  pool_category: technical      # Reviewers are technical work
+  trust_required: 3             # Must have track record to review others' work
+  # Incentivizes the review layer — without this, the verification queue stalls
 ```
 
 ### Staking Requirements
@@ -428,12 +579,39 @@ core_sdks:
 stage: Pre-mainnet (April 2026)
 status: Foundation built, mainnet launch imminent
 active_bounties: See docs/SEED_BOUNTY_CATALOG.md
-total_seed_bounties: 36
-tracks: 6 (Research, Infrastructure, Growth, Spin-Outs, Adoption, Framework Integration)
+total_seed_bounties: 39
+tracks: 7 (Research, Infrastructure, Growth, Spin-Outs, Adoption, Framework Integration, Growth Onramp)
 genesis_bounties:
   - AMOS-RESEARCH-001 (Token Economics Optimization)
   - AMOS-INFRA-001 (Relay MVP)
   - AMOS-GROWTH-001 (Social Media Content Engine)
+```
+
+---
+
+---
+
+## 14. Contribution Type Registry
+
+Contribution multipliers are NOT hardcoded constants. They live in a governance-updatable PDA (ContributionTypeRegistry) with a graduated freeze mechanism.
+
+```yaml
+registry:
+  storage: On-chain PDA (governance-updatable)
+  max_types: 32
+  initial_types: 11 (8 technical + 3 growth)
+
+  freeze_mechanism:
+    per_entry: Governance can freeze individual entries (one-way, irreversible)
+    full_registry: Governance can freeze entire registry (one-way, irreversible)
+    auto_freeze_deadline: 3 years from launch (permissionless — anyone can trigger)
+    extensions: Max 2 governance-voted extensions of exactly 1 year each
+    absolute_maximum: 5 years from launch — registry locks permanently, no exceptions
+
+  # Year 0-3: Full flexibility — adjust multipliers based on real data
+  # Year 3: Auto-freeze unless governance votes extension
+  # Year 5: Absolute maximum — no more extensions possible
+  # There is NO unfreeze instruction. Immutability is irreversible.
 ```
 
 ---
