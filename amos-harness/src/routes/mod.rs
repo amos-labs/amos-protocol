@@ -18,16 +18,24 @@ pub mod settings;
 pub mod sites;
 pub mod uploads;
 
-use crate::middleware;
+use crate::middleware::{self, RateLimiter};
 use crate::state::AppState;
 use axum::{extract::DefaultBodyLimit, extract::State, routing::get, Json, Router};
 use std::sync::Arc;
 
 /// Build all application routes
 pub fn build_routes(state: Arc<AppState>) -> Router {
+    // ── Rate limiters ──────────────────────────────────────────────
+    // Chat endpoint: tight limit (LLM calls are expensive)
+    let chat_limiter = RateLimiter::new(20, 2.0); // 20 burst, 2 req/s sustained
+    // General API: moderate limit
+    let api_limiter = RateLimiter::new(100, 20.0); // 100 burst, 20 req/s sustained
+    // Public endpoints: generous but bounded
+    let public_limiter = RateLimiter::new(200, 40.0); // 200 burst, 40 req/s sustained
+
     // ── Public routes (no auth required) ────────────────────────────
     let public_routes = Router::new()
-        // Health check
+        // Health check (no rate limit — used by load balancers)
         .route("/health", get(health::health_check))
         .route("/ready", get(health::readiness_check))
         // EAP discovery endpoints
@@ -55,6 +63,12 @@ pub fn build_routes(state: Arc<AppState>) -> Router {
         )
         // Webhook ingress routes (external triggers, auth via webhook secret)
         .nest("/api/v1/hooks", hooks::routes(state.clone()))
+        .layer({
+            let limiter = public_limiter;
+            axum::middleware::from_fn(move |req, next| {
+                middleware::rate_limit_middleware(req, next, limiter.clone())
+            })
+        })
         .with_state(state.clone());
 
     // ── Protected routes (require auth) ─────────────────────────────
@@ -62,7 +76,16 @@ pub fn build_routes(state: Arc<AppState>) -> Router {
         // Canvas routes
         .nest("/api/v1/canvases", canvas::routes(state.clone()))
         // Agent proxy routes (forward chat to agent sidecar service)
-        .nest("/api/v1/agent", agent_proxy::routes(state.clone()))
+        // Chat gets its own stricter rate limit
+        .nest(
+            "/api/v1/agent",
+            agent_proxy::routes(state.clone()).layer({
+                let limiter = chat_limiter;
+                axum::middleware::from_fn(move |req, next| {
+                    middleware::rate_limit_middleware(req, next, limiter.clone())
+                })
+            }),
+        )
         // Upload routes (25 MB body limit for file uploads)
         .nest(
             "/api/v1/uploads",
@@ -97,6 +120,12 @@ pub fn build_routes(state: Arc<AppState>) -> Router {
             state.clone(),
             middleware::authenticate,
         ))
+        .layer({
+            let limiter = api_limiter;
+            axum::middleware::from_fn(move |req, next| {
+                middleware::rate_limit_middleware(req, next, limiter.clone())
+            })
+        })
         .with_state(state.clone());
 
     // Merge: public routes first, then protected

@@ -153,19 +153,24 @@ impl AutonomousAgentLoop {
         let agent_url =
             std::env::var("AGENT_URL").unwrap_or_else(|_| "http://localhost:3100".to_string());
 
-        // Look up bounty description from cache
+        // Look up bounty description from cache; wrap in data boundaries to prevent
+        // prompt injection from malicious bounty descriptions on the relay.
         let description = {
             let cache = self.bounty_cache.read().await;
             cache
                 .iter()
                 .find(|b| b.id.to_string() == bounty_id)
-                .map(|b| format!("{}\n\n{}", b.title, b.description))
+                .map(|b| {
+                    let raw = format!("{}\n\n{}", b.title, b.description);
+                    crate::prompt_guard::sanitize("bounty_description", &raw, 8000)
+                })
                 .unwrap_or_else(|| format!("Execute bounty {bounty_id}"))
         };
 
         let body = json!({
             "message": format!(
-                "Execute this bounty task and produce the required output:\n\n{}",
+                "{}\n\nExecute this bounty task and produce the required output:\n\n{}",
+                crate::prompt_guard::DATA_BOUNDARY_INSTRUCTION,
                 description
             ),
             "provider_type": provider_type,

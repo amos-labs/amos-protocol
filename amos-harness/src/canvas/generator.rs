@@ -229,42 +229,53 @@ Output your response in exactly this format with markdown code blocks:
 
 /// Build the prompt for canvas generation
 fn build_generation_prompt(request: &GenerateCanvasRequest) -> Result<String> {
+    use crate::prompt_guard;
+
     let canvas_type_str = request.canvas_type.as_str();
 
     let module_context = if let Some(module_def) = &request.module_definition {
+        let json_str = serde_json::to_string_pretty(module_def).unwrap_or_default();
         format!(
-            "\n\n## Module Definition (schema)\n\n```json\n{}\n```",
-            serde_json::to_string_pretty(module_def).unwrap_or_default()
+            "\n\n## Module Definition (schema)\n\n{}",
+            prompt_guard::wrap_user_data("module_definition", &json_str)
         )
     } else {
         String::new()
     };
 
     let sample_data_context = if let Some(sample_data) = &request.sample_data {
+        let json_str = serde_json::to_string_pretty(sample_data).unwrap_or_default();
         format!(
-            "\n\n## Sample Data\n\n```json\n{}\n```",
-            serde_json::to_string_pretty(sample_data).unwrap_or_default()
+            "\n\n## Sample Data\n\n{}",
+            prompt_guard::wrap_user_data("sample_data", &json_str)
         )
     } else {
         String::new()
     };
 
     let requirements_context = if let Some(requirements) = &request.requirements {
+        let items = requirements
+            .iter()
+            .enumerate()
+            .map(|(i, r)| format!("{}. {}", i + 1, r))
+            .collect::<Vec<_>>()
+            .join("\n");
         format!(
             "\n\n## Additional Requirements\n\n{}",
-            requirements
-                .iter()
-                .enumerate()
-                .map(|(i, r)| format!("{}. {}", i + 1, r))
-                .collect::<Vec<_>>()
-                .join("\n")
+            prompt_guard::wrap_user_data("requirements", &items)
         )
     } else {
         String::new()
     };
 
+    // Sanitize user description (cap at 4000 chars)
+    let description =
+        prompt_guard::sanitize("canvas_description", &request.description, 4000);
+
     let prompt = format!(
-        r#"Generate a **{canvas_type}** canvas for a web application.
+        r#"{boundary_instruction}
+
+Generate a **{canvas_type}** canvas for a web application.
 
 ## Description
 
@@ -285,8 +296,9 @@ The canvas type is "{canvas_type}" which means:
 - freeform: Custom layout, no constraints
 
 Generate complete, functional HTML/JS/CSS that is ready to use. Include realistic placeholder data if no sample data was provided. All buttons and interactions must work."#,
+        boundary_instruction = prompt_guard::DATA_BOUNDARY_INSTRUCTION,
         canvas_type = canvas_type_str,
-        description = request.description,
+        description = description,
         module_context = module_context,
         sample_data_context = sample_data_context,
         requirements_context = requirements_context,

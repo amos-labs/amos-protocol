@@ -206,6 +206,7 @@ async fn proxy_chat(
     // Query enabled packages' system prompts and inject as `package_prompts`
     // array. The agent appends these to the system prompt under a
     // "## Package-Specific Instructions" heading.
+    // Package prompts are wrapped with data boundaries to limit injection risk.
     match sqlx::query_as::<_, (String,)>(
         "SELECT system_prompt FROM packages WHERE enabled = true AND system_prompt IS NOT NULL",
     )
@@ -213,7 +214,12 @@ async fn proxy_chat(
     .await
     {
         Ok(rows) if !rows.is_empty() => {
-            let prompts: Vec<String> = rows.into_iter().map(|(p,)| p).collect();
+            let prompts: Vec<String> = rows
+                .into_iter()
+                .map(|(p,)| {
+                    crate::prompt_guard::sanitize("package_prompt", &p, 8000)
+                })
+                .collect();
             json_body["package_prompts"] = serde_json::json!(prompts);
             info!(count = prompts.len(), "Injected package system prompts");
         }
@@ -519,8 +525,16 @@ async fn process_attachments(state: &AppState, body: &str) -> Result<String, Str
                             .await;
                         });
                     }
-                    ContentBlock::Text {
-                        text: format!("[Document: {}]\n\n{}", filename, text),
+                    {
+                        // Wrap extracted text to prevent prompt injection from document content
+                        let wrapped = crate::prompt_guard::sanitize(
+                            "uploaded_document",
+                            &text,
+                            50_000,
+                        );
+                        ContentBlock::Text {
+                            text: format!("[Document: {}]\n\n{}", filename, wrapped),
+                        }
                     }
                 }
                 Ok(ExtractionResult::Pages(pages)) => {
@@ -547,8 +561,16 @@ async fn process_attachments(state: &AppState, body: &str) -> Result<String, Str
                             .await;
                         });
                     }
-                    ContentBlock::Text {
-                        text: format!("[Document: {}]\n\n{}", filename, combined),
+                    {
+                        // Wrap extracted text to prevent prompt injection from document content
+                        let wrapped = crate::prompt_guard::sanitize(
+                            "uploaded_document",
+                            &combined,
+                            100_000,
+                        );
+                        ContentBlock::Text {
+                            text: format!("[Document: {}]\n\n{}", filename, wrapped),
+                        }
                     }
                 }
                 Ok(ExtractionResult::RawDocument(format, name, raw_bytes)) => {
