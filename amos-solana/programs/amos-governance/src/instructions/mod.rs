@@ -1,16 +1,16 @@
 // AMOS Governance Program - Instructions Module
 // Exports all instruction handlers
 
-pub mod governance;
-pub mod proposals;
 pub mod gates;
-pub mod rewards;
-pub mod research;
+pub mod governance;
 pub mod priority;
+pub mod proposals;
+pub mod research;
+pub mod rewards;
 
-pub use governance::*;
-pub use proposals::*;
 pub use gates::*;
-pub use rewards::*;
-pub use research::*;
+pub use governance::*;
 pub use priority::*;
+pub use proposals::*;
+pub use research::*;
+pub use rewards::*;

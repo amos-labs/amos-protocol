@@ -2,7 +2,6 @@
 ///
 /// This module implements the token decay mechanism that recycles unused tokens
 /// back to the treasury while burning a small portion for deflationary pressure.
-
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount, Transfer};
 
@@ -278,8 +277,15 @@ pub fn handler_apply_decay(ctx: Context<ApplyDecay>) -> Result<()> {
 
     msg!("Decay applied successfully");
     msg!("Total decayed: {} tokens", decay_amount);
-    msg!("Burned: {} tokens, Recycled: {} tokens", burn_amount, recycle_amount);
-    msg!("Remaining balance: {} tokens", operator_stats.decayable_balance);
+    msg!(
+        "Burned: {} tokens, Recycled: {} tokens",
+        burn_amount,
+        recycle_amount
+    );
+    msg!(
+        "Remaining balance: {} tokens",
+        operator_stats.decayable_balance
+    );
 
     Ok(())
 }

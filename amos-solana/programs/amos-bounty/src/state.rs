@@ -3,7 +3,6 @@
 /// This module defines all on-chain account structures that store the state
 /// of the bounty distribution system. All fields are carefully sized and
 /// documented to ensure transparent, trustless operation.
-
 use anchor_lang::prelude::*;
 
 // ============================================================================
@@ -45,6 +44,49 @@ pub enum VaultTier {
 impl Default for VaultTier {
     fn default() -> Self {
         VaultTier::None
+    }
+}
+
+/// Pool category for emission pool separation.
+/// Technical pool is protected by a minimum floor; growth pool is capped.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PoolCategory {
+    /// Protected by 80-95% emission floor (phase-dependent)
+    Technical,
+    /// Capped at 5-20% emission ceiling (phase-dependent)
+    Growth,
+}
+
+impl Default for PoolCategory {
+    fn default() -> Self {
+        PoolCategory::Technical
+    }
+}
+
+/// Status of a bounty listing on the board.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BountyStatus {
+    /// Available for claiming
+    Open,
+    /// Claimed by a worker, in progress
+    Claimed,
+    /// Work submitted, awaiting review
+    Submitted,
+    /// Approved and paid out
+    Approved,
+    /// Rejected by reviewer
+    Rejected,
+    /// Worker filed a dispute after rejection
+    Disputed,
+    /// Expired — deadline passed without completion
+    Expired,
+    /// Cancelled by poster (commercial only, before claim)
+    Cancelled,
+}
+
+impl Default for BountyStatus {
+    fn default() -> Self {
+        BountyStatus::Open
     }
 }
 
@@ -202,14 +244,27 @@ pub struct DailyPool {
     /// PDA bump seed
     pub bump: u8, // 1 byte
 
-    /// Reserved space for future upgrades
-    pub reserved: [u64; 8], // 64 bytes
+    /// Tokens distributed from the growth pool today
+    pub growth_tokens_distributed: u64, // 8 bytes
+
+    /// Total weighted points from growth bounties today
+    pub growth_points: u64, // 8 bytes
+
+    /// Tokens distributed from the technical pool today
+    pub technical_tokens_distributed: u64, // 8 bytes
+
+    /// Total weighted points from technical bounties today
+    pub technical_points: u64, // 8 bytes
+
+    /// Reserved space for future upgrades (reduced from 8 to 4 u64s)
+    pub reserved: [u64; 4], // 32 bytes
 }
 
 impl DailyPool {
     /// Size calculation:
-    /// 8 (discriminator) + 4 + 8 + 8 + 8 + 4 + 1 + 1 + 64 = 106 bytes
-    pub const SIZE: usize = 8 + 4 + 8 + 8 + 8 + 4 + 1 + 1 + 64;
+    /// 8 (discriminator) + 4 + 8 + 8 + 8 + 4 + 1 + 1 + 8 + 8 + 8 + 8 + 32 = 106 bytes
+    /// (Same total: moved 32 bytes from reserved into pool tracking fields)
+    pub const SIZE: usize = 8 + 4 + 8 + 8 + 8 + 4 + 1 + 1 + 8 + 8 + 8 + 8 + 32;
 }
 
 // ============================================================================
@@ -292,7 +347,29 @@ pub struct BountyProof {
 impl BountyProof {
     /// Size calculation:
     /// 8 (discriminator) + 32 + 1 + 32 + 32 + 32 + 2 + 2 + 1 + 1 + 1 + 32 + 1 + 8 + 8 + 32 + 8 + 32 + 8 + 4 + 64 + 1 + 64 = 406 bytes
-    pub const SIZE: usize = 8 + 32 + 1 + 32 + 32 + 32 + 2 + 2 + 1 + 1 + 1 + 32 + 1 + 8 + 8 + 32 + 8 + 32 + 8 + 4 + 64 + 1 + 64;
+    pub const SIZE: usize = 8
+        + 32
+        + 1
+        + 32
+        + 32
+        + 32
+        + 2
+        + 2
+        + 1
+        + 1
+        + 1
+        + 32
+        + 1
+        + 8
+        + 8
+        + 32
+        + 8
+        + 32
+        + 8
+        + 4
+        + 64
+        + 1
+        + 64;
 }
 
 // ============================================================================
@@ -353,6 +430,10 @@ pub struct OperatorStats {
     /// Unix timestamp when vault lockup expires (0 for None, u64::MAX for Permanent)
     pub vault_lockup_expires: i64, // 8 bytes
 
+    /// Number of currently active (uncompleted) bounty claims
+    /// Incremented on claim, decremented on submit/expire/abandon
+    pub active_claim_count: u8, // 1 byte
+
     /// PDA bump seed
     pub bump: u8, // 1 byte
 
@@ -362,8 +443,9 @@ pub struct OperatorStats {
 
 impl OperatorStats {
     /// Size calculation:
-    /// 8 (discriminator) + 32 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 4 + 2 + 4 + 1 + 8 + 1 + 128 = 260 bytes
-    pub const SIZE: usize = 8 + 32 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 4 + 2 + 4 + 1 + 8 + 1 + 128;
+    /// 8 (discriminator) + 32 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 4 + 2 + 4 + 1 + 8 + 1 + 1 + 128 = 261 bytes
+    pub const SIZE: usize =
+        8 + 32 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 4 + 2 + 4 + 1 + 8 + 1 + 1 + 128;
 }
 
 // ============================================================================
@@ -434,6 +516,251 @@ impl AgentTrustRecord {
     }
 }
 
+// ============================================================================
+// BountyListing - Bounty Board Entry (Claim/Timeout/Dispute Tracking)
+// ============================================================================
+
+/// A bounty listing on the board. Tracks claim status, timeout, and disputes.
+/// This is the lifecycle account for a bounty from posting through completion.
+///
+/// Seeds: ["bounty_listing", bounty_id]
+#[account]
+pub struct BountyListing {
+    /// Unique bounty identifier
+    pub bounty_id: [u8; 32], // 32 bytes
+
+    /// Current status
+    pub status: BountyStatus, // 1 byte
+
+    /// Source (Treasury or Commercial)
+    pub bounty_source: BountySource, // 1 byte
+
+    /// Poster wallet (treasury PDA for system bounties)
+    pub poster: Pubkey, // 32 bytes
+
+    /// Worker who claimed this bounty (Pubkey::default() if unclaimed)
+    pub claimed_by: Pubkey, // 32 bytes
+
+    /// Unix timestamp when claimed (0 if unclaimed)
+    pub claimed_at: i64, // 8 bytes
+
+    /// Claim timeout in hours (0 = use default)
+    pub claim_timeout_hours: u64, // 8 bytes
+
+    /// Reward amount (AMOS tokens, escrow amount for commercial)
+    pub reward_amount: u64, // 8 bytes
+
+    /// Contribution type (0-10)
+    pub contribution_type: u8, // 1 byte
+
+    /// Required trust level (1-5)
+    pub required_trust_level: u8, // 1 byte
+
+    /// Unix timestamp when bounty was posted
+    pub posted_at: i64, // 8 bytes
+
+    /// Unix timestamp of deadline (for commercial bounties)
+    pub deadline: i64, // 8 bytes
+
+    /// Unix timestamp when work was submitted (0 if not submitted)
+    pub submitted_at: i64, // 8 bytes
+
+    /// Unix timestamp when rejected (0 if not rejected)
+    pub rejected_at: i64, // 8 bytes
+
+    /// PDA bump seed
+    pub bump: u8, // 1 byte
+
+    /// Reserved space
+    pub reserved: [u64; 8], // 64 bytes
+}
+
+impl BountyListing {
+    /// 8 (disc) + 32 + 1 + 1 + 32 + 32 + 8 + 8 + 8 + 1 + 1 + 8 + 8 + 8 + 8 + 1 + 64 = 229
+    pub const SIZE: usize = 8 + 32 + 1 + 1 + 32 + 32 + 8 + 8 + 8 + 1 + 1 + 8 + 8 + 8 + 8 + 1 + 64;
+}
+
+// ============================================================================
+// DisputeRecord - Tracks a dispute on a rejected bounty
+// ============================================================================
+
+/// Records a dispute filed by a worker after bounty rejection.
+///
+/// Seeds: ["dispute", bounty_id]
+#[account]
+pub struct DisputeRecord {
+    /// The bounty being disputed
+    pub bounty_id: [u8; 32], // 32 bytes
+
+    /// Worker who filed the dispute
+    pub worker: Pubkey, // 32 bytes
+
+    /// Stake amount (5% of bounty value, locked during dispute)
+    pub stake_amount: u64, // 8 bytes
+
+    /// Unix timestamp when dispute was filed
+    pub filed_at: i64, // 8 bytes
+
+    /// Unix timestamp when resolved (0 if pending)
+    pub resolved_at: i64, // 8 bytes
+
+    /// Resolution: true = upheld (worker wins), false = denied (reviewer wins)
+    pub upheld: bool, // 1 byte
+
+    /// Whether this dispute has been resolved
+    pub is_resolved: bool, // 1 byte
+
+    /// Resolver authority (governance initially)
+    pub resolver: Pubkey, // 32 bytes
+
+    /// PDA bump seed
+    pub bump: u8, // 1 byte
+
+    /// Reserved space
+    pub reserved: [u64; 8], // 64 bytes
+}
+
+impl DisputeRecord {
+    /// 8 (disc) + 32 + 32 + 8 + 8 + 8 + 1 + 1 + 32 + 1 + 64 = 195
+    pub const SIZE: usize = 8 + 32 + 32 + 8 + 8 + 8 + 1 + 1 + 32 + 1 + 64;
+}
+
+// ============================================================================
+// ContributionTypeRegistry - Governance-updatable with graduated freeze
+// ============================================================================
+
+/// A single entry in the contribution type registry.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
+pub struct ContributionTypeEntry {
+    /// Type ID (0-31)
+    pub type_id: u8,
+    /// Fixed-size name (padded with zeros)
+    pub name: [u8; 32],
+    /// Multiplier in basis points
+    pub multiplier_bps: u16,
+    /// Pool category (Technical or Growth)
+    pub pool_category: PoolCategory,
+    /// Whether this entry is active
+    pub is_active: bool,
+    /// One-way freeze: once true, this entry is IMMUTABLE
+    pub frozen: bool,
+    /// Unix timestamp when added
+    pub added_at: i64,
+    /// Unix timestamp when frozen (0 if not frozen)
+    pub frozen_at: i64,
+}
+
+impl Default for ContributionTypeEntry {
+    fn default() -> Self {
+        Self {
+            type_id: 0,
+            name: [0u8; 32],
+            multiplier_bps: 0,
+            pool_category: PoolCategory::Technical,
+            is_active: false,
+            frozen: false,
+            added_at: 0,
+            frozen_at: 0,
+        }
+    }
+}
+
+impl ContributionTypeEntry {
+    /// Size: 1 + 32 + 2 + 1 + 1 + 1 + 8 + 8 = 54 bytes
+    pub const SIZE: usize = 1 + 32 + 2 + 1 + 1 + 1 + 8 + 8;
+}
+
+/// Governance-updatable registry of contribution types with graduated freeze.
+///
+/// Seeds: ["contribution_registry"]
+#[account]
+pub struct ContributionTypeRegistry {
+    /// PDA bump seed
+    pub bump: u8, // 1
+
+    /// Governance authority PDA
+    pub authority: Pubkey, // 32
+
+    /// One-way: once true, NO changes to ANY entry, ever
+    pub registry_frozen: bool, // 1
+
+    /// Unix timestamp when registry was frozen (0 if not frozen)
+    pub registry_frozen_at: i64, // 8
+
+    /// Number of active entries
+    pub entry_count: u8, // 1
+
+    /// Fixed array of contribution type entries (max 16)
+    pub entries: [ContributionTypeEntry; 16], // 16 * 54 = 864
+
+    /// Minimum BPS for technical pool (8000 = 80%)
+    pub pool_technical_min_bps: u16, // 2
+
+    /// Maximum BPS for growth pool (2000 = 20%)
+    pub pool_growth_max_bps: u16, // 2
+
+    /// Auto-freeze deadline (launch_timestamp + 3 years)
+    pub freeze_deadline: i64, // 8
+
+    /// Number of extensions used (max 2)
+    pub extensions_used: u8, // 1
+
+    /// Maximum extensions allowed (hardcoded 2)
+    pub max_extensions: u8, // 1
+
+    /// Extension duration in seconds (exactly 1 year)
+    pub extension_duration_seconds: i64, // 8
+
+    /// Growth phase 1 end timestamp
+    pub growth_phase_1_end: i64, // 8
+
+    /// Growth phase 1 cap (BPS)
+    pub growth_phase_1_cap_bps: u16, // 2
+
+    /// Growth phase 2 end timestamp
+    pub growth_phase_2_end: i64, // 8
+
+    /// Growth phase 2 cap (BPS)
+    pub growth_phase_2_cap_bps: u16, // 2
+
+    /// Growth phase 3 end timestamp
+    pub growth_phase_3_end: i64, // 8
+
+    /// Growth phase 3 cap (BPS)
+    pub growth_phase_3_cap_bps: u16, // 2
+
+    /// Growth phase 4 cap (BPS, permanent)
+    pub growth_phase_4_cap_bps: u16, // 2
+
+    /// Reserved space
+    pub reserved: [u64; 16], // 128
+}
+
+impl ContributionTypeRegistry {
+    /// 8 (disc) + 1 + 32 + 1 + 8 + 1 + 864 + 2 + 2 + 8 + 1 + 1 + 8 + 8 + 2 + 8 + 2 + 8 + 2 + 2 + 128 = 1097
+    pub const SIZE: usize = 8
+        + 1
+        + 32
+        + 1
+        + 8
+        + 1
+        + (16 * ContributionTypeEntry::SIZE)
+        + 2
+        + 2
+        + 8
+        + 1
+        + 1
+        + 8
+        + 8
+        + 2
+        + 8
+        + 2
+        + 8
+        + 2
+        + 2
+        + 128;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,6 +774,9 @@ mod tests {
         assert!(BountyProof::SIZE < 10240);
         assert!(OperatorStats::SIZE < 10240);
         assert!(AgentTrustRecord::SIZE < 10240);
+        assert!(BountyListing::SIZE < 10240);
+        assert!(DisputeRecord::SIZE < 10240);
+        assert!(ContributionTypeRegistry::SIZE < 10240);
     }
 
     #[test]

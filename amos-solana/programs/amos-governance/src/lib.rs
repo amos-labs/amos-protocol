@@ -14,13 +14,13 @@ use anchor_lang::prelude::*;
 
 pub mod constants;
 pub mod errors;
-pub mod state;
 pub mod instructions;
+pub mod state;
 
 use instructions::*;
 use state::*;
 
-declare_id!("jB8X4jmpKNqUy2H5cm1mVYfqG7jMCXiDXodkZSsJyQW");
+declare_id!("245xpoWLEAAPmUQxMSBDqQw5qnGfqt5roi5enuFG9fZZ");
 
 #[program]
 pub mod amos_governance {
@@ -128,10 +128,7 @@ pub mod amos_governance {
     /// # Notes
     /// * Can only withdraw after 7-day lock period
     /// * Proposal must still be in Active state
-    pub fn withdraw_vote(
-        ctx: Context<WithdrawVote>,
-        proposal_id: u64,
-    ) -> Result<()> {
+    pub fn withdraw_vote(ctx: Context<WithdrawVote>, proposal_id: u64) -> Result<()> {
         instructions::withdraw_vote(ctx, proposal_id)
     }
 
@@ -296,10 +293,7 @@ pub mod amos_governance {
     /// * All quality gates must have passed
     /// * Pays remaining 30% of bounty
     /// * Marks proposal as Finalized
-    pub fn finalize_rewards(
-        ctx: Context<FinalizeRewards>,
-        proposal_id: u64,
-    ) -> Result<()> {
+    pub fn finalize_rewards(ctx: Context<FinalizeRewards>, proposal_id: u64) -> Result<()> {
         instructions::finalize_rewards(ctx, proposal_id)
     }
 
@@ -348,10 +342,7 @@ pub mod amos_governance {
     ///
     /// # Notes
     /// * Pays research_stipend_bps% of budget upfront (default 20%)
-    pub fn approve_research(
-        ctx: Context<ApproveResearch>,
-        proposal_id: u64,
-    ) -> Result<()> {
+    pub fn approve_research(ctx: Context<ApproveResearch>, proposal_id: u64) -> Result<()> {
         instructions::approve_research(ctx, proposal_id)
     }
 
@@ -390,10 +381,7 @@ pub mod amos_governance {
     /// * All milestones must be completed
     /// * Pays success bonus (default 400% of remaining budget)
     /// * Research can then be converted to a feature proposal
-    pub fn graduate_research(
-        ctx: Context<GraduateResearch>,
-        proposal_id: u64,
-    ) -> Result<()> {
+    pub fn graduate_research(ctx: Context<GraduateResearch>, proposal_id: u64) -> Result<()> {
         instructions::graduate_research(ctx, proposal_id)
     }
 

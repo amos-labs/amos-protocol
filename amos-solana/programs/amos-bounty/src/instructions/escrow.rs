@@ -6,7 +6,6 @@
 ///
 /// IMPORTANT: Call `prepare_bounty_submission` before `release_commercial_bounty`
 /// in the same transaction to ensure operator_stats exists.
-
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount, Transfer};
 
@@ -272,10 +271,22 @@ pub fn handler_release_escrow(
     // Validation
     // ========================================================================
 
-    require!(quality_score >= MIN_QUALITY_SCORE, BountyError::QualityScoreTooLow);
-    require!(contribution_type <= 7, BountyError::InvalidContributionType);
-    require!(base_points > 0 && base_points <= MAX_BOUNTY_POINTS, BountyError::InvalidBountyPoints);
-    require!(reviewer != ctx.accounts.operator.key(), BountyError::ReviewerSameAsOperator);
+    require!(
+        quality_score >= MIN_QUALITY_SCORE,
+        BountyError::QualityScoreTooLow
+    );
+    require!(
+        contribution_type <= 10,
+        BountyError::InvalidContributionType
+    );
+    require!(
+        base_points > 0 && base_points <= MAX_BOUNTY_POINTS,
+        BountyError::InvalidBountyPoints
+    );
+    require!(
+        reviewer != ctx.accounts.operator.key(),
+        BountyError::ReviewerSameAsOperator
+    );
     require!(evidence_hash != [0u8; 32], BountyError::InvalidEvidenceHash);
 
     let escrow_balance = ctx.accounts.escrow_token_account.amount;
@@ -355,7 +366,11 @@ pub fn handler_release_escrow(
     // Execute Transfers from Escrow
     // ========================================================================
 
-    let escrow_seeds = &[BOUNTY_ESCROW_SEED, bounty_id.as_ref(), &[ctx.bumps.escrow_authority]];
+    let escrow_seeds = &[
+        BOUNTY_ESCROW_SEED,
+        bounty_id.as_ref(),
+        &[ctx.bumps.escrow_authority],
+    ];
     let signer_seeds = &[&escrow_seeds[..]];
 
     // Transfer to operator
@@ -443,17 +458,41 @@ pub fn handler_release_escrow(
     let current_day = calculate_day_index(config.start_time)?;
 
     // Update operator stats
-    operator_stats.total_bounties = operator_stats.total_bounties.checked_add(1).ok_or(BountyError::ArithmeticOverflow)?;
-    operator_stats.total_points = operator_stats.total_points.checked_add(adjusted_points as u64).ok_or(BountyError::ArithmeticOverflow)?;
-    operator_stats.total_tokens_earned = operator_stats.total_tokens_earned.checked_add(operator_tokens).ok_or(BountyError::ArithmeticOverflow)?;
-    operator_stats.decayable_balance = operator_stats.decayable_balance.checked_add(operator_tokens).ok_or(BountyError::ArithmeticOverflow)?;
-    operator_stats.original_allocation = operator_stats.original_allocation.checked_add(operator_tokens).ok_or(BountyError::ArithmeticOverflow)?;
+    operator_stats.total_bounties = operator_stats
+        .total_bounties
+        .checked_add(1)
+        .ok_or(BountyError::ArithmeticOverflow)?;
+    operator_stats.total_points = operator_stats
+        .total_points
+        .checked_add(adjusted_points as u64)
+        .ok_or(BountyError::ArithmeticOverflow)?;
+    operator_stats.total_tokens_earned = operator_stats
+        .total_tokens_earned
+        .checked_add(operator_tokens)
+        .ok_or(BountyError::ArithmeticOverflow)?;
+    operator_stats.decayable_balance = operator_stats
+        .decayable_balance
+        .checked_add(operator_tokens)
+        .ok_or(BountyError::ArithmeticOverflow)?;
+    operator_stats.original_allocation = operator_stats
+        .original_allocation
+        .checked_add(operator_tokens)
+        .ok_or(BountyError::ArithmeticOverflow)?;
     operator_stats.last_activity_time = clock.unix_timestamp;
 
     // Update global config
-    config.total_tokens_distributed = config.total_tokens_distributed.checked_add(net_reward).ok_or(BountyError::ArithmeticOverflow)?;
-    config.total_bounties = config.total_bounties.checked_add(1).ok_or(BountyError::ArithmeticOverflow)?;
-    config.total_points = config.total_points.checked_add(adjusted_points as u64).ok_or(BountyError::ArithmeticOverflow)?;
+    config.total_tokens_distributed = config
+        .total_tokens_distributed
+        .checked_add(net_reward)
+        .ok_or(BountyError::ArithmeticOverflow)?;
+    config.total_bounties = config
+        .total_bounties
+        .checked_add(1)
+        .ok_or(BountyError::ArithmeticOverflow)?;
+    config.total_points = config
+        .total_points
+        .checked_add(adjusted_points as u64)
+        .ok_or(BountyError::ArithmeticOverflow)?;
 
     // Record immutable bounty proof
     bounty_proof.bounty_id = bounty_id;
@@ -497,8 +536,17 @@ pub fn handler_release_escrow(
         timestamp: clock.unix_timestamp,
     });
 
-    msg!("Commercial bounty completed: {} AMOS distributed", net_reward);
-    msg!("Fee: {} total ({} holders, {} burned, {} labs)", total_fee, holder_share, burn_share, labs_share);
+    msg!(
+        "Commercial bounty completed: {} AMOS distributed",
+        net_reward
+    );
+    msg!(
+        "Fee: {} total ({} holders, {} burned, {} labs)",
+        total_fee,
+        holder_share,
+        burn_share,
+        labs_share
+    );
 
     Ok(())
 }
@@ -552,15 +600,16 @@ pub struct RefundEscrow<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-pub fn handler_refund_escrow(
-    ctx: Context<RefundEscrow>,
-    bounty_id: [u8; 32],
-) -> Result<()> {
+pub fn handler_refund_escrow(ctx: Context<RefundEscrow>, bounty_id: [u8; 32]) -> Result<()> {
     let escrow_balance = ctx.accounts.escrow_token_account.amount;
     require!(escrow_balance > 0, BountyError::EscrowNotFunded);
 
     // Transfer all escrowed tokens back to poster
-    let escrow_seeds = &[BOUNTY_ESCROW_SEED, bounty_id.as_ref(), &[ctx.bumps.escrow_authority]];
+    let escrow_seeds = &[
+        BOUNTY_ESCROW_SEED,
+        bounty_id.as_ref(),
+        &[ctx.bumps.escrow_authority],
+    ];
     let signer_seeds = &[&escrow_seeds[..]];
 
     token::transfer(
@@ -583,7 +632,10 @@ pub fn handler_refund_escrow(
         timestamp: Clock::get()?.unix_timestamp,
     });
 
-    msg!("Commercial bounty refunded: {} AMOS returned to poster", escrow_balance);
+    msg!(
+        "Commercial bounty refunded: {} AMOS returned to poster",
+        escrow_balance
+    );
 
     Ok(())
 }

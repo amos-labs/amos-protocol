@@ -2,7 +2,6 @@
 ///
 /// Read-only view functions for querying treasury state and history.
 /// AMOS-only model: all stats are in AMOS tokens.
-
 use anchor_lang::prelude::*;
 
 use crate::constants::seeds;

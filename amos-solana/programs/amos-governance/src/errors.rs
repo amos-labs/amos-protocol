@@ -8,7 +8,6 @@ pub enum GovernanceError {
     // ========================================================================
     // Authorization Errors (6000-6009)
     // ========================================================================
-
     #[msg("Unauthorized: Only the governance authority can perform this action")]
     Unauthorized,
 
@@ -24,7 +23,6 @@ pub enum GovernanceError {
     // ========================================================================
     // Proposal State Errors (6010-6029)
     // ========================================================================
-
     #[msg("Invalid proposal status for this operation")]
     InvalidProposalStatus,
 
@@ -55,7 +53,6 @@ pub enum GovernanceError {
     // ========================================================================
     // Voting Errors (6030-6049)
     // ========================================================================
-
     #[msg("Vote already exists for this proposal")]
     VoteAlreadyExists,
 
@@ -83,7 +80,6 @@ pub enum GovernanceError {
     // ========================================================================
     // Quality Gate Errors (6050-6069)
     // ========================================================================
-
     #[msg("Gate has already been evaluated")]
     GateAlreadyEvaluated,
 
@@ -114,7 +110,6 @@ pub enum GovernanceError {
     // ========================================================================
     // Reward Errors (6070-6089)
     // ========================================================================
-
     #[msg("Reward already claimed for this gate")]
     RewardAlreadyClaimed,
 
@@ -139,7 +134,6 @@ pub enum GovernanceError {
     // ========================================================================
     // Research Errors (6090-6109)
     // ========================================================================
-
     #[msg("Research proposal not approved")]
     ResearchNotApproved,
 
@@ -170,7 +164,6 @@ pub enum GovernanceError {
     // ========================================================================
     // Validation Errors (6110-6129)
     // ========================================================================
-
     #[msg("Title exceeds maximum length")]
     TitleTooLong,
 
@@ -201,7 +194,6 @@ pub enum GovernanceError {
     // ========================================================================
     // Budget Gate Errors (6130-6149)
     // ========================================================================
-
     #[msg("Budget gate proposal already exists")]
     BudgetGateAlreadyExists,
 
@@ -232,7 +224,6 @@ pub enum GovernanceError {
     // ========================================================================
     // General Errors (6150-6169)
     // ========================================================================
-
     #[msg("Feature not implemented yet")]
     NotImplemented,
 

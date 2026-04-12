@@ -5,7 +5,6 @@
 ///
 /// IMPORTANT: Call `prepare_bounty_submission` in the same transaction BEFORE
 /// this instruction to ensure daily_pool and operator_stats accounts exist.
-
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
@@ -139,7 +138,7 @@ pub fn handler_submit_proof(
         BountyError::QualityScoreTooLow
     );
     require!(
-        contribution_type <= 7,
+        contribution_type <= 10,
         BountyError::InvalidContributionType
     );
     require!(
@@ -150,10 +149,7 @@ pub fn handler_submit_proof(
         reviewer != ctx.accounts.operator.key(),
         BountyError::ReviewerSameAsOperator
     );
-    require!(
-        evidence_hash != [0u8; 32],
-        BountyError::InvalidEvidenceHash
-    );
+    require!(evidence_hash != [0u8; 32], BountyError::InvalidEvidenceHash);
 
     // Verify operator_stats was properly initialized by prepare instruction
     require!(
@@ -192,10 +188,7 @@ pub fn handler_submit_proof(
         trust_level = agent_trust.trust_level;
 
         let max_points = get_max_points_for_trust_level(trust_level)?;
-        require!(
-            base_points <= max_points,
-            BountyError::InvalidBountyPoints
-        );
+        require!(base_points <= max_points, BountyError::InvalidBountyPoints);
 
         let daily_limit = get_daily_limit_for_trust_level(trust_level)?;
         require!(
@@ -227,7 +220,7 @@ pub fn handler_submit_proof(
     require!(adjusted_points > 0, BountyError::ZeroPointsAwarded);
 
     // ========================================================================
-    // Token Distribution Calculation
+    // Emission Pool Separation — Prevents growth floods from diluting technical work
     // ========================================================================
 
     let remaining_emission = daily_pool
@@ -237,18 +230,69 @@ pub fn handler_submit_proof(
 
     require!(remaining_emission > 0, BountyError::InsufficientEmission);
 
+    // Determine if this bounty is growth or technical
+    let is_growth = is_growth_contribution(contribution_type);
+
+    // Calculate pool-aware token allocation
+    // Growth pool is capped at growth_cap_bps of daily emission; technical gets the rest
+    let growth_cap_bps = current_growth_cap_bps(clock.unix_timestamp, config.start_time);
+    let growth_pool_max = daily_pool
+        .daily_emission
+        .checked_mul(growth_cap_bps)
+        .ok_or(BountyError::ArithmeticOverflow)?
+        .checked_div(BPS_DENOMINATOR as u64)
+        .ok_or(BountyError::ArithmeticOverflow)?;
+
+    let tokens_before_split = if is_growth {
+        // Growth bounty: distribute from growth pool (capped)
+        let growth_remaining = growth_pool_max.saturating_sub(daily_pool.growth_tokens_distributed);
+
+        if growth_remaining == 0 {
+            // Growth pool exhausted for today — still record points but award minimum
+            1u64
+        } else {
+            let new_growth_points = daily_pool
+                .growth_points
+                .checked_add(adjusted_points as u64)
+                .ok_or(BountyError::ArithmeticOverflow)?;
+
+            let tokens = (adjusted_points as u64)
+                .checked_mul(growth_remaining)
+                .ok_or(BountyError::ArithmeticOverflow)?
+                .checked_div(new_growth_points)
+                .ok_or(BountyError::ArithmeticOverflow)?;
+            tokens.max(1).min(growth_remaining)
+        }
+    } else {
+        // Technical bounty: distribute from technical pool (protected)
+        let technical_pool_max = daily_pool.daily_emission.saturating_sub(growth_pool_max);
+        let technical_remaining =
+            technical_pool_max.saturating_sub(daily_pool.technical_tokens_distributed);
+
+        // Technical pool also gets any unused growth allocation
+        let unused_growth = growth_pool_max.saturating_sub(daily_pool.growth_tokens_distributed);
+        let effective_remaining = technical_remaining
+            .checked_add(unused_growth)
+            .ok_or(BountyError::ArithmeticOverflow)?
+            .min(remaining_emission);
+
+        let new_technical_points = daily_pool
+            .technical_points
+            .checked_add(adjusted_points as u64)
+            .ok_or(BountyError::ArithmeticOverflow)?;
+
+        let tokens = (adjusted_points as u64)
+            .checked_mul(effective_remaining)
+            .ok_or(BountyError::ArithmeticOverflow)?
+            .checked_div(new_technical_points)
+            .ok_or(BountyError::ArithmeticOverflow)?;
+        tokens.max(1)
+    };
+
     let new_total_points = daily_pool
         .total_points
         .checked_add(adjusted_points as u64)
         .ok_or(BountyError::ArithmeticOverflow)?;
-
-    let tokens_before_split = (adjusted_points as u64)
-        .checked_mul(remaining_emission)
-        .ok_or(BountyError::ArithmeticOverflow)?
-        .checked_div(new_total_points)
-        .ok_or(BountyError::ArithmeticOverflow)?;
-
-    let tokens_before_split = tokens_before_split.max(1);
 
     // Split tokens: 95% to operator, 5% to reviewer
     let reviewer_tokens = tokens_before_split
@@ -308,6 +352,27 @@ pub fn handler_submit_proof(
         .ok_or(BountyError::ArithmeticOverflow)?;
 
     daily_pool.total_points = new_total_points;
+
+    // Update pool-specific tracking
+    if is_growth {
+        daily_pool.growth_tokens_distributed = daily_pool
+            .growth_tokens_distributed
+            .checked_add(tokens_before_split)
+            .ok_or(BountyError::ArithmeticOverflow)?;
+        daily_pool.growth_points = daily_pool
+            .growth_points
+            .checked_add(adjusted_points as u64)
+            .ok_or(BountyError::ArithmeticOverflow)?;
+    } else {
+        daily_pool.technical_tokens_distributed = daily_pool
+            .technical_tokens_distributed
+            .checked_add(tokens_before_split)
+            .ok_or(BountyError::ArithmeticOverflow)?;
+        daily_pool.technical_points = daily_pool
+            .technical_points
+            .checked_add(adjusted_points as u64)
+            .ok_or(BountyError::ArithmeticOverflow)?;
+    }
 
     daily_pool.proof_count = daily_pool
         .proof_count
@@ -420,8 +485,16 @@ pub fn handler_submit_proof(
     });
 
     msg!("Bounty submitted successfully");
-    msg!("Base points: {}, Adjusted points: {}", base_points, adjusted_points);
-    msg!("Operator tokens: {}, Reviewer tokens: {}", operator_tokens, reviewer_tokens);
+    msg!(
+        "Base points: {}, Adjusted points: {}",
+        base_points,
+        adjusted_points
+    );
+    msg!(
+        "Operator tokens: {}, Reviewer tokens: {}",
+        operator_tokens,
+        reviewer_tokens
+    );
 
     Ok(())
 }
@@ -443,6 +516,26 @@ fn calculate_day_index(start_time: i64) -> Result<u32> {
         .ok_or(BountyError::ArithmeticOverflow)?;
 
     Ok(days as u32)
+}
+
+/// Determine the current growth pool cap based on elapsed time from launch.
+/// Uses constant-based phase boundaries (ContributionTypeRegistry can override
+/// these via governance, but this provides the default path).
+fn current_growth_cap_bps(now: i64, launch_time: i64) -> u64 {
+    let elapsed = now.saturating_sub(launch_time);
+    let phase_1_end = GROWTH_PHASE_1_DURATION_SECONDS;
+    let phase_2_end = phase_1_end + GROWTH_PHASE_2_DURATION_SECONDS;
+    let phase_3_end = phase_2_end + GROWTH_PHASE_3_DURATION_SECONDS;
+
+    if elapsed < phase_1_end {
+        GROWTH_PHASE_1_CAP_BPS as u64
+    } else if elapsed < phase_2_end {
+        GROWTH_PHASE_2_CAP_BPS as u64
+    } else if elapsed < phase_3_end {
+        GROWTH_PHASE_3_CAP_BPS as u64
+    } else {
+        GROWTH_PHASE_4_CAP_BPS as u64
+    }
 }
 
 // ============================================================================
@@ -494,5 +587,46 @@ mod tests {
 
         let tokens = (adjusted_points * remaining_emission) / new_total;
         assert_eq!(tokens, 100);
+    }
+
+    #[test]
+    fn test_growth_cap_phases() {
+        let launch = 1000i64;
+
+        // Phase 1: 0-6 months → 10% cap
+        assert_eq!(current_growth_cap_bps(launch + 1, launch), 1000);
+
+        // Phase 2: 6-24 months → 20% cap
+        assert_eq!(
+            current_growth_cap_bps(launch + GROWTH_PHASE_1_DURATION_SECONDS + 1, launch),
+            2000
+        );
+
+        // Phase 3: 24-36 months → 10% cap
+        let phase_3_start = GROWTH_PHASE_1_DURATION_SECONDS + GROWTH_PHASE_2_DURATION_SECONDS;
+        assert_eq!(
+            current_growth_cap_bps(launch + phase_3_start + 1, launch),
+            1000
+        );
+
+        // Phase 4: 36+ months → 5% cap
+        let phase_4_start = phase_3_start + GROWTH_PHASE_3_DURATION_SECONDS;
+        assert_eq!(
+            current_growth_cap_bps(launch + phase_4_start + 1, launch),
+            500
+        );
+    }
+
+    #[test]
+    fn test_growth_pool_cap_enforcement() {
+        // With 16000 daily emission and 10% growth cap (Phase 1):
+        let daily_emission = 16000u64;
+        let growth_cap_bps = 1000u64; // 10%
+        let growth_pool_max = daily_emission * growth_cap_bps / BPS_DENOMINATOR as u64;
+        assert_eq!(growth_pool_max, 1600);
+
+        // Technical pool gets the rest
+        let technical_pool = daily_emission - growth_pool_max;
+        assert_eq!(technical_pool, 14400);
     }
 }

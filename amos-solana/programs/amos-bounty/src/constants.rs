@@ -3,7 +3,6 @@
 /// This module defines all the constants that govern the trustless token distribution
 /// system. These values are hardcoded on-chain and ensure predictable, transparent
 /// operation without any centralized control beyond the oracle's role in validation.
-
 use anchor_lang::prelude::*;
 
 // ============================================================================
@@ -204,6 +203,107 @@ pub const MULTIPLIER_DESIGN_BPS: u16 = 10000;
 pub const MULTIPLIER_INFRASTRUCTURE_BPS: u16 = 13000;
 
 // ============================================================================
+// Growth Bounty Multipliers (Growth Pool)
+// ============================================================================
+
+/// Bug report: 100% (finding real bugs is high-value work)
+pub const MULTIPLIER_BUG_REPORT_BPS: u16 = 10000;
+
+/// Referral: 60% (growth work, lower than technical)
+pub const MULTIPLIER_REFERRAL_BPS: u16 = 6000;
+
+/// Signup: 40% (lowest multiplier, one-time token grant)
+pub const MULTIPLIER_SIGNUP_BPS: u16 = 4000;
+
+// ============================================================================
+// Emission Pool Separation — Protects technical work from growth floods
+// Growth cap follows a bell curve: low → peak → taper → permanent floor
+// ============================================================================
+
+/// Phase 1 (Month 0-6): Launch — infrastructure focus
+pub const GROWTH_PHASE_1_DURATION_SECONDS: i64 = 15_768_000; // 6 months
+pub const GROWTH_PHASE_1_CAP_BPS: u16 = 1000; // 10% growth, 90% technical
+
+/// Phase 2 (Month 6-24): Peak growth incentive
+pub const GROWTH_PHASE_2_DURATION_SECONDS: i64 = 47_304_000; // 18 months (cumulative: 24 months)
+pub const GROWTH_PHASE_2_CAP_BPS: u16 = 2000; // 20% growth, 80% technical (maximum)
+
+/// Phase 3 (Month 24-36): Tapering
+pub const GROWTH_PHASE_3_DURATION_SECONDS: i64 = 31_536_000; // 12 months (cumulative: 36 months)
+pub const GROWTH_PHASE_3_CAP_BPS: u16 = 1000; // 10% growth, 90% technical
+
+/// Phase 4 (Month 36+): Mature — permanent floor
+pub const GROWTH_PHASE_4_CAP_BPS: u16 = 500; // 5% growth, 95% technical
+
+/// Total number of contribution types (8 technical + 3 growth)
+pub const CONTRIBUTION_TYPE_COUNT: u8 = 11;
+
+// ============================================================================
+// Claim Timeout — Auto-releases abandoned bounties
+// ============================================================================
+
+/// Default maximum time to complete after claiming (hours)
+pub const DEFAULT_CLAIM_TIMEOUT_HOURS: u64 = 72; // 3 days
+
+/// Minimum allowed claim timeout (prevents unreasonably short windows)
+pub const MIN_CLAIM_TIMEOUT_HOURS: u64 = 1;
+
+/// Maximum allowed claim timeout (prevents indefinite locks)
+pub const MAX_CLAIM_TIMEOUT_HOURS: u64 = 720; // 30 days
+
+// ============================================================================
+// Concurrent Claim Limits — Scales with trust level
+// ============================================================================
+
+/// Maximum active (uncompleted) claims per wallet, by trust level
+pub const MAX_CONCURRENT_CLAIMS: [u8; 5] = [3, 5, 8, 12, 20];
+
+// ============================================================================
+// Dispute Mechanism — Contested rejections
+// ============================================================================
+
+/// Hours after rejection during which worker can file a dispute
+pub const DISPUTE_WINDOW_HOURS: u64 = 48;
+
+/// Stake required to file a dispute (BPS of bounty value)
+pub const DISPUTE_STAKE_BPS: u16 = 500; // 5% of bounty value
+
+/// Maximum time for dispute resolution (hours)
+pub const DISPUTE_RESOLUTION_TIMEOUT_HOURS: u64 = 168; // 7 days
+
+// ============================================================================
+// ContributionTypeRegistry — Graduated freeze mechanism
+// ============================================================================
+
+/// Maximum contribution types in the registry
+pub const MAX_CONTRIBUTION_TYPES: u8 = 16;
+
+/// Auto-freeze deadline: 3 years from launch (seconds)
+pub const REGISTRY_AUTO_FREEZE_SECONDS: i64 = 94_608_000; // 3 years
+
+/// Maximum number of governance-voted extensions
+pub const REGISTRY_MAX_EXTENSIONS: u8 = 2;
+
+/// Each extension is exactly 1 year (seconds)
+pub const REGISTRY_EXTENSION_DURATION_SECONDS: i64 = 31_536_000; // 1 year
+
+// ============================================================================
+// Anti-Gaming Measures
+// ============================================================================
+
+/// Reputation penalty for false submissions (BPS)
+pub const FALSE_SUBMISSION_PENALTY_BPS: u16 = 500; // 5%
+
+/// Self-dealing cooldown: poster cannot claim own bounty for this many hours
+pub const SELF_DEALING_COOLDOWN_HOURS: u64 = 24;
+
+/// Verification contribution type multiplier (same as testing_qa)
+pub const MULTIPLIER_VERIFICATION_BPS: u16 = 11000; // 110%
+
+/// Trust level required to be a verifier/reviewer
+pub const VERIFICATION_MIN_TRUST_LEVEL: u8 = 3;
+
+// ============================================================================
 // Reviewer Rewards
 // ============================================================================
 
@@ -243,6 +343,15 @@ pub const PLATFORM_METRICS_SEED: &[u8] = b"platform_metrics";
 /// Seed for bounty escrow PDA
 pub const BOUNTY_ESCROW_SEED: &[u8] = b"bounty_escrow";
 
+/// Seed for bounty listing PDA
+pub const BOUNTY_LISTING_SEED: &[u8] = b"bounty_listing";
+
+/// Seed for dispute record PDA
+pub const DISPUTE_SEED: &[u8] = b"dispute";
+
+/// Seed for contribution type registry PDA
+pub const CONTRIBUTION_REGISTRY_SEED: &[u8] = b"contribution_registry";
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -250,6 +359,7 @@ pub const BOUNTY_ESCROW_SEED: &[u8] = b"bounty_escrow";
 /// Get the contribution type multiplier in basis points
 pub fn get_contribution_multiplier(contribution_type: u8) -> Result<u16> {
     match contribution_type {
+        // Technical pool (0-7)
         0 => Ok(MULTIPLIER_BUG_FIX_BPS),
         1 => Ok(MULTIPLIER_FEATURE_BPS),
         2 => Ok(MULTIPLIER_DOCUMENTATION_BPS),
@@ -258,8 +368,27 @@ pub fn get_contribution_multiplier(contribution_type: u8) -> Result<u16> {
         5 => Ok(MULTIPLIER_TESTING_BPS),
         6 => Ok(MULTIPLIER_DESIGN_BPS),
         7 => Ok(MULTIPLIER_INFRASTRUCTURE_BPS),
+        // Growth pool (8-10)
+        8 => Ok(MULTIPLIER_BUG_REPORT_BPS),
+        9 => Ok(MULTIPLIER_REFERRAL_BPS),
+        10 => Ok(MULTIPLIER_SIGNUP_BPS),
         _ => Err(error!(crate::errors::BountyError::InvalidContributionType)),
     }
+}
+
+/// Returns true if the contribution type belongs to the growth pool.
+/// Growth types: bug_report (8), referral (9), signup (10)
+/// All others are technical pool.
+pub fn is_growth_contribution(contribution_type: u8) -> bool {
+    contribution_type >= 8 && contribution_type <= 10
+}
+
+/// Get the maximum concurrent claims for a given trust level
+pub fn get_max_concurrent_claims(trust_level: u8) -> Result<u8> {
+    if trust_level == 0 || trust_level > 5 {
+        return Err(error!(crate::errors::BountyError::InvalidTrustLevel));
+    }
+    Ok(MAX_CONCURRENT_CLAIMS[(trust_level - 1) as usize])
 }
 
 /// Get the maximum points allowed for a given trust level
@@ -279,31 +408,17 @@ pub fn get_daily_limit_for_trust_level(trust_level: u8) -> Result<u16> {
 }
 
 /// Check if an operator is eligible for a trust level upgrade
-pub fn can_upgrade_to_level(
-    current_level: u8,
-    completions: u32,
-    reputation: u32,
-) -> Result<bool> {
+pub fn can_upgrade_to_level(current_level: u8, completions: u32, reputation: u32) -> Result<bool> {
     match current_level {
-        1 => {
-            Ok(completions >= TRUST_LEVEL_2_MIN_COMPLETIONS
-                && reputation >= TRUST_LEVEL_2_MIN_REPUTATION)
-        }
-        2 => {
-            Ok(completions >= TRUST_LEVEL_3_MIN_COMPLETIONS
-                && reputation >= TRUST_LEVEL_3_MIN_REPUTATION)
-        }
-        3 => {
-            Ok(completions >= TRUST_LEVEL_4_MIN_COMPLETIONS
-                && reputation >= TRUST_LEVEL_4_MIN_REPUTATION)
-        }
-        4 => {
-            Ok(completions >= TRUST_LEVEL_5_MIN_COMPLETIONS
-                && reputation >= TRUST_LEVEL_5_MIN_REPUTATION)
-        }
-        5 => {
-            Ok(false)
-        }
+        1 => Ok(completions >= TRUST_LEVEL_2_MIN_COMPLETIONS
+            && reputation >= TRUST_LEVEL_2_MIN_REPUTATION),
+        2 => Ok(completions >= TRUST_LEVEL_3_MIN_COMPLETIONS
+            && reputation >= TRUST_LEVEL_3_MIN_REPUTATION),
+        3 => Ok(completions >= TRUST_LEVEL_4_MIN_COMPLETIONS
+            && reputation >= TRUST_LEVEL_4_MIN_REPUTATION),
+        4 => Ok(completions >= TRUST_LEVEL_5_MIN_COMPLETIONS
+            && reputation >= TRUST_LEVEL_5_MIN_REPUTATION),
+        5 => Ok(false),
         _ => Err(error!(crate::errors::BountyError::InvalidTrustLevel)),
     }
 }
@@ -331,11 +446,11 @@ pub fn get_tenure_reduction_bps(years_on_network: u64) -> u16 {
 /// Get vault tier decay reduction in basis points
 pub fn get_vault_reduction_bps(vault_tier: u8) -> u16 {
     match vault_tier {
-        0 => 0,                              // No vault
-        1 => VAULT_BRONZE_REDUCTION_BPS,     // Bronze
-        2 => VAULT_SILVER_REDUCTION_BPS,     // Silver
-        3 => VAULT_GOLD_REDUCTION_BPS,       // Gold
-        4 => VAULT_PERMANENT_REDUCTION_BPS,  // Permanent
+        0 => 0,                             // No vault
+        1 => VAULT_BRONZE_REDUCTION_BPS,    // Bronze
+        2 => VAULT_SILVER_REDUCTION_BPS,    // Silver
+        3 => VAULT_GOLD_REDUCTION_BPS,      // Gold
+        4 => VAULT_PERMANENT_REDUCTION_BPS, // Permanent
         _ => 0,
     }
 }
@@ -367,11 +482,64 @@ mod tests {
 
     #[test]
     fn test_contribution_multipliers() {
-        for i in 0..8 {
+        // All 11 types (8 technical + 3 growth)
+        for i in 0..=10 {
             let multiplier = get_contribution_multiplier(i).unwrap();
             assert!(multiplier > 0);
             assert!(multiplier <= 15000);
         }
+        // Invalid type
+        assert!(get_contribution_multiplier(11).is_err());
+    }
+
+    #[test]
+    fn test_growth_contribution_identification() {
+        // Technical pool (0-7)
+        for i in 0..=7 {
+            assert!(!is_growth_contribution(i));
+        }
+        // Growth pool (8-10)
+        assert!(is_growth_contribution(8));
+        assert!(is_growth_contribution(9));
+        assert!(is_growth_contribution(10));
+        // Out of range
+        assert!(!is_growth_contribution(11));
+    }
+
+    #[test]
+    fn test_growth_phase_caps() {
+        assert_eq!(GROWTH_PHASE_1_CAP_BPS, 1000); // 10%
+        assert_eq!(GROWTH_PHASE_2_CAP_BPS, 2000); // 20% (peak)
+        assert_eq!(GROWTH_PHASE_3_CAP_BPS, 1000); // 10% (taper)
+        assert_eq!(GROWTH_PHASE_4_CAP_BPS, 500); // 5% (permanent floor)
+    }
+
+    #[test]
+    fn test_claim_timeout_bounds() {
+        assert!(MIN_CLAIM_TIMEOUT_HOURS <= DEFAULT_CLAIM_TIMEOUT_HOURS);
+        assert!(DEFAULT_CLAIM_TIMEOUT_HOURS <= MAX_CLAIM_TIMEOUT_HOURS);
+    }
+
+    #[test]
+    fn test_concurrent_claim_limits_progressive() {
+        for i in 0..4 {
+            assert!(MAX_CONCURRENT_CLAIMS[i] < MAX_CONCURRENT_CLAIMS[i + 1]);
+        }
+    }
+
+    #[test]
+    fn test_dispute_constants_valid() {
+        assert_eq!(DISPUTE_WINDOW_HOURS, 48);
+        assert_eq!(DISPUTE_STAKE_BPS, 500);
+        assert_eq!(DISPUTE_RESOLUTION_TIMEOUT_HOURS, 168);
+    }
+
+    #[test]
+    fn test_registry_freeze_max_5_years() {
+        let max_lifetime = REGISTRY_AUTO_FREEZE_SECONDS
+            + (REGISTRY_MAX_EXTENSIONS as i64) * REGISTRY_EXTENSION_DURATION_SECONDS;
+        // 3 years + 2 * 1 year = 5 years = 157,680,000 seconds
+        assert_eq!(max_lifetime, 157_680_000);
     }
 
     #[test]

@@ -2,7 +2,6 @@
 ///
 /// This module implements the AI agent trust and reputation system.
 /// Agents earn higher limits and capabilities through demonstrated performance.
-
 use anchor_lang::prelude::*;
 
 use crate::constants::*;

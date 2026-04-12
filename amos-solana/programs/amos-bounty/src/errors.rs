@@ -2,7 +2,6 @@
 ///
 /// All custom errors for the bounty distribution program.
 /// These provide clear feedback when operations fail validation.
-
 use anchor_lang::prelude::*;
 
 #[error_code]
@@ -154,7 +153,9 @@ pub enum BountyError {
     #[msg("Invalid holder pool: Holder pool does not match configuration")]
     InvalidHolderPool,
 
-    #[msg("Fee recipients not set: Must call set_fee_recipients before releasing commercial bounties")]
+    #[msg(
+        "Fee recipients not set: Must call set_fee_recipients before releasing commercial bounties"
+    )]
     FeeRecipientsNotSet,
 
     #[msg("Escrow below minimum: Commercial bounties require a minimum escrow amount")]
@@ -168,4 +169,73 @@ pub enum BountyError {
 
     #[msg("Metrics update too frequent: Must wait before updating again")]
     MetricsUpdateTooFrequent,
+
+    // ========================================================================
+    // Claim Timeout Errors
+    // ========================================================================
+    #[msg("Bounty not open: Cannot claim a bounty that is not in Open status")]
+    BountyNotOpen,
+
+    #[msg("Claim not expired: Cannot release a claim before timeout")]
+    ClaimNotExpired,
+
+    #[msg("Claim timeout invalid: Must be between MIN and MAX hours")]
+    InvalidClaimTimeout,
+
+    #[msg("Concurrent claim limit reached: Too many active claims for trust level")]
+    ConcurrentClaimLimitReached,
+
+    #[msg("Bounty not claimed: Cannot submit work for an unclaimed bounty")]
+    BountyNotClaimed,
+
+    #[msg("Not the claimer: Only the claimer can submit work")]
+    NotTheClaimer,
+
+    // ========================================================================
+    // Dispute Errors
+    // ========================================================================
+    #[msg("Dispute window expired: Must file dispute within 48 hours of rejection")]
+    DisputeWindowExpired,
+
+    #[msg("Bounty not rejected: Can only dispute rejected bounties")]
+    BountyNotRejected,
+
+    #[msg("Dispute already filed: Cannot file duplicate dispute")]
+    DisputeAlreadyFiled,
+
+    #[msg("Dispute already resolved: Cannot resolve twice")]
+    DisputeAlreadyResolved,
+
+    #[msg("Insufficient stake: Must stake 5% of bounty value to dispute")]
+    InsufficientDisputeStake,
+
+    #[msg("Not dispute resolver: Only governance authority can resolve disputes")]
+    NotDisputeResolver,
+
+    #[msg("Dispute resolution timeout: Not yet past 7-day resolution window")]
+    DisputeResolutionNotTimedOut,
+
+    // ========================================================================
+    // Registry Errors
+    // ========================================================================
+    #[msg("Registry frozen: No changes allowed after freeze")]
+    RegistryFrozen,
+
+    #[msg("Registry already frozen: Cannot freeze again")]
+    AlreadyFrozen,
+
+    #[msg("Entry frozen: This contribution type is permanently locked")]
+    EntryFrozen,
+
+    #[msg("Entry inactive: Cannot operate on inactive entry")]
+    EntryInactive,
+
+    #[msg("Registry full: Maximum 32 contribution types")]
+    RegistryFull,
+
+    #[msg("Freeze deadline not reached: Cannot auto-freeze before deadline")]
+    DeadlineNotReached,
+
+    #[msg("Max extensions reached: Cannot extend freeze deadline further")]
+    MaxExtensionsReached,
 }

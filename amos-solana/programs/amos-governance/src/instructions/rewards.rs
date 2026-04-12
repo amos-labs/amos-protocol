@@ -1,11 +1,11 @@
 // AMOS Governance Program - Reward Instructions
 // Handles staged bounty reward distribution
 
-use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, TokenAccount, Transfer, transfer};
 use crate::constants::*;
 use crate::errors::GovernanceError;
 use crate::state::*;
+use anchor_lang::prelude::*;
+use anchor_spl::token::{transfer, Token, TokenAccount, Transfer};
 
 // ============================================================================
 // Claim Bounty Reward
@@ -32,7 +32,7 @@ pub struct ClaimBountyReward<'info> {
         seeds = [FEATURE_PROPOSAL_SEED, proposal_id.to_le_bytes().as_ref()],
         bump = feature_proposal.bump
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 
     /// Treasury token account
     #[account(
@@ -84,38 +84,46 @@ pub fn claim_bounty_reward(
                 GovernanceError::RequiredGatesNotPassed
             );
             (
-                proposal.benchmark_result.as_mut()
+                proposal
+                    .benchmark_result
+                    .as_mut()
                     .ok_or(GovernanceError::GateNotEvaluated)?,
-                params.bounty_completion_bps
+                params.bounty_completion_bps,
             )
-        },
+        }
         GateType::ABTest => {
             // A/B test gate requires benchmark to pass first
             require!(
-                proposal.benchmark_result
+                proposal
+                    .benchmark_result
                     .as_ref()
                     .map(|r| r.passed)
                     .unwrap_or(false),
                 GovernanceError::RequiredGatesNotPassed
             );
             (
-                proposal.ab_test_result.as_mut()
+                proposal
+                    .ab_test_result
+                    .as_mut()
                     .ok_or(GovernanceError::GateNotEvaluated)?,
-                params.bounty_ab_bps
+                params.bounty_ab_bps,
             )
-        },
+        }
         GateType::Feedback => {
             // Cannot claim merge reward separately - use finalize_rewards
             return Err(GovernanceError::InvalidGateType.into());
-        },
+        }
         GateType::StewardApproval => {
             // Steward approval doesn't have its own reward
             return Err(GovernanceError::InvalidGateType.into());
-        },
+        }
     };
 
     // Check if gate passed
-    require!(gate_result.passed, GovernanceError::CannotClaimRewardGateNotPassed);
+    require!(
+        gate_result.passed,
+        GovernanceError::CannotClaimRewardGateNotPassed
+    );
 
     // Check if reward already claimed
     require!(
@@ -130,8 +138,8 @@ pub fn claim_bounty_reward(
         .checked_div(BPS_DENOMINATOR as u128)
         .ok_or(GovernanceError::DivisionByZero)?;
 
-    let reward_amount = u64::try_from(reward_amount)
-        .map_err(|_| GovernanceError::RewardCalculationOverflow)?;
+    let reward_amount =
+        u64::try_from(reward_amount).map_err(|_| GovernanceError::RewardCalculationOverflow)?;
 
     // Verify treasury has sufficient funds
     require!(
@@ -140,10 +148,7 @@ pub fn claim_bounty_reward(
     );
 
     // Transfer reward from treasury to proposer
-    let governance_seeds = &[
-        GOVERNANCE_SEED,
-        &[governance.bump],
-    ];
+    let governance_seeds = &[GOVERNANCE_SEED, &[governance.bump]];
     let signer_seeds = &[&governance_seeds[..]];
 
     let cpi_accounts = Transfer {
@@ -164,7 +169,8 @@ pub fn claim_bounty_reward(
     gate_result.reward_claimed = true;
 
     // Update governance totals
-    governance.total_bounties_paid = governance.total_bounties_paid
+    governance.total_bounties_paid = governance
+        .total_bounties_paid
         .checked_add(reward_amount)
         .ok_or(GovernanceError::ArithmeticOverflow)?;
 
@@ -175,7 +181,8 @@ pub fn claim_bounty_reward(
 
     proposal.updated_at = Clock::get()?.unix_timestamp;
 
-    msg!("Bounty reward claimed for proposal {}: {} ({:?} gate, {}bps)",
+    msg!(
+        "Bounty reward claimed for proposal {}: {} ({:?} gate, {}bps)",
         proposal_id,
         reward_amount,
         gate_type,
@@ -211,7 +218,7 @@ pub struct FinalizeRewards<'info> {
         bump = feature_proposal.bump,
         constraint = feature_proposal.status == ProposalStatus::RewardsDistribution @ GovernanceError::InvalidProposalStatus
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 
     /// Treasury token account
     #[account(
@@ -236,31 +243,32 @@ pub struct FinalizeRewards<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-pub fn finalize_rewards(
-    ctx: Context<FinalizeRewards>,
-    proposal_id: u64,
-) -> Result<()> {
+pub fn finalize_rewards(ctx: Context<FinalizeRewards>, proposal_id: u64) -> Result<()> {
     let proposal = &mut ctx.accounts.feature_proposal;
     let params = &ctx.accounts.governance_params;
     let governance = &mut ctx.accounts.governance_config;
 
     // Verify all required gates have passed
-    let benchmark_passed = proposal.benchmark_result
+    let benchmark_passed = proposal
+        .benchmark_result
         .as_ref()
         .map(|r| r.passed)
         .unwrap_or(false);
 
-    let ab_test_passed = proposal.ab_test_result
+    let ab_test_passed = proposal
+        .ab_test_result
         .as_ref()
         .map(|r| r.passed)
         .unwrap_or(false);
 
-    let feedback_passed = proposal.feedback_result
+    let feedback_passed = proposal
+        .feedback_result
         .as_ref()
         .map(|r| r.passed)
         .unwrap_or(false);
 
-    let steward_approved = proposal.steward_approval_result
+    let steward_approved = proposal
+        .steward_approval_result
         .as_ref()
         .map(|r| r.passed)
         .unwrap_or(false);
@@ -277,8 +285,8 @@ pub fn finalize_rewards(
         .checked_div(BPS_DENOMINATOR as u128)
         .ok_or(GovernanceError::DivisionByZero)?;
 
-    let remaining_reward = u64::try_from(remaining_reward)
-        .map_err(|_| GovernanceError::RewardCalculationOverflow)?;
+    let remaining_reward =
+        u64::try_from(remaining_reward).map_err(|_| GovernanceError::RewardCalculationOverflow)?;
 
     // Verify treasury has sufficient funds
     require!(
@@ -287,10 +295,7 @@ pub fn finalize_rewards(
     );
 
     // Transfer remaining reward
-    let governance_seeds = &[
-        GOVERNANCE_SEED,
-        &[governance.bump],
-    ];
+    let governance_seeds = &[GOVERNANCE_SEED, &[governance.bump]];
     let signer_seeds = &[&governance_seeds[..]];
 
     let cpi_accounts = Transfer {
@@ -308,7 +313,8 @@ pub fn finalize_rewards(
     transfer(cpi_ctx, remaining_reward)?;
 
     // Update governance totals
-    governance.total_bounties_paid = governance.total_bounties_paid
+    governance.total_bounties_paid = governance
+        .total_bounties_paid
         .checked_add(remaining_reward)
         .ok_or(GovernanceError::ArithmeticOverflow)?;
 
@@ -316,7 +322,8 @@ pub fn finalize_rewards(
     proposal.status = ProposalStatus::Finalized;
     proposal.updated_at = Clock::get()?.unix_timestamp;
 
-    msg!("Proposal {} finalized with remaining reward: {}",
+    msg!(
+        "Proposal {} finalized with remaining reward: {}",
         proposal_id,
         remaining_reward
     );

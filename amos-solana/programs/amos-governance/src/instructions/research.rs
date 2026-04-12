@@ -1,11 +1,11 @@
 // AMOS Governance Program - Research Instructions
 // Handles research proposal submission, approval, milestones, and graduation
 
-use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, TokenAccount, Transfer, transfer};
 use crate::constants::*;
 use crate::errors::GovernanceError;
 use crate::state::*;
+use anchor_lang::prelude::*;
+use anchor_spl::token::{transfer, Token, TokenAccount, Transfer};
 
 // ============================================================================
 // Submit Research Proposal
@@ -92,7 +92,11 @@ pub fn submit_research_proposal(
     proposal.bump = ctx.bumps.research_proposal;
     proposal.reserved = [0; 128];
 
-    msg!("Research proposal {} submitted by {}", proposal_id, proposal.proposer);
+    msg!(
+        "Research proposal {} submitted by {}",
+        proposal_id,
+        proposal.proposer
+    );
     msg!("Title: {}", proposal.title);
     msg!("Stipend: {}", proposal.stipend);
     msg!("Milestones: {}", proposal.milestones.len());
@@ -151,10 +155,7 @@ pub struct ApproveResearch<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-pub fn approve_research(
-    ctx: Context<ApproveResearch>,
-    proposal_id: u64,
-) -> Result<()> {
+pub fn approve_research(ctx: Context<ApproveResearch>, proposal_id: u64) -> Result<()> {
     let proposal = &mut ctx.accounts.research_proposal;
     let params = &ctx.accounts.governance_params;
     let governance = &ctx.accounts.governance_config;
@@ -166,8 +167,8 @@ pub fn approve_research(
         .checked_div(BPS_DENOMINATOR as u128)
         .ok_or(GovernanceError::DivisionByZero)?;
 
-    let stipend_amount = u64::try_from(stipend_amount)
-        .map_err(|_| GovernanceError::RewardCalculationOverflow)?;
+    let stipend_amount =
+        u64::try_from(stipend_amount).map_err(|_| GovernanceError::RewardCalculationOverflow)?;
 
     // Verify treasury has sufficient funds
     require!(
@@ -176,10 +177,7 @@ pub fn approve_research(
     );
 
     // Transfer stipend to researcher
-    let governance_seeds = &[
-        GOVERNANCE_SEED,
-        &[governance.bump],
-    ];
+    let governance_seeds = &[GOVERNANCE_SEED, &[governance.bump]];
     let signer_seeds = &[&governance_seeds[..]];
 
     let cpi_accounts = Transfer {
@@ -200,7 +198,8 @@ pub fn approve_research(
     proposal.status = ResearchStatus::Active;
     proposal.approved_at = Some(Clock::get()?.unix_timestamp);
 
-    msg!("Research proposal {} approved with stipend: {}",
+    msg!(
+        "Research proposal {} approved with stipend: {}",
         proposal_id,
         stipend_amount
     );
@@ -272,11 +271,13 @@ pub fn report_research_milestone(
     milestone.evidence_hash = Some(evidence_hash);
 
     // Advance to next milestone
-    proposal.current_milestone = proposal.current_milestone
+    proposal.current_milestone = proposal
+        .current_milestone
         .checked_add(1)
         .ok_or(GovernanceError::ArithmeticOverflow)?;
 
-    msg!("Research proposal {} milestone {} completed",
+    msg!(
+        "Research proposal {} milestone {} completed",
         proposal_id,
         milestone_index
     );
@@ -341,18 +342,13 @@ pub struct GraduateResearch<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-pub fn graduate_research(
-    ctx: Context<GraduateResearch>,
-    proposal_id: u64,
-) -> Result<()> {
+pub fn graduate_research(ctx: Context<GraduateResearch>, proposal_id: u64) -> Result<()> {
     let proposal = &mut ctx.accounts.research_proposal;
     let params = &ctx.accounts.governance_params;
     let governance = &ctx.accounts.governance_config;
 
     // Verify all milestones completed
-    let all_completed = proposal.milestones
-        .iter()
-        .all(|m| m.completed);
+    let all_completed = proposal.milestones.iter().all(|m| m.completed);
 
     require!(all_completed, GovernanceError::NotAllMilestonesCompleted);
 
@@ -363,8 +359,8 @@ pub fn graduate_research(
         .checked_div(BPS_DENOMINATOR as u128)
         .ok_or(GovernanceError::DivisionByZero)?;
 
-    let success_bonus = u64::try_from(success_bonus)
-        .map_err(|_| GovernanceError::RewardCalculationOverflow)?;
+    let success_bonus =
+        u64::try_from(success_bonus).map_err(|_| GovernanceError::RewardCalculationOverflow)?;
 
     // Verify treasury has sufficient funds
     require!(
@@ -373,10 +369,7 @@ pub fn graduate_research(
     );
 
     // Transfer success bonus to researcher
-    let governance_seeds = &[
-        GOVERNANCE_SEED,
-        &[governance.bump],
-    ];
+    let governance_seeds = &[GOVERNANCE_SEED, &[governance.bump]];
     let signer_seeds = &[&governance_seeds[..]];
 
     let cpi_accounts = Transfer {
@@ -396,7 +389,8 @@ pub fn graduate_research(
     // Graduate research
     proposal.status = ResearchStatus::Graduated;
 
-    msg!("Research proposal {} graduated with success bonus: {}",
+    msg!(
+        "Research proposal {} graduated with success bonus: {}",
         proposal_id,
         success_bonus
     );

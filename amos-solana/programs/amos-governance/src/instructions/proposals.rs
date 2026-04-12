@@ -1,11 +1,11 @@
 // AMOS Governance Program - Proposal Instructions
 // Handles feature proposal submission, voting, and status updates
 
-use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, TokenAccount, Transfer, transfer};
 use crate::constants::*;
 use crate::errors::GovernanceError;
 use crate::state::*;
+use anchor_lang::prelude::*;
+use anchor_spl::token::{transfer, Token, TokenAccount, Transfer};
 
 // ============================================================================
 // Submit Feature Proposal
@@ -29,7 +29,7 @@ pub struct SubmitFeatureProposal<'info> {
         seeds = [FEATURE_PROPOSAL_SEED, proposal_id.to_le_bytes().as_ref()],
         bump
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 
     #[account(mut)]
     pub proposer: Signer<'info>,
@@ -88,11 +88,16 @@ pub fn submit_feature_proposal(
     proposal.reserved = [0; 128];
 
     // Increment total proposals counter
-    governance.total_proposals = governance.total_proposals
+    governance.total_proposals = governance
+        .total_proposals
         .checked_add(1)
         .ok_or(GovernanceError::ArithmeticOverflow)?;
 
-    msg!("Feature proposal {} submitted by {}", proposal_id, proposal.proposer);
+    msg!(
+        "Feature proposal {} submitted by {}",
+        proposal_id,
+        proposal.proposer
+    );
     msg!("Title: {}", proposal.title);
     msg!("Estimated bounty: {}", proposal.estimated_bounty);
 
@@ -120,7 +125,7 @@ pub struct VoteForFeature<'info> {
         bump = feature_proposal.bump,
         constraint = feature_proposal.status == ProposalStatus::Active @ GovernanceError::InvalidProposalStatus
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 
     #[account(
         init,
@@ -159,8 +164,14 @@ pub fn vote_for_feature(
     let voter_balance = ctx.accounts.voter_token_account.amount;
 
     // Validate vote amount
-    require!(vote_amount >= MIN_VOTE_AMOUNT, GovernanceError::VoteAmountTooLow);
-    require!(vote_amount <= voter_balance, GovernanceError::InsufficientBalance);
+    require!(
+        vote_amount >= MIN_VOTE_AMOUNT,
+        GovernanceError::VoteAmountTooLow
+    );
+    require!(
+        vote_amount <= voter_balance,
+        GovernanceError::InsufficientBalance
+    );
 
     // Cannot vote on own proposal
     require!(
@@ -171,7 +182,8 @@ pub fn vote_for_feature(
     let clock = Clock::get()?;
 
     // Check if proposal has expired
-    let age = clock.unix_timestamp
+    let age = clock
+        .unix_timestamp
         .checked_sub(proposal.created_at)
         .ok_or(GovernanceError::ArithmeticUnderflow)?;
     require!(
@@ -189,17 +201,20 @@ pub fn vote_for_feature(
     vote_record.reserved = [0; 64];
 
     // Update proposal vote count
-    proposal.total_votes = proposal.total_votes
+    proposal.total_votes = proposal
+        .total_votes
         .checked_add(vote_amount)
         .ok_or(GovernanceError::ArithmeticOverflow)?;
     proposal.updated_at = clock.unix_timestamp;
 
     // Update governance totals
-    governance.total_votes = governance.total_votes
+    governance.total_votes = governance
+        .total_votes
         .checked_add(1)
         .ok_or(GovernanceError::ArithmeticOverflow)?;
 
-    msg!("Vote cast: {} tokens for proposal {} by {}",
+    msg!(
+        "Vote cast: {} tokens for proposal {} by {}",
         vote_amount,
         proposal_id,
         vote_record.voter
@@ -222,7 +237,7 @@ pub struct WithdrawVote<'info> {
         seeds = [FEATURE_PROPOSAL_SEED, proposal_id.to_le_bytes().as_ref()],
         bump = feature_proposal.bump
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 
     #[account(
         mut,
@@ -240,16 +255,14 @@ pub struct WithdrawVote<'info> {
     pub voter: Signer<'info>,
 }
 
-pub fn withdraw_vote(
-    ctx: Context<WithdrawVote>,
-    proposal_id: u64,
-) -> Result<()> {
+pub fn withdraw_vote(ctx: Context<WithdrawVote>, proposal_id: u64) -> Result<()> {
     let proposal = &mut ctx.accounts.feature_proposal;
     let vote_record = &mut ctx.accounts.vote_record;
     let clock = Clock::get()?;
 
     // Check if vote is locked
-    let time_since_vote = clock.unix_timestamp
+    let time_since_vote = clock
+        .unix_timestamp
         .checked_sub(vote_record.voted_at)
         .ok_or(GovernanceError::ArithmeticUnderflow)?;
 
@@ -268,12 +281,14 @@ pub fn withdraw_vote(
     vote_record.withdrawn_at = Some(clock.unix_timestamp);
 
     // Update proposal vote count
-    proposal.total_votes = proposal.total_votes
+    proposal.total_votes = proposal
+        .total_votes
         .checked_sub(vote_record.amount)
         .ok_or(GovernanceError::ArithmeticUnderflow)?;
     proposal.updated_at = clock.unix_timestamp;
 
-    msg!("Vote withdrawn: {} tokens from proposal {} by {}",
+    msg!(
+        "Vote withdrawn: {} tokens from proposal {} by {}",
         vote_record.amount,
         proposal_id,
         vote_record.voter
@@ -301,7 +316,7 @@ pub struct UpdateProposalStatus<'info> {
         seeds = [FEATURE_PROPOSAL_SEED, proposal_id.to_le_bytes().as_ref()],
         bump = feature_proposal.bump
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 
     #[account(
         constraint = oracle.key() == governance_config.oracle @ GovernanceError::OracleOnly
@@ -320,13 +335,13 @@ pub fn update_proposal_status(
     // Validate status transition
     match (proposal.status, new_status) {
         // Valid transitions
-        (ProposalStatus::Active, ProposalStatus::InDevelopment) => {},
+        (ProposalStatus::Active, ProposalStatus::InDevelopment) => {}
         (ProposalStatus::InDevelopment, ProposalStatus::AwaitingGates) => {
             proposal.completed_at = Some(clock.unix_timestamp);
-        },
-        (ProposalStatus::AwaitingGates, ProposalStatus::RewardsDistribution) => {},
-        (ProposalStatus::RewardsDistribution, ProposalStatus::Finalized) => {},
-        (_, ProposalStatus::Cancelled) => {},
+        }
+        (ProposalStatus::AwaitingGates, ProposalStatus::RewardsDistribution) => {}
+        (ProposalStatus::RewardsDistribution, ProposalStatus::Finalized) => {}
+        (_, ProposalStatus::Cancelled) => {}
         // Invalid transition
         _ => return Err(GovernanceError::InvalidProposalStatus.into()),
     }
@@ -335,7 +350,8 @@ pub fn update_proposal_status(
     proposal.status = new_status;
     proposal.updated_at = clock.unix_timestamp;
 
-    msg!("Proposal {} status updated from {:?} to {:?}",
+    msg!(
+        "Proposal {} status updated from {:?} to {:?}",
         proposal_id,
         old_status,
         new_status

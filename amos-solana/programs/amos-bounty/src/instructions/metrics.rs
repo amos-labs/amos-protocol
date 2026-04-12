@@ -3,7 +3,6 @@
 /// Oracle-fed on-chain metrics for dynamic decay rate computation.
 /// The PlatformMetrics singleton tracks rolling 30-day economic health
 /// and derives the effective decay rate from profit ratio.
-
 use anchor_lang::prelude::*;
 
 use crate::constants::*;
@@ -150,7 +149,9 @@ pub fn handler_update_metrics(
         MIN_DECAY_RATE_BPS
     };
 
-    let clamped_decay = effective_decay.max(MIN_DECAY_RATE_BPS).min(MAX_DECAY_RATE_BPS);
+    let clamped_decay = effective_decay
+        .max(MIN_DECAY_RATE_BPS)
+        .min(MAX_DECAY_RATE_BPS);
     metrics.computed_decay_rate_bps = clamped_decay;
 
     // Update the config's decay rate to match computed value
@@ -167,7 +168,11 @@ pub fn handler_update_metrics(
         timestamp: clock.unix_timestamp,
     });
 
-    msg!("Platform metrics updated: profit_ratio={}bps, decay_rate={}bps", profit_ratio_bps, clamped_decay);
+    msg!(
+        "Platform metrics updated: profit_ratio={}bps, decay_rate={}bps",
+        profit_ratio_bps,
+        clamped_decay
+    );
 
     Ok(())
 }
@@ -195,7 +200,8 @@ mod tests {
     fn test_decay_rate_formula_no_profit() {
         // 0% profit ratio → base 10% decay
         let profit_ratio_bps: u16 = 0;
-        let reduction = (profit_ratio_bps as u64) * DECAY_PROFIT_MULTIPLIER_BPS as u64 / BPS_DENOMINATOR as u64;
+        let reduction =
+            (profit_ratio_bps as u64) * DECAY_PROFIT_MULTIPLIER_BPS as u64 / BPS_DENOMINATOR as u64;
         let decay = (BASE_DECAY_RATE_BPS as u64 - reduction) as u16;
         assert_eq!(decay, 1000); // 10%
     }
@@ -204,7 +210,8 @@ mod tests {
     fn test_decay_rate_formula_full_profit() {
         // 100% profit ratio → 10% - 5% = 5% decay
         let profit_ratio_bps: u16 = 10000;
-        let reduction = (profit_ratio_bps as u64) * DECAY_PROFIT_MULTIPLIER_BPS as u64 / BPS_DENOMINATOR as u64;
+        let reduction =
+            (profit_ratio_bps as u64) * DECAY_PROFIT_MULTIPLIER_BPS as u64 / BPS_DENOMINATOR as u64;
         let decay = (BASE_DECAY_RATE_BPS as u64 - reduction) as u16;
         assert_eq!(decay, 500); // 5%
     }
@@ -213,7 +220,8 @@ mod tests {
     fn test_decay_rate_formula_50_percent_profit() {
         // 50% profit ratio → 10% - 2.5% = 7.5% decay
         let profit_ratio_bps: u16 = 5000;
-        let reduction = (profit_ratio_bps as u64) * DECAY_PROFIT_MULTIPLIER_BPS as u64 / BPS_DENOMINATOR as u64;
+        let reduction =
+            (profit_ratio_bps as u64) * DECAY_PROFIT_MULTIPLIER_BPS as u64 / BPS_DENOMINATOR as u64;
         let decay = (BASE_DECAY_RATE_BPS as u64 - reduction) as u16;
         assert_eq!(decay, 750); // 7.5%
     }

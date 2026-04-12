@@ -150,7 +150,8 @@ pub const GOVERNANCE_PARAMS_SIZE: usize = 8 + 32 + 64;
 /// 8 (discriminator) + 8 (id) + 32 (proposer) + (64 + 4) (title) + (500 + 4) (description)
 /// + 8 (estimated_bounty) + 8 (total_votes) + 1 (status) + (100 * 32 + 4) (customer_requests)
 /// + 8 (created_at) + 8 (updated_at) + 8 (completed_at) + 4 * 16 (gate results) + 1 (bump) + 128 (reserved)
-pub const FEATURE_PROPOSAL_SIZE: usize = 8 + 8 + 32 + 68 + 504 + 8 + 8 + 1 + 3204 + 8 + 8 + 8 + 64 + 1 + 128;
+pub const FEATURE_PROPOSAL_SIZE: usize =
+    8 + 8 + 32 + 68 + 504 + 8 + 8 + 1 + 3204 + 8 + 8 + 8 + 64 + 1 + 128;
 
 /// Space for VoteRecord account
 /// 8 (discriminator) + 32 (voter) + 8 (proposal_id) + 8 (amount) + 8 (voted_at) + 8 (withdrawn_at) + 1 (bump) + 64 (reserved)
@@ -160,7 +161,8 @@ pub const VOTE_RECORD_SIZE: usize = 8 + 32 + 8 + 8 + 8 + 8 + 1 + 64;
 /// 8 (discriminator) + 8 (id) + 32 (proposer) + (64 + 4) (title) + (500 + 4) (description)
 /// + 8 (stipend) + (10 * 100 + 4) (milestones) + 1 (status) + 8 (submitted_at) + 8 (approved_at)
 /// + 1 (current_milestone) + 1 (bump) + 128 (reserved)
-pub const RESEARCH_PROPOSAL_SIZE: usize = 8 + 8 + 32 + 68 + 504 + 8 + 1004 + 1 + 8 + 8 + 1 + 1 + 128;
+pub const RESEARCH_PROPOSAL_SIZE: usize =
+    8 + 8 + 32 + 68 + 504 + 8 + 1004 + 1 + 8 + 8 + 1 + 1 + 128;
 
 /// Space for BudgetGateProposal account
 /// 8 (discriminator) + 8 (id) + 32 (proposer) + (64 + 4) (title) + 8 (new_budget_threshold)

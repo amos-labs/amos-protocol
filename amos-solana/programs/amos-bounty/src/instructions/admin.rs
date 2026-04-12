@@ -2,7 +2,6 @@
 ///
 /// This module handles program initialization and administrative functions.
 /// Only the oracle authority can perform these operations.
-
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 
@@ -119,7 +118,11 @@ pub fn handler_update_decay(ctx: Context<UpdateDecayRate>, new_rate_bps: u16) ->
     let old_rate = config.decay_rate_bps;
     config.decay_rate_bps = new_rate_bps;
 
-    msg!("Decay rate updated from {} bps to {} bps", old_rate, new_rate_bps);
+    msg!(
+        "Decay rate updated from {} bps to {} bps",
+        old_rate,
+        new_rate_bps
+    );
     msg!("New annual decay rate: {}%", new_rate_bps / 100);
 
     Ok(())
@@ -232,7 +235,11 @@ pub fn handler_update_treasury(ctx: Context<UpdateTreasury>) -> Result<()> {
     let old_treasury = ctx.accounts.config.treasury;
     ctx.accounts.config.treasury = ctx.accounts.new_treasury.key();
 
-    msg!("Treasury updated from {} to {}", old_treasury, ctx.accounts.new_treasury.key());
+    msg!(
+        "Treasury updated from {} to {}",
+        old_treasury,
+        ctx.accounts.new_treasury.key()
+    );
 
     Ok(())
 }

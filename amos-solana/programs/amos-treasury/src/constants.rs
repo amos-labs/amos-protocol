@@ -3,7 +3,6 @@
 /// These constants define the immutable rules of the AMOS Treasury system.
 /// ALL transactions are denominated in AMOS tokens. No USDC track.
 /// Fee distribution percentages are hardcoded to ensure trust and transparency.
-
 use anchor_lang::prelude::*;
 
 // ============================================================================
@@ -80,8 +79,7 @@ mod tests {
     fn fee_shares_sum_to_100_percent() {
         let total = FEE_HOLDER_SHARE_BPS + FEE_BURN_SHARE_BPS + FEE_LABS_SHARE_BPS;
         assert_eq!(
-            total,
-            BPS_DENOMINATOR,
+            total, BPS_DENOMINATOR,
             "Fee shares must sum to exactly 10000 basis points (100%)"
         );
     }
@@ -100,7 +98,13 @@ mod tests {
 
     #[test]
     fn minimum_stake_requirements() {
-        assert!(MIN_STAKE_DAYS >= 30, "Minimum stake period should be at least 30 days");
-        assert!(MIN_STAKE_AMOUNT >= 100, "Minimum stake amount should be at least 100 tokens");
+        assert!(
+            MIN_STAKE_DAYS >= 30,
+            "Minimum stake period should be at least 30 days"
+        );
+        assert!(
+            MIN_STAKE_AMOUNT >= 100,
+            "Minimum stake amount should be at least 100 tokens"
+        );
     }
 }

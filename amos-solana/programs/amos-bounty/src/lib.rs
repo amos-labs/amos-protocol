@@ -54,7 +54,6 @@
 /// - Trust upgrades: On-chain threshold verification
 /// - Decay: Time-locked and rate-limited by protocol
 /// - All critical values bounded by MIN/MAX constants
-
 use anchor_lang::prelude::*;
 
 pub mod constants;
@@ -215,7 +214,12 @@ pub mod amos_bounty {
         reward_amount: u64,
         deadline: i64,
     ) -> Result<()> {
-        instructions::escrow::handler_create_commercial_bounty(ctx, bounty_id, reward_amount, deadline)
+        instructions::escrow::handler_create_commercial_bounty(
+            ctx,
+            bounty_id,
+            reward_amount,
+            deadline,
+        )
     }
 
     /// Release escrowed funds to the worker after oracle validates completion.
@@ -238,17 +242,22 @@ pub mod amos_bounty {
         external_reference: [u8; 64],
     ) -> Result<()> {
         instructions::escrow::handler_release_escrow(
-            ctx, bounty_id, base_points, quality_score, contribution_type,
-            is_agent, agent_id, reviewer, evidence_hash, external_reference,
+            ctx,
+            bounty_id,
+            base_points,
+            quality_score,
+            contribution_type,
+            is_agent,
+            agent_id,
+            reviewer,
+            evidence_hash,
+            external_reference,
         )
     }
 
     /// Refund escrowed funds to the poster if bounty was not completed.
     /// No fee is charged on refunds.
-    pub fn refund_commercial_bounty(
-        ctx: Context<RefundEscrow>,
-        bounty_id: [u8; 32],
-    ) -> Result<()> {
+    pub fn refund_commercial_bounty(ctx: Context<RefundEscrow>, bounty_id: [u8; 32]) -> Result<()> {
         instructions::escrow::handler_refund_escrow(ctx, bounty_id)
     }
 
@@ -276,9 +285,7 @@ pub mod amos_bounty {
 
     /// Initialize the PlatformMetrics singleton.
     /// Oracle-only. Must be called once after program initialization.
-    pub fn initialize_platform_metrics(
-        ctx: Context<InitializePlatformMetrics>,
-    ) -> Result<()> {
+    pub fn initialize_platform_metrics(ctx: Context<InitializePlatformMetrics>) -> Result<()> {
         instructions::metrics::handler_initialize_metrics(ctx)
     }
 
@@ -299,9 +306,15 @@ pub mod amos_bounty {
         treasury_bounty_count: u32,
     ) -> Result<()> {
         instructions::metrics::handler_update_metrics(
-            ctx, commercial_volume_30d, fees_collected_30d,
-            fees_to_holders_30d, fees_burned_30d, fees_to_labs_30d,
-            system_volume_30d, commercial_bounty_count, treasury_bounty_count,
+            ctx,
+            commercial_volume_30d,
+            fees_collected_30d,
+            fees_to_holders_30d,
+            fees_burned_30d,
+            fees_to_labs_30d,
+            system_volume_30d,
+            commercial_bounty_count,
+            treasury_bounty_count,
         )
     }
 
@@ -310,17 +323,6 @@ pub mod amos_bounty {
     // ========================================================================
 
     /// Register a new AI agent in the trust system
-    ///
-    /// Agents start at trust level 1 with limited capabilities:
-    /// - Max points per bounty: 100
-    /// - Daily bounty limit: 3
-    ///
-    /// They can upgrade by demonstrating consistent quality work.
-    ///
-    /// This is a PERMISSIONLESS operation - anyone can register an agent.
-    ///
-    /// # Arguments
-    /// * `agent_id` - Unique identifier (typically a hash of agent properties)
     pub fn register_agent_trust(
         ctx: Context<RegisterAgentTrust>,
         agent_id: [u8; 32],
@@ -329,17 +331,6 @@ pub mod amos_bounty {
     }
 
     /// Record the outcome of an agent's bounty submission
-    ///
-    /// Updates completion/rejection counts and recalculates reputation.
-    /// Only the oracle can call this as part of the validation process.
-    ///
-    /// Reputation formula:
-    /// `reputation = (completions × 10000) / (completions + rejections)`
-    ///
-    /// # Arguments
-    /// * `agent_id` - The agent's unique identifier
-    /// * `approved` - Whether the bounty was approved
-    /// * `tokens_earned` - Tokens earned if approved (0 if rejected)
     pub fn record_agent_completion(
         ctx: Context<RecordAgentCompletion>,
         agent_id: [u8; 32],
@@ -349,24 +340,135 @@ pub mod amos_bounty {
         instructions::trust::handler_record_completion(ctx, agent_id, approved, tokens_earned)
     }
 
-    /// Upgrade an agent's trust level
-    ///
-    /// Anyone can trigger this when on-chain thresholds are met:
-    ///
-    /// - Level 2: 3 completions, 5500 reputation → 200 max points, 5 daily
-    /// - Level 3: 10 completions, 6500 reputation → 500 max points, 10 daily
-    /// - Level 4: 25 completions, 7500 reputation → 1000 max points, 15 daily
-    /// - Level 5: 50 completions, 8500 reputation → 2000 max points, 25 daily
-    ///
-    /// This is a PERMISSIONLESS operation - the chain verifies eligibility.
-    ///
-    /// # Arguments
-    /// * `agent_id` - The agent's unique identifier
-    pub fn upgrade_trust_level(
-        ctx: Context<UpgradeTrustLevel>,
-        agent_id: [u8; 32],
-    ) -> Result<()> {
+    /// Upgrade an agent's trust level (PERMISSIONLESS)
+    pub fn upgrade_trust_level(ctx: Context<UpgradeTrustLevel>, agent_id: [u8; 32]) -> Result<()> {
         instructions::trust::handler_upgrade_trust(ctx, agent_id)
+    }
+
+    // ========================================================================
+    // Bounty Board — Claim, Timeout, and Lifecycle Instructions
+    // ========================================================================
+
+    /// Post a bounty listing to the board (system or commercial)
+    #[allow(clippy::too_many_arguments)]
+    pub fn post_bounty_listing(
+        ctx: Context<PostBountyListing>,
+        bounty_id: [u8; 32],
+        bounty_source: u8,
+        reward_amount: u64,
+        contribution_type: u8,
+        required_trust_level: u8,
+        claim_timeout_hours: u64,
+        deadline: i64,
+    ) -> Result<()> {
+        instructions::claims::handler_post_bounty_listing(
+            ctx,
+            bounty_id,
+            bounty_source,
+            reward_amount,
+            contribution_type,
+            required_trust_level,
+            claim_timeout_hours,
+            deadline,
+        )
+    }
+
+    /// Claim an open bounty. Enforces concurrent claim limits per trust level.
+    pub fn claim_bounty(ctx: Context<ClaimBounty>, bounty_id: [u8; 32]) -> Result<()> {
+        instructions::claims::handler_claim_bounty(ctx, bounty_id)
+    }
+
+    /// Release an expired claim back to the board (PERMISSIONLESS, no reputation penalty)
+    pub fn release_expired_claim(
+        ctx: Context<ReleaseExpiredClaim>,
+        bounty_id: [u8; 32],
+    ) -> Result<()> {
+        instructions::claims::handler_release_expired_claim(ctx, bounty_id)
+    }
+
+    // ========================================================================
+    // Dispute Instructions
+    // ========================================================================
+
+    /// File a dispute after bounty rejection (within 48h, stakes 5% of value)
+    pub fn file_dispute(ctx: Context<FileDispute>, bounty_id: [u8; 32]) -> Result<()> {
+        instructions::dispute::handler_file_dispute(ctx, bounty_id)
+    }
+
+    /// Resolve a dispute (governance authority only)
+    pub fn resolve_dispute(
+        ctx: Context<ResolveDispute>,
+        bounty_id: [u8; 32],
+        upheld: bool,
+    ) -> Result<()> {
+        instructions::dispute::handler_resolve_dispute(ctx, bounty_id, upheld)
+    }
+
+    /// Default dispute resolution after 7-day timeout (PERMISSIONLESS, worker-favorable)
+    pub fn default_dispute_resolution(
+        ctx: Context<DefaultDisputeResolution>,
+        bounty_id: [u8; 32],
+    ) -> Result<()> {
+        instructions::dispute::handler_default_dispute_resolution(ctx, bounty_id)
+    }
+
+    // ========================================================================
+    // Contribution Type Registry Instructions
+    // ========================================================================
+
+    /// Initialize the ContributionTypeRegistry with 11 seed types
+    pub fn initialize_registry(ctx: Context<InitializeRegistry>) -> Result<()> {
+        instructions::registry::handler_initialize_registry(ctx)
+    }
+
+    /// Add a new contribution type to the registry (governance only)
+    pub fn add_contribution_type(
+        ctx: Context<AddContributionType>,
+        name: [u8; 32],
+        multiplier_bps: u16,
+        pool_category: u8,
+    ) -> Result<()> {
+        instructions::registry::handler_add_contribution_type(
+            ctx,
+            name,
+            multiplier_bps,
+            pool_category,
+        )
+    }
+
+    /// Update a contribution type's multiplier or category (governance only)
+    pub fn update_contribution_type(
+        ctx: Context<UpdateContributionType>,
+        type_id: u8,
+        multiplier_bps: u16,
+        pool_category: u8,
+    ) -> Result<()> {
+        instructions::registry::handler_update_contribution_type(
+            ctx,
+            type_id,
+            multiplier_bps,
+            pool_category,
+        )
+    }
+
+    /// Freeze a single contribution type entry (ONE-WAY, irreversible)
+    pub fn freeze_entry(ctx: Context<FreezeEntry>, type_id: u8) -> Result<()> {
+        instructions::registry::handler_freeze_entry(ctx, type_id)
+    }
+
+    /// Freeze the entire registry (ONE-WAY, nuclear option)
+    pub fn freeze_registry(ctx: Context<FreezeRegistry>) -> Result<()> {
+        instructions::registry::handler_freeze_registry(ctx)
+    }
+
+    /// Auto-freeze registry after deadline (PERMISSIONLESS)
+    pub fn auto_freeze_registry(ctx: Context<AutoFreezeRegistry>) -> Result<()> {
+        instructions::registry::handler_auto_freeze_registry(ctx)
+    }
+
+    /// Extend freeze deadline by 1 year (governance only, max 2 extensions)
+    pub fn extend_freeze_deadline(ctx: Context<ExtendFreezeDeadline>) -> Result<()> {
+        instructions::registry::handler_extend_freeze_deadline(ctx)
     }
 }
 
@@ -408,8 +510,8 @@ mod tests {
             assert!(TRUST_LEVEL_DAILY_LIMITS[i] < TRUST_LEVEL_DAILY_LIMITS[i + 1]);
         }
 
-        // Contribution multipliers are valid
-        for i in 0..8 {
+        // Contribution multipliers are valid (8 technical + 3 growth = 11 types)
+        for i in 0..=10 {
             let multiplier = get_contribution_multiplier(i).unwrap();
             assert!(multiplier > 0);
             assert!(multiplier <= 15000); // Max 150%

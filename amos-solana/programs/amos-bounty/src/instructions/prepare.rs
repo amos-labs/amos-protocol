@@ -6,7 +6,6 @@
 ///
 /// This instruction exists to keep init_if_needed account creation separate
 /// from the main bounty logic, avoiding SBF stack frame overflow.
-
 use anchor_lang::prelude::*;
 
 use crate::constants::*;
@@ -46,10 +45,7 @@ pub struct PrepareBountySubmission<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler_prepare(
-    ctx: Context<PrepareBountySubmission>,
-    operator_key: Pubkey,
-) -> Result<()> {
+pub fn handler_prepare(ctx: Context<PrepareBountySubmission>, operator_key: Pubkey) -> Result<()> {
     let config = &ctx.accounts.config;
     let daily_pool = &mut ctx.accounts.daily_pool;
     let operator_stats = &mut ctx.accounts.operator_stats;
@@ -63,6 +59,10 @@ pub fn handler_prepare(
         daily_pool.total_points = 0;
         daily_pool.proof_count = 0;
         daily_pool.finalized = false;
+        daily_pool.growth_tokens_distributed = 0;
+        daily_pool.growth_points = 0;
+        daily_pool.technical_tokens_distributed = 0;
+        daily_pool.technical_points = 0;
         daily_pool.bump = ctx.bumps.daily_pool;
     }
 
@@ -74,6 +74,7 @@ pub fn handler_prepare(
         operator_stats.last_activity_time = clock.unix_timestamp;
         operator_stats.last_decay_time = clock.unix_timestamp;
         operator_stats.original_allocation = 0;
+        operator_stats.active_claim_count = 0;
     }
 
     Ok(())

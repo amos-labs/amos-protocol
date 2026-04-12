@@ -1,11 +1,11 @@
 // AMOS Governance Program - Governance Instructions
 // Handles governance initialization, parameter updates, and budget gate operations
 
-use anchor_lang::prelude::*;
-use anchor_spl::token::{Mint, Token, TokenAccount};
 use crate::constants::*;
 use crate::errors::GovernanceError;
 use crate::state::*;
+use anchor_lang::prelude::*;
+use anchor_spl::token::{Mint, Token, TokenAccount};
 
 // ============================================================================
 // Initialize Governance
@@ -74,14 +74,18 @@ pub fn initialize_governance(
 
     // Validate parameter sums
     require!(
-        stored_params.bounty_completion_bps
+        stored_params
+            .bounty_completion_bps
             .checked_add(stored_params.bounty_ab_bps)
             .and_then(|sum| sum.checked_add(stored_params.bounty_merge_bps))
             == Some(BPS_DENOMINATOR),
         GovernanceError::InvalidParameterSum
     );
 
-    msg!("Governance initialized with authority: {}", governance.authority);
+    msg!(
+        "Governance initialized with authority: {}",
+        governance.authority
+    );
     msg!("Oracle: {}", governance.oracle);
     msg!("Mint: {}", governance.mint);
 
@@ -121,7 +125,8 @@ pub fn update_governance_params(
     let params = &mut ctx.accounts.governance_params;
 
     // Validate bounty split sums to 100%
-    let bounty_sum = new_params.bounty_completion_bps
+    let bounty_sum = new_params
+        .bounty_completion_bps
         .checked_add(new_params.bounty_ab_bps)
         .and_then(|sum| sum.checked_add(new_params.bounty_merge_bps))
         .ok_or(GovernanceError::ArithmeticOverflow)?;
@@ -132,7 +137,8 @@ pub fn update_governance_params(
     );
 
     // Validate priority weights sum to 100%
-    let priority_sum = new_params.mrr_weight_bps
+    let priority_sum = new_params
+        .mrr_weight_bps
         .checked_add(new_params.community_weight_bps)
         .ok_or(GovernanceError::ArithmeticOverflow)?;
 
@@ -205,7 +211,11 @@ pub fn submit_budget_gate_proposal(
     proposal.bump = ctx.bumps.budget_proposal;
     proposal.reserved = [0; 128];
 
-    msg!("Budget gate proposal {} submitted by {}", proposal_id, proposal.proposer);
+    msg!(
+        "Budget gate proposal {} submitted by {}",
+        proposal_id,
+        proposal.proposer
+    );
 
     Ok(())
 }
@@ -374,16 +384,19 @@ pub fn cast_steward_vote(
 
     // Update vote counts
     if approve {
-        proposal.yes_votes = proposal.yes_votes
+        proposal.yes_votes = proposal
+            .yes_votes
             .checked_add(1)
             .ok_or(GovernanceError::ArithmeticOverflow)?;
     } else {
-        proposal.no_votes = proposal.no_votes
+        proposal.no_votes = proposal
+            .no_votes
             .checked_add(1)
             .ok_or(GovernanceError::ArithmeticOverflow)?;
     }
 
-    msg!("Steward {} voted {} on proposal {}",
+    msg!(
+        "Steward {} voted {} on proposal {}",
         vote_record.steward,
         if approve { "yes" } else { "no" },
         proposal_id
@@ -484,7 +497,11 @@ pub fn execute_budget_profile_activation(
     proposal.status = BudgetGateStatus::Executed;
     proposal.executed_at = Some(Clock::get()?.unix_timestamp);
 
-    msg!("Budget profile {} activated for proposal {}", profile_id, proposal_id);
+    msg!(
+        "Budget profile {} activated for proposal {}",
+        profile_id,
+        proposal_id
+    );
 
     Ok(())
 }

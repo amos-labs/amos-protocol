@@ -1,10 +1,10 @@
 // AMOS Governance Program - Quality Gate Instructions
 // Handles reporting and validation of quality gate results
 
-use anchor_lang::prelude::*;
 use crate::constants::*;
 use crate::errors::GovernanceError;
 use crate::state::*;
+use anchor_lang::prelude::*;
 
 // ============================================================================
 // Report Benchmark Result
@@ -31,7 +31,7 @@ pub struct ReportBenchmarkResult<'info> {
         bump = feature_proposal.bump,
         constraint = feature_proposal.status == ProposalStatus::AwaitingGates @ GovernanceError::InvalidProposalStatus
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 
     #[account(
         constraint = oracle.key() == governance_config.oracle @ GovernanceError::OracleOnly
@@ -76,7 +76,8 @@ pub fn report_benchmark_result(
 
     proposal.updated_at = clock.unix_timestamp;
 
-    msg!("Benchmark gate for proposal {}: {} (score: {}bps, threshold: {}bps)",
+    msg!(
+        "Benchmark gate for proposal {}: {} (score: {}bps, threshold: {}bps)",
         proposal_id,
         if passed { "PASSED" } else { "FAILED" },
         score_bps,
@@ -111,7 +112,7 @@ pub struct ReportABTestResult<'info> {
         bump = feature_proposal.bump,
         constraint = feature_proposal.status == ProposalStatus::AwaitingGates @ GovernanceError::InvalidProposalStatus
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 
     #[account(
         constraint = oracle.key() == governance_config.oracle @ GovernanceError::OracleOnly
@@ -156,7 +157,8 @@ pub fn report_ab_test_result(
 
     proposal.updated_at = clock.unix_timestamp;
 
-    msg!("A/B test gate for proposal {}: {} (improvement: {}bps, threshold: {}bps)",
+    msg!(
+        "A/B test gate for proposal {}: {} (improvement: {}bps, threshold: {}bps)",
         proposal_id,
         if passed { "PASSED" } else { "FAILED" },
         improvement_bps,
@@ -191,7 +193,7 @@ pub struct ReportFeedbackResult<'info> {
         bump = feature_proposal.bump,
         constraint = feature_proposal.status == ProposalStatus::AwaitingGates @ GovernanceError::InvalidProposalStatus
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 
     #[account(
         constraint = oracle.key() == governance_config.oracle @ GovernanceError::OracleOnly
@@ -236,7 +238,8 @@ pub fn report_feedback_result(
 
     proposal.updated_at = clock.unix_timestamp;
 
-    msg!("Feedback gate for proposal {}: {} (score: {}bps, threshold: {}bps)",
+    msg!(
+        "Feedback gate for proposal {}: {} (score: {}bps, threshold: {}bps)",
         proposal_id,
         if passed { "PASSED" } else { "FAILED" },
         score_bps,
@@ -271,7 +274,7 @@ pub struct ReportStewardApproval<'info> {
         bump = feature_proposal.bump,
         constraint = feature_proposal.status == ProposalStatus::AwaitingGates @ GovernanceError::InvalidProposalStatus
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 
     #[account(
         constraint = oracle.key() == governance_config.oracle @ GovernanceError::OracleOnly
@@ -314,7 +317,8 @@ pub fn report_steward_approval(
 
     proposal.updated_at = clock.unix_timestamp;
 
-    msg!("Steward approval gate for proposal {}: {} (approvals: {}, quorum: {})",
+    msg!(
+        "Steward approval gate for proposal {}: {} (approvals: {}, quorum: {})",
         proposal_id,
         if passed { "PASSED" } else { "FAILED" },
         approval_count,

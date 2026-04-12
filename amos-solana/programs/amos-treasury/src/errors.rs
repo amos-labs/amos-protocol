@@ -2,7 +2,6 @@
 ///
 /// Comprehensive error handling for all treasury operations.
 /// Clear error messages help with debugging and user experience.
-
 use anchor_lang::prelude::*;
 
 #[error_code]

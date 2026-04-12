@@ -20,7 +20,6 @@
 /// - Minimum stake: 100 AMOS tokens
 /// - Minimum hold period: 30 days before claiming
 /// - Can increase/decrease stake (maintaining minimum)
-
 use anchor_lang::prelude::*;
 
 pub mod constants;
@@ -44,24 +43,17 @@ pub mod amos_treasury {
     /// Initialize the AMOS Treasury config and holder pool.
     /// Must be followed by `initialize_vaults` to complete setup.
     /// Fee splits are hardcoded constants.
-    pub fn initialize(
-        ctx: Context<Initialize>,
-        labs_wallet: Pubkey,
-    ) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>, labs_wallet: Pubkey) -> Result<()> {
         instructions::admin::initialize(ctx, labs_wallet)
     }
 
     /// Create treasury AMOS vault. Must be called after `initialize`.
-    pub fn initialize_vaults(
-        ctx: Context<InitializeVaults>,
-    ) -> Result<()> {
+    pub fn initialize_vaults(ctx: Context<InitializeVaults>) -> Result<()> {
         instructions::admin::initialize_vaults(ctx)
     }
 
     /// Create reserve vault. Must be called after `initialize_vaults`.
-    pub fn initialize_reserve(
-        ctx: Context<InitializeReserve>,
-    ) -> Result<()> {
+    pub fn initialize_reserve(ctx: Context<InitializeReserve>) -> Result<()> {
         instructions::admin::initialize_reserve(ctx)
     }
 

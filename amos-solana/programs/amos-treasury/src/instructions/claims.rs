@@ -8,7 +8,6 @@
 /// - Proportional distribution based on stake
 /// - 30-day minimum hold period prevents gaming
 /// - All arithmetic uses checked operations
-
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
@@ -64,7 +63,11 @@ pub fn register_stake(ctx: Context<RegisterStake>, amount: u64) -> Result<()> {
         .checked_add(amount)
         .ok_or(TreasuryError::ArithmeticOverflow)?;
 
-    msg!("Stake registered: {} AMOS by {}", amount, stake_record.owner);
+    msg!(
+        "Stake registered: {} AMOS by {}",
+        amount,
+        stake_record.owner
+    );
 
     Ok(())
 }
@@ -115,7 +118,10 @@ pub struct RegisterStake<'info> {
 /// Update existing stake amount. Must maintain minimum 100 AMOS.
 /// Increasing stake resets the 30-day timer.
 pub fn update_stake(ctx: Context<UpdateStake>, new_amount: u64) -> Result<()> {
-    require!(new_amount >= MIN_STAKE_AMOUNT, TreasuryError::StakeBelowMinimum);
+    require!(
+        new_amount >= MIN_STAKE_AMOUNT,
+        TreasuryError::StakeBelowMinimum
+    );
 
     let stake_record = &mut ctx.accounts.stake_record;
     let treasury_config = &mut ctx.accounts.treasury_config;

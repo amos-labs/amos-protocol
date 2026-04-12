@@ -7,7 +7,6 @@
 /// Initialization is split into two instructions to avoid SBF stack overflow:
 /// 1. `initialize` — creates treasury_config and holder_pool
 /// 2. `initialize_vaults` — creates treasury_amos_vault and reserve_vault
-
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 
@@ -24,10 +23,7 @@ use crate::state::{HolderPool, TreasuryConfig};
 ///
 /// # Arguments
 /// * `labs_wallet` - AMOS Labs operating wallet (receives 10% of protocol fees)
-pub fn initialize(
-    ctx: Context<Initialize>,
-    labs_wallet: Pubkey,
-) -> Result<()> {
+pub fn initialize(ctx: Context<Initialize>, labs_wallet: Pubkey) -> Result<()> {
     let treasury_config = &mut ctx.accounts.treasury_config;
     let holder_pool = &mut ctx.accounts.holder_pool;
     let clock = Clock::get()?;
@@ -119,14 +115,15 @@ pub struct Initialize<'info> {
 // ============================================================================
 
 /// Create the treasury token vaults. Must be called after `initialize`.
-pub fn initialize_vaults(
-    ctx: Context<InitializeVaults>,
-) -> Result<()> {
+pub fn initialize_vaults(ctx: Context<InitializeVaults>) -> Result<()> {
     let treasury_config = &mut ctx.accounts.treasury_config;
 
     treasury_config.treasury_amos_vault = ctx.accounts.treasury_amos_vault.key();
 
-    msg!("Treasury AMOS vault initialized: {}", treasury_config.treasury_amos_vault);
+    msg!(
+        "Treasury AMOS vault initialized: {}",
+        treasury_config.treasury_amos_vault
+    );
     msg!("Call initialize_reserve next to create reserve vault");
 
     Ok(())
@@ -177,13 +174,14 @@ pub struct InitializeVaults<'info> {
 // ============================================================================
 
 /// Create the reserve vault. Must be called after `initialize_vaults`.
-pub fn initialize_reserve(
-    ctx: Context<InitializeReserve>,
-) -> Result<()> {
+pub fn initialize_reserve(ctx: Context<InitializeReserve>) -> Result<()> {
     let treasury_config = &mut ctx.accounts.treasury_config;
     treasury_config.reserve_vault = ctx.accounts.reserve_vault.key();
 
-    msg!("Reserve vault initialized: {}", treasury_config.reserve_vault);
+    msg!(
+        "Reserve vault initialized: {}",
+        treasury_config.reserve_vault
+    );
 
     Ok(())
 }
@@ -233,10 +231,7 @@ pub struct InitializeReserve<'info> {
 // ============================================================================
 
 /// Update the Labs wallet address. Authority-only.
-pub fn update_labs_wallet(
-    ctx: Context<UpdateLabsWallet>,
-    new_labs_wallet: Pubkey,
-) -> Result<()> {
+pub fn update_labs_wallet(ctx: Context<UpdateLabsWallet>, new_labs_wallet: Pubkey) -> Result<()> {
     require!(
         new_labs_wallet != Pubkey::default(),
         TreasuryError::InvalidLabsWallet

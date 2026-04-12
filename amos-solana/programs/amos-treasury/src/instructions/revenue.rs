@@ -4,7 +4,6 @@
 /// AMOS-only model: all fees denominated in AMOS tokens.
 /// Fee split: 50% to holder pool, 40% burned, 10% to Labs wallet.
 /// Labs gets remainder to handle rounding dust.
-
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount, Transfer};
 

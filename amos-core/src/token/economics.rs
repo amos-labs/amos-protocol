@@ -175,6 +175,70 @@ pub const MULTIPLIER_DESIGN_BPS: u64 = 10_000;
 /// Infrastructure: 130% (highest — core platform).
 pub const MULTIPLIER_INFRA_BPS: u64 = 13_000;
 
+// ── Growth bounty multipliers (Growth Pool) ────────────────────────────
+
+/// Bug report: 100% (finding real bugs is high-value work).
+pub const MULTIPLIER_BUG_REPORT_BPS: u64 = 10_000;
+/// Referral: 60% (growth work, lower than technical).
+pub const MULTIPLIER_REFERRAL_BPS: u64 = 6_000;
+/// Signup: 40% (lowest multiplier, one-time token grant).
+pub const MULTIPLIER_SIGNUP_BPS: u64 = 4_000;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EMISSION POOL SEPARATION — Bell Curve Growth Cap
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Phase 1 (Month 0-6): 10% growth, 90% technical.
+pub const GROWTH_PHASE_1_CAP_BPS: u64 = 1_000;
+/// Phase 2 (Month 6-24): 20% growth, 80% technical (peak).
+pub const GROWTH_PHASE_2_CAP_BPS: u64 = 2_000;
+/// Phase 3 (Month 24-36): 10% growth, 90% technical (taper).
+pub const GROWTH_PHASE_3_CAP_BPS: u64 = 1_000;
+/// Phase 4 (Month 36+): 5% growth, 95% technical (permanent floor).
+pub const GROWTH_PHASE_4_CAP_BPS: u64 = 500;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLAIM TIMEOUT
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Default claim timeout: 72 hours (3 days).
+pub const DEFAULT_CLAIM_TIMEOUT_HOURS: u64 = 72;
+/// Minimum claim timeout: 1 hour.
+pub const MIN_CLAIM_TIMEOUT_HOURS: u64 = 1;
+/// Maximum claim timeout: 720 hours (30 days).
+pub const MAX_CLAIM_TIMEOUT_HOURS: u64 = 720;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONCURRENT CLAIM LIMITS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Max concurrent claims per trust level: [L1, L2, L3, L4, L5].
+pub const MAX_CONCURRENT_CLAIMS: [u8; 5] = [3, 5, 8, 12, 20];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DISPUTE MECHANISM
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Dispute window: 48 hours after rejection.
+pub const DISPUTE_WINDOW_HOURS: u64 = 48;
+/// Dispute stake: 5% of bounty value.
+pub const DISPUTE_STAKE_BPS: u64 = 500;
+/// Dispute resolution timeout: 168 hours (7 days), defaults to upheld.
+pub const DISPUTE_RESOLUTION_TIMEOUT_HOURS: u64 = 168;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTRIBUTION TYPE REGISTRY
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Maximum contribution types in registry.
+pub const MAX_CONTRIBUTION_TYPES: u8 = 32;
+/// Auto-freeze deadline: 3 years from launch.
+pub const REGISTRY_AUTO_FREEZE_SECONDS: i64 = 94_608_000;
+/// Max governance extensions: 2.
+pub const REGISTRY_MAX_EXTENSIONS: u8 = 2;
+/// Extension duration: exactly 1 year.
+pub const REGISTRY_EXTENSION_DURATION_SECONDS: i64 = 31_536_000;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPILE-TIME VERIFICATION
 // ═══════════════════════════════════════════════════════════════════════════

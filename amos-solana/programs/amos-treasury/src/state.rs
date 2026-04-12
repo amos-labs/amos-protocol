@@ -3,7 +3,6 @@
 /// Defines all on-chain account structures for the treasury system.
 /// All transactions are denominated in AMOS tokens. No USDC track.
 /// Fee distribution: 50% holders, 40% burned, 10% Labs.
-
 use anchor_lang::prelude::*;
 
 // ============================================================================

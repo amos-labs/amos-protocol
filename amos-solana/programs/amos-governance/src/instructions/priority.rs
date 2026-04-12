@@ -1,10 +1,10 @@
 // AMOS Governance Program - Priority Calculation Instructions
 // Handles MRR-weighted priority scoring with recency decay
 
-use anchor_lang::prelude::*;
 use crate::constants::*;
 use crate::errors::GovernanceError;
 use crate::state::*;
+use anchor_lang::prelude::*;
 
 // ============================================================================
 // Calculate Priority Score
@@ -31,7 +31,7 @@ pub struct CalculatePriority<'info> {
         seeds = [FEATURE_PROPOSAL_SEED, proposal_id.to_le_bytes().as_ref()],
         bump = feature_proposal.bump
     )]
-    pub feature_proposal: Account<'info, FeatureProposal>,
+    pub feature_proposal: Box<Account<'info, FeatureProposal>>,
 }
 
 /// Priority calculation result
@@ -63,7 +63,8 @@ pub fn calculate_priority(
     let clock = Clock::get()?;
 
     // Calculate proposal age in days
-    let age_seconds = clock.unix_timestamp
+    let age_seconds = clock
+        .unix_timestamp
         .checked_sub(proposal.created_at)
         .ok_or(GovernanceError::InvalidTimestamp)?;
 
@@ -79,8 +80,8 @@ pub fn calculate_priority(
         .checked_div(BPS_DENOMINATOR as u128)
         .ok_or(GovernanceError::DivisionByZero)?;
 
-    let customer_score = u64::try_from(customer_score)
-        .map_err(|_| GovernanceError::ArithmeticOverflow)?;
+    let customer_score =
+        u64::try_from(customer_score).map_err(|_| GovernanceError::ArithmeticOverflow)?;
 
     // Calculate community vote component
     // Score = total_votes × (community_weight / BPS_DENOMINATOR)
@@ -90,8 +91,8 @@ pub fn calculate_priority(
         .checked_div(BPS_DENOMINATOR as u128)
         .ok_or(GovernanceError::DivisionByZero)?;
 
-    let community_score = u64::try_from(community_score)
-        .map_err(|_| GovernanceError::ArithmeticOverflow)?;
+    let community_score =
+        u64::try_from(community_score).map_err(|_| GovernanceError::ArithmeticOverflow)?;
 
     // Calculate recency bonus with exponential decay
     // Formula: initial_score × (0.5 ^ (age_days / halflife_days))
@@ -117,8 +118,7 @@ pub fn calculate_priority(
             .checked_div(decay_period as u128)
             .ok_or(GovernanceError::DivisionByZero)?;
 
-        u64::try_from(bonus)
-            .map_err(|_| GovernanceError::ArithmeticOverflow)?
+        u64::try_from(bonus).map_err(|_| GovernanceError::ArithmeticOverflow)?
     };
 
     // Calculate total priority score
@@ -152,10 +152,7 @@ pub fn calculate_priority(
 
 /// Calculates the exponential decay factor for recency bonus
 /// Returns a value between 0 and BPS_DENOMINATOR (0-100%)
-pub fn calculate_decay_factor(
-    age_days: u64,
-    halflife_days: u16,
-) -> Result<u16> {
+pub fn calculate_decay_factor(age_days: u64, halflife_days: u16) -> Result<u16> {
     // Using approximation: decay_factor ≈ 1 / (1 + age_days / halflife_days)
     // This provides a smooth decay curve
 
@@ -176,8 +173,7 @@ pub fn calculate_decay_factor(
         .checked_div(denominator)
         .ok_or(GovernanceError::DivisionByZero)?;
 
-    u16::try_from(factor)
-        .map_err(|_| GovernanceError::ArithmeticOverflow.into())
+    u16::try_from(factor).map_err(|_| GovernanceError::ArithmeticOverflow.into())
 }
 
 // ============================================================================
@@ -196,9 +192,7 @@ pub struct GetProposalRank<'info> {
 }
 
 /// Returns metadata for ranking proposals
-pub fn get_proposal_rank(
-    _ctx: Context<GetProposalRank>,
-) -> Result<u64> {
+pub fn get_proposal_rank(_ctx: Context<GetProposalRank>) -> Result<u64> {
     // This is a placeholder for off-chain ranking logic
     // In practice, you would query multiple proposals and sort by priority
     // Returning governance total_proposals as a simple metric

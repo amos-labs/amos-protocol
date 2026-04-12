@@ -1,8 +1,8 @@
 // AMOS Governance Program - State Accounts
 // Defines all on-chain account structures
 
-use anchor_lang::prelude::*;
 use crate::constants::*;
+use anchor_lang::prelude::*;
 
 // ============================================================================
 // Enums
