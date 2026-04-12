@@ -157,6 +157,9 @@ pub enum BountyError {
     #[msg("Fee recipients not set: Must call set_fee_recipients before releasing commercial bounties")]
     FeeRecipientsNotSet,
 
+    #[msg("Escrow below minimum: Commercial bounties require a minimum escrow amount")]
+    EscrowBelowMinimum,
+
     #[msg("Vault lockup active: Cannot withdraw until lockup period expires")]
     VaultLockupActive,
 

@@ -86,7 +86,11 @@ impl Tool for PlatformQueryTool {
         ];
 
         // Sanitize: only allow alphanumeric and underscore (prevents SQL injection)
-        if !module.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || module.is_empty() {
+        if !module
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || module.is_empty()
+        {
             return Ok(ToolResult::error(format!(
                 "Invalid module name: '{}'. Module names can only contain letters, numbers, and underscores.",
                 module

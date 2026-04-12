@@ -85,6 +85,10 @@ pub fn handler_create_commercial_bounty(
     _deadline: i64,
 ) -> Result<()> {
     require!(reward_amount > 0, BountyError::ZeroTokensCalculated);
+    require!(
+        reward_amount >= MIN_COMMERCIAL_ESCROW,
+        BountyError::EscrowBelowMinimum
+    );
 
     // Transfer tokens from poster to escrow
     token::transfer(

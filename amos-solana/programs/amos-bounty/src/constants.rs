@@ -138,6 +138,10 @@ pub const MIN_QUALITY_SCORE: u8 = 30;
 /// Maximum points that can be awarded for a single bounty
 pub const MAX_BOUNTY_POINTS: u16 = 2000;
 
+/// Minimum escrow amount for commercial bounties (100 tokens, assuming 6 decimals)
+/// Prevents dust bounties that waste compute and bloat account space
+pub const MIN_COMMERCIAL_ESCROW: u64 = 100_000_000;
+
 /// Maximum number of bounties an operator can submit per day
 /// Prevents spam and ensures fair distribution
 pub const MAX_DAILY_BOUNTIES_PER_OPERATOR: u16 = 50;
