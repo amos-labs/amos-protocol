@@ -59,6 +59,55 @@ pub struct AutonomousLoopConfig {
     pub polling_interval_secs: u64,
     pub backoff_max_secs: u64,
     pub min_fit_score: f64,
+    /// Max seconds to wait for verification before giving up (default: 24h).
+    pub verification_timeout_secs: u64,
+}
+
+/// Parse structured proof sections from agent output text.
+///
+/// Looks for markdown sections: APPROACH, IMPLEMENTATION, VERIFICATION, ARTIFACTS.
+/// Returns a JSON object with extracted sections (or null for missing sections).
+fn parse_structured_proof(output: &str) -> serde_json::Value {
+    let sections = ["APPROACH", "IMPLEMENTATION", "VERIFICATION", "ARTIFACTS"];
+    let mut result = serde_json::Map::new();
+
+    for section in &sections {
+        let header = format!("**{}**", section);
+        let alt_header = format!("## {}", section);
+        let start = output
+            .find(&header)
+            .or_else(|| output.find(&alt_header));
+
+        if let Some(pos) = start {
+            // Find the end: next section header or end of string
+            let content_start = output[pos..].find('\n').map(|i| pos + i + 1).unwrap_or(pos);
+            let content_end = sections
+                .iter()
+                .filter(|s| **s != *section)
+                .filter_map(|s| {
+                    output[content_start..]
+                        .find(&format!("**{}**", s))
+                        .or_else(|| output[content_start..].find(&format!("## {}", s)))
+                        .map(|i| content_start + i)
+                })
+                .min()
+                .unwrap_or(output.len());
+
+            let content = output[content_start..content_end].trim();
+            if !content.is_empty() {
+                result.insert(
+                    section.to_lowercase(),
+                    serde_json::Value::String(content.to_string()),
+                );
+            }
+        }
+    }
+
+    if result.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::Object(result)
+    }
 }
 
 /// Determine which model provider to use for a bounty execution.
@@ -134,9 +183,83 @@ impl AutonomousAgentLoop {
         self.telemetry.read().await.clone()
     }
 
+    /// Get the loop configuration (read-only reference).
+    pub fn config(&self) -> &AutonomousLoopConfig {
+        &self.config
+    }
+
     /// Signal the loop to stop.
     pub fn stop(&self) {
         self.stop_signal.notify_one();
+    }
+
+    /// Calculate exponential backoff with random jitter to prevent thundering herd.
+    fn jittered_backoff(&self, current: u64) -> u64 {
+        use rand::Rng;
+        let doubled = (current * 2).min(self.config.backoff_max_secs);
+        let jitter = rand::thread_rng().gen_range(0..=self.config.polling_interval_secs / 2);
+        (doubled + jitter).min(self.config.backoff_max_secs)
+    }
+
+    /// Persist current telemetry snapshot to the `agent_metrics` table.
+    async fn flush_telemetry(&self) {
+        let t = self.telemetry.read().await;
+        let now = chrono::Utc::now();
+        let completion_rate = if t.bounties_claimed > 0 {
+            t.bounties_completed as f64 / t.bounties_claimed as f64
+        } else {
+            0.0
+        };
+        sqlx::query(
+            r#"INSERT INTO agent_metrics
+               (agent_id, period_start, period_end,
+                bounties_discovered, bounties_claimed, bounties_completed,
+                bounties_failed, tokens_earned, completion_rate)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+        )
+        .bind(self.config.agent_id)
+        .bind(now)
+        .bind(now)
+        .bind(t.bounties_discovered as i32)
+        .bind(t.bounties_claimed as i32)
+        .bind(t.bounties_completed as i32)
+        .bind(t.bounties_failed as i32)
+        .bind(t.tokens_earned)
+        .bind(completion_rate)
+        .execute(&self.db_pool)
+        .await
+        .ok();
+    }
+
+    /// Record a claim for today in persistent storage.
+    async fn record_daily_claim(&self) {
+        let today = chrono::Utc::now().date_naive();
+        sqlx::query(
+            r#"INSERT INTO agent_daily_claims (agent_id, claim_date, count)
+               VALUES ($1, $2, 1)
+               ON CONFLICT (agent_id, claim_date)
+               DO UPDATE SET count = agent_daily_claims.count + 1"#,
+        )
+        .bind(self.config.agent_id)
+        .bind(today)
+        .execute(&self.db_pool)
+        .await
+        .ok();
+    }
+
+    /// Load today's claim count from persistent storage.
+    async fn load_daily_claims(&self) -> u32 {
+        let today = chrono::Utc::now().date_naive();
+        sqlx::query_scalar::<_, i32>(
+            "SELECT count FROM agent_daily_claims WHERE agent_id = $1 AND claim_date = $2",
+        )
+        .bind(self.config.agent_id)
+        .bind(today)
+        .fetch_optional(&self.db_pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(0) as u32
     }
 
     /// Execute a bounty by sending its description to the agent service.
@@ -153,29 +276,51 @@ impl AutonomousAgentLoop {
         let agent_url =
             std::env::var("AGENT_URL").unwrap_or_else(|_| "http://localhost:3100".to_string());
 
-        // Look up bounty description from cache; wrap in data boundaries to prevent
-        // prompt injection from malicious bounty descriptions on the relay.
-        let description = {
+        // Look up bounty from cache for structured context
+        let (bounty_prompt, capabilities) = {
             let cache = self.bounty_cache.read().await;
-            cache
-                .iter()
-                .find(|b| b.id.to_string() == bounty_id)
-                .map(|b| {
-                    let raw = format!("{}\n\n{}", b.title, b.description);
-                    crate::prompt_guard::sanitize("bounty_description", &raw, 8000)
-                })
-                .unwrap_or_else(|| format!("Execute bounty {bounty_id}"))
+            if let Some(b) = cache.iter().find(|b| b.id.to_string() == bounty_id) {
+                let sanitized = crate::prompt_guard::sanitize(
+                    "bounty_description",
+                    &format!("{}\n\n{}", b.title, b.description),
+                    8000,
+                );
+                let caps = b.required_capabilities.join(", ");
+                let prompt = format!(
+                    "{boundary}\n\n\
+                     ## Bounty Assignment\n\
+                     **Bounty ID:** {bounty_id}\n\
+                     **Required Capabilities:** {caps}\n\
+                     **Reward:** {reward} AMOS tokens\n\n\
+                     ## Task Description\n\
+                     {sanitized}\n\n\
+                     ## Instructions\n\
+                     1. Break the task into clear steps using the plan tool if available.\n\
+                     2. Use code execution and file tools to produce concrete artifacts.\n\
+                     3. Test your work before considering it complete.\n\
+                     4. Structure your final output with these sections:\n\
+                        - **APPROACH**: How you plan to solve the task\n\
+                        - **IMPLEMENTATION**: What you built and key decisions made\n\
+                        - **VERIFICATION**: How you tested and verified correctness\n\
+                        - **ARTIFACTS**: List of files created or modified\n\
+                     5. Self-evaluate against the task requirements before finalizing. \
+                        If your output is incomplete, continue working.\n",
+                    boundary = crate::prompt_guard::DATA_BOUNDARY_INSTRUCTION,
+                    reward = b.reward_tokens,
+                );
+                (prompt, caps)
+            } else {
+                (format!("Execute bounty {bounty_id}"), String::new())
+            }
         };
+        let _ = capabilities; // may be used for future context
 
         let body = json!({
-            "message": format!(
-                "{}\n\nExecute this bounty task and produce the required output:\n\n{}",
-                crate::prompt_guard::DATA_BOUNDARY_INSTRUCTION,
-                description
-            ),
+            "message": bounty_prompt,
             "provider_type": provider_type,
             "api_base": api_base,
             "model_id": model_id,
+            "task_context": "bounty",
         });
 
         let url = format!("{agent_url}/api/v1/chat");
@@ -195,11 +340,65 @@ impl AutonomousAgentLoop {
             return Err(format!("Agent service returned {}", response.status()));
         }
 
-        // Collect response body as text (SSE stream or JSON)
-        response
+        // Parse SSE stream to extract text content, tool calls, and errors
+        let body = response
             .text()
             .await
-            .map_err(|e| format!("Failed to read agent response: {e}"))
+            .map_err(|e| format!("Failed to read agent response: {e}"))?;
+
+        let mut text_parts: Vec<String> = Vec::new();
+        let mut tools_used: Vec<String> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+
+        for line in body.lines() {
+            let line = line.trim();
+            if let Some(data) = line.strip_prefix("data: ") {
+                if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+                    match event.get("type").and_then(|t| t.as_str()) {
+                        Some("text_delta") | Some("message_delta") => {
+                            if let Some(text) = event.get("text").and_then(|t| t.as_str()) {
+                                text_parts.push(text.to_string());
+                            }
+                        }
+                        Some("tool_start") => {
+                            if let Some(name) = event.get("name").and_then(|n| n.as_str()) {
+                                tools_used.push(name.to_string());
+                            }
+                        }
+                        Some("error") => {
+                            if let Some(msg) = event.get("message").and_then(|m| m.as_str()) {
+                                errors.push(msg.to_string());
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            warn!(
+                bounty_id,
+                errors = ?errors,
+                "Agent reported errors during execution"
+            );
+        }
+
+        // If we parsed SSE events, combine text; otherwise use raw body
+        let output = if text_parts.is_empty() {
+            body
+        } else {
+            let mut combined = text_parts.join("");
+            if !tools_used.is_empty() {
+                combined.push_str(&format!(
+                    "\n\n**Tools Used:** {}",
+                    tools_used.join(", ")
+                ));
+            }
+            combined
+        };
+
+        Ok(output)
     }
 
     /// Run the autonomous loop. Spawns as a tokio task.
@@ -213,7 +412,8 @@ impl AutonomousAgentLoop {
         let discover_tool = bounty_agent_tools::DiscoverBountiesTool::new(
             relay_url.clone(),
             self.bounty_cache.clone(),
-        );
+        )
+        .with_db(self.db_pool.clone());
         let assess_tool = bounty_agent_tools::AssessBountyFitTool::new(
             self.db_pool.clone(),
             self.bounty_cache.clone(),
@@ -228,9 +428,11 @@ impl AutonomousAgentLoop {
         let daily_limit = self
             .context_provider
             .daily_bounty_limit(self.config.trust_level);
-        let mut daily_claims: u32 = 0;
+        let mut daily_claims: u32 = self.load_daily_claims().await;
         let mut last_claim_date = chrono::Utc::now().date_naive();
         let mut current_backoff = self.config.polling_interval_secs;
+        let mut verification_started_at: Option<std::time::Instant> = None;
+        let mut last_telemetry_flush = std::time::Instant::now();
 
         loop {
             // Check for stop signal
@@ -270,6 +472,12 @@ impl AutonomousAgentLoop {
             // Increment loop counter
             self.telemetry.write().await.loop_iterations += 1;
 
+            // Periodic telemetry flush (every 5 minutes)
+            if last_telemetry_flush.elapsed().as_secs() >= 300 {
+                self.flush_telemetry().await;
+                last_telemetry_flush = std::time::Instant::now();
+            }
+
             let current_state = self.state.read().await.clone();
             match current_state {
                 LoopState::Idle => {
@@ -295,7 +503,7 @@ impl AutonomousAgentLoop {
                         Err(e) => {
                             warn!(agent_id, error = %e, "Discovery failed");
                             current_backoff =
-                                (current_backoff * 2).min(self.config.backoff_max_secs);
+                                self.jittered_backoff(current_backoff);
                             continue;
                         }
                     };
@@ -313,7 +521,7 @@ impl AutonomousAgentLoop {
 
                     if bounties.is_empty() {
                         debug!(agent_id, "No bounties available, backing off");
-                        current_backoff = (current_backoff * 2).min(self.config.backoff_max_secs);
+                        current_backoff = self.jittered_backoff(current_backoff);
                         continue;
                     }
 
@@ -389,6 +597,7 @@ impl AutonomousAgentLoop {
                                         "Bounty claimed, starting execution"
                                     );
                                     daily_claims += 1;
+                                    self.record_daily_claim().await;
                                     self.telemetry.write().await.bounties_claimed += 1;
                                     *self.state.write().await = LoopState::Executing {
                                         bounty_id: bounty_id.clone(),
@@ -412,7 +621,7 @@ impl AutonomousAgentLoop {
                             self.config.min_fit_score
                         );
                         *self.state.write().await = LoopState::Idle;
-                        current_backoff = (current_backoff * 2).min(self.config.backoff_max_secs);
+                        current_backoff = self.jittered_backoff(current_backoff);
                     }
                 }
 
@@ -438,16 +647,42 @@ impl AutonomousAgentLoop {
                         "Executing bounty work"
                     );
 
-                    // Execute bounty via agent service
-                    let execution_output = self
+                    // Execute bounty via agent service (with retry)
+                    let exec_start = std::time::Instant::now();
+                    let mut execution_output = self
                         .execute_bounty(&bounty_id, &provider_type, &api_base, &model_id)
                         .await;
+
+                    // Retry on failure: up to 2 additional attempts with backoff
+                    if execution_output.is_err() {
+                        const RETRY_BACKOFFS: [u64; 2] = [30, 60];
+                        for (attempt, delay) in RETRY_BACKOFFS.iter().enumerate() {
+                            warn!(
+                                agent_id,
+                                bounty_id = %bounty_id,
+                                attempt = attempt + 2,
+                                delay_secs = delay,
+                                "Retrying bounty execution after failure"
+                            );
+                            tokio::time::sleep(tokio::time::Duration::from_secs(*delay)).await;
+                            execution_output = self
+                                .execute_bounty(&bounty_id, &provider_type, &api_base, &model_id)
+                                .await;
+                            if execution_output.is_ok() {
+                                break;
+                            }
+                        }
+                    }
+                    let execution_time_secs = exec_start.elapsed().as_secs();
 
                     // Submit proof with execution output
                     let (output_status, execution_log) = match &execution_output {
                         Ok(output) => ("completed", output.clone()),
                         Err(e) => ("partial", format!("Execution error: {e}")),
                     };
+
+                    // Parse structured proof sections from agent output
+                    let proof = parse_structured_proof(&execution_log);
 
                     let submit_params = json!({
                         "bounty_id": bounty_id,
@@ -460,8 +695,9 @@ impl AutonomousAgentLoop {
                             "timestamp": chrono::Utc::now().to_rfc3339(),
                         },
                         "execution_log": execution_log,
+                        "proof": proof,
                         "metrics": {
-                            "execution_time_secs": self.config.polling_interval_secs,
+                            "execution_time_secs": execution_time_secs,
                             "provider_type": provider_type,
                             "cost_tier": if reward_tokens <= self.app_config.fleet.local_model.cost_threshold {
                                 "local"
@@ -500,12 +736,14 @@ impl AutonomousAgentLoop {
                             } else {
                                 *self.state.write().await =
                                     LoopState::AwaitingVerification { bounty_id };
+                                verification_started_at = Some(std::time::Instant::now());
                             }
                         }
                         Err(e) => {
                             error!(agent_id, error = %e, "Failed to submit bounty proof");
                             self.telemetry.write().await.bounties_failed += 1;
                             *self.state.write().await = LoopState::Idle;
+                            verification_started_at = None;
                         }
                     }
                     current_backoff = self.config.polling_interval_secs;
@@ -513,6 +751,26 @@ impl AutonomousAgentLoop {
 
                 LoopState::AwaitingVerification { ref bounty_id } => {
                     let bounty_id = bounty_id.clone();
+
+                    // Track when we started waiting for verification
+                    let started = verification_started_at
+                        .get_or_insert_with(std::time::Instant::now);
+
+                    // Timeout: if we've been waiting too long, give up
+                    if started.elapsed().as_secs() >= self.config.verification_timeout_secs {
+                        warn!(
+                            agent_id,
+                            bounty_id = %bounty_id,
+                            timeout_secs = self.config.verification_timeout_secs,
+                            "Verification timeout — returning to Idle"
+                        );
+                        self.telemetry.write().await.bounties_failed += 1;
+                        *self.state.write().await = LoopState::Idle;
+                        verification_started_at = None;
+                        current_backoff = self.config.polling_interval_secs;
+                        continue;
+                    }
+
                     let check_params = json!({
                         "bounty_id": bounty_id,
                         "agent_id": agent_id,
@@ -544,6 +802,7 @@ impl AutonomousAgentLoop {
                                         "Bounty approved"
                                     );
                                     *self.state.write().await = LoopState::Idle;
+                                    verification_started_at = None;
                                     current_backoff = self.config.polling_interval_secs;
                                 }
                                 "rejected" => {
@@ -561,6 +820,7 @@ impl AutonomousAgentLoop {
                                     );
                                     self.telemetry.write().await.bounties_failed += 1;
                                     *self.state.write().await = LoopState::Idle;
+                                    verification_started_at = None;
                                     current_backoff = self.config.polling_interval_secs;
                                 }
                                 _ => {
@@ -592,6 +852,9 @@ impl AutonomousAgentLoop {
                 }
             }
         }
+
+        // Final telemetry flush on exit
+        self.flush_telemetry().await;
 
         // Update DB status on exit
         sqlx::query("UPDATE openclaw_agents SET status = 'stopped' WHERE id = $1")
@@ -816,6 +1079,7 @@ mod tests {
             polling_interval_secs: 60,
             backoff_max_secs: 300,
             min_fit_score: 0.5,
+            verification_timeout_secs: 86400,
         };
         let cloned = config.clone();
         assert_eq!(cloned.agent_id, 42);

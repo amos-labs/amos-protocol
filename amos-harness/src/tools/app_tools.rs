@@ -100,7 +100,7 @@ impl Tool for CreateAppTool {
             .as_str()
             .ok_or_else(|| AmosError::Validation("name is required".to_string()))?;
 
-        let _slug = params["slug"]
+        let slug = params["slug"]
             .as_str()
             .ok_or_else(|| AmosError::Validation("slug is required".to_string()))?;
 
@@ -129,6 +129,7 @@ impl Tool for CreateAppTool {
 
         // Build the app_config that goes into canvas metadata
         let app_config = json!({
+            "slug": slug,
             "icon": icon,
             "theme": theme,
             "views": views,

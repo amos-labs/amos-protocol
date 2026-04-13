@@ -180,13 +180,33 @@ pub async fn create_server(
             }
         }
 
+        // Reconcile agents stuck in transient states from prior crash
+        if let Err(e) = fm.reconcile_on_startup().await {
+            tracing::warn!("Fleet reconciliation failed (non-fatal): {e}");
+        }
+
         tracing::info!(
             max_agents = config.fleet.max_agents,
             polling_secs = config.fleet.polling_interval_secs,
             local_model = config.fleet.has_local_model(),
             "Fleet manager initialized (autonomous bounty agents enabled)"
         );
-        Some(Arc::new(fm))
+        let fm = Arc::new(fm);
+
+        // Auto-deploy initial fleet if configured and no agents exist
+        match fm.auto_deploy_initial_fleet().await {
+            Ok(ids) if !ids.is_empty() => {
+                tracing::info!(count = ids.len(), "Auto-deployed initial fleet agents");
+            }
+            Err(e) => tracing::warn!("Initial fleet deploy failed (non-fatal): {e}"),
+            _ => {}
+        }
+
+        // Start background management loops
+        fm.start_health_check_loop();
+        fm.start_rebalance_loop();
+
+        Some(fm)
     } else {
         tracing::info!("Fleet manager disabled (AMOS__FLEET__ENABLED not set)");
         None

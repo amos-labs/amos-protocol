@@ -145,13 +145,30 @@ impl Tool for PlatformQueryTool {
             let mut record = serde_json::Map::new();
             for (i, column) in row.columns().iter().enumerate() {
                 let name = column.name();
-                if let Ok(value) = row.try_get::<String, _>(i) {
-                    record.insert(name.to_string(), JsonValue::String(value));
-                } else if let Ok(value) = row.try_get::<i64, _>(i) {
-                    record.insert(name.to_string(), JsonValue::Number(value.into()));
-                } else if let Ok(value) = row.try_get::<bool, _>(i) {
-                    record.insert(name.to_string(), JsonValue::Bool(value));
-                }
+                let value = if let Ok(v) = row.try_get::<String, _>(i) {
+                    JsonValue::String(v)
+                } else if let Ok(v) = row.try_get::<i64, _>(i) {
+                    JsonValue::Number(v.into())
+                } else if let Ok(v) = row.try_get::<i32, _>(i) {
+                    JsonValue::Number(v.into())
+                } else if let Ok(v) = row.try_get::<f64, _>(i) {
+                    serde_json::Number::from_f64(v)
+                        .map(JsonValue::Number)
+                        .unwrap_or(JsonValue::Null)
+                } else if let Ok(v) = row.try_get::<bool, _>(i) {
+                    JsonValue::Bool(v)
+                } else if let Ok(v) = row.try_get::<serde_json::Value, _>(i) {
+                    v
+                } else if let Ok(v) = row.try_get::<uuid::Uuid, _>(i) {
+                    JsonValue::String(v.to_string())
+                } else if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(i) {
+                    JsonValue::String(v.to_rfc3339())
+                } else if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(i) {
+                    JsonValue::String(v.to_string())
+                } else {
+                    JsonValue::Null
+                };
+                record.insert(name.to_string(), value);
             }
             records.push(JsonValue::Object(record));
         }

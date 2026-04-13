@@ -77,6 +77,10 @@ pub struct ChatRequest {
     /// a "## Package-Specific Instructions" heading.
     #[serde(default)]
     pub package_prompts: Option<Vec<String>>,
+    /// Task context type (e.g. "bounty") — adjusts compaction window and
+    /// enables self-evaluation for multi-step autonomous tasks.
+    #[serde(default)]
+    pub task_context: Option<String>,
 }
 
 /// Chat response for non-streaming mode.
@@ -163,6 +167,11 @@ async fn chat_sse(
     if req.plan_mode.unwrap_or(false) {
         loop_config.system_prompt =
             format!("{}\n\n{}", PLAN_MODE_PROMPT, loop_config.system_prompt);
+    }
+
+    // Widen compaction window for bounty execution (more context needed)
+    if req.task_context.as_deref() == Some("bounty") {
+        loop_config.compaction.preserve_recent = 15;
     }
 
     // Append package-specific instructions to the system prompt

@@ -137,6 +137,12 @@ impl std::fmt::Display for AgentProfile {
     }
 }
 
+/// Maximum restart attempts before marking an agent as permanently failed.
+const MAX_RESTART_ATTEMPTS: u32 = 5;
+
+/// Exponential backoff delays between restarts (seconds).
+const RESTART_BACKOFFS: [u64; 5] = [5, 15, 30, 60, 120];
+
 /// A running autonomous agent in the fleet.
 struct FleetAgent {
     agent_id: i32,
@@ -195,6 +201,50 @@ impl FleetManager {
             bounty_cache,
             agents: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Reset agents left in transient states from a previous crash.
+    ///
+    /// On harness restart, any agent marked as 'active' or 'working' in the DB
+    /// was mid-loop when the process died. Reset them to 'idle' so they can be
+    /// re-attached or redeployed cleanly.
+    pub async fn reconcile_on_startup(&self) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE openclaw_agents SET status = 'idle' WHERE status IN ('active', 'working', 'executing')",
+        )
+        .execute(&self.db_pool)
+        .await
+        .map_err(|e| AmosError::Internal(format!("Reconciliation failed: {e}")))?;
+
+        let reconciled = result.rows_affected();
+
+        if reconciled > 0 {
+            info!(reconciled, "Reconciled stuck agents on startup");
+
+            sqlx::query(
+                r#"INSERT INTO fleet_events (event_type, metadata)
+                   VALUES ('reconciled', $1)"#,
+            )
+            .bind(json!({ "agents_reset": reconciled }))
+            .execute(&self.db_pool)
+            .await
+            .ok();
+        }
+
+        // Also reset any bounty claims stuck in 'executing' state
+        let claims_reset = sqlx::query(
+            "UPDATE bounty_claims SET status = 'expired' WHERE status = 'executing'",
+        )
+        .execute(&self.db_pool)
+        .await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+
+        if claims_reset > 0 {
+            info!(claims_reset, "Reset stuck bounty claims on startup");
+        }
+
+        Ok(reconciled)
     }
 
     /// Deploy a new autonomous agent with the given profile.
@@ -274,6 +324,7 @@ impl FleetManager {
             polling_interval_secs: self.config.fleet.polling_interval_secs,
             backoff_max_secs: self.config.fleet.backoff_max_secs,
             min_fit_score: self.config.fleet.min_fit_score,
+            verification_timeout_secs: 86400, // 24 hours
         };
 
         let autonomous_loop = Arc::new(AutonomousAgentLoop::new(
@@ -285,8 +336,10 @@ impl FleetManager {
         ));
 
         let loop_clone = autonomous_loop.clone();
+        let supervised_agent_id = agent_id;
+        let db_clone = self.db_pool.clone();
         let handle = tokio::spawn(async move {
-            loop_clone.run().await;
+            Self::supervised_run(loop_clone, supervised_agent_id, db_clone).await;
         });
 
         // Track in fleet
@@ -495,6 +548,93 @@ impl FleetManager {
         }))
     }
 
+    /// Run an agent loop with supervisor restart on panic.
+    ///
+    /// If the inner `run()` panics (JoinError), the supervisor retries up to
+    /// [`MAX_RESTART_ATTEMPTS`] times with exponential backoff. A clean exit
+    /// (Ok) is not restarted.
+    async fn supervised_run(
+        agent_loop: Arc<AutonomousAgentLoop>,
+        agent_id: i32,
+        db_pool: PgPool,
+    ) {
+        let mut restarts: u32 = 0;
+
+        loop {
+            let inner = agent_loop.clone();
+            let result = tokio::spawn(async move { inner.run().await }).await;
+
+            match result {
+                Ok(()) => {
+                    // Clean exit — agent was stopped intentionally
+                    info!(agent_id, "Autonomous agent loop exited cleanly");
+                    break;
+                }
+                Err(join_err) => {
+                    restarts += 1;
+                    if restarts > MAX_RESTART_ATTEMPTS {
+                        tracing::error!(
+                            agent_id,
+                            restarts,
+                            "Agent exceeded max restart attempts — marking as error"
+                        );
+                        sqlx::query(
+                            "UPDATE openclaw_agents SET status = 'error' WHERE id = $1",
+                        )
+                        .bind(agent_id)
+                        .execute(&db_pool)
+                        .await
+                        .ok();
+
+                        sqlx::query(
+                            r#"INSERT INTO fleet_events (event_type, agent_id, metadata)
+                               VALUES ('error', $1, $2)"#,
+                        )
+                        .bind(agent_id)
+                        .bind(json!({
+                            "reason": "max_restarts_exceeded",
+                            "restarts": restarts,
+                            "last_error": format!("{join_err}"),
+                        }))
+                        .execute(&db_pool)
+                        .await
+                        .ok();
+                        break;
+                    }
+
+                    let backoff = RESTART_BACKOFFS
+                        .get(restarts as usize - 1)
+                        .copied()
+                        .unwrap_or(120);
+
+                    warn!(
+                        agent_id,
+                        restarts,
+                        backoff_secs = backoff,
+                        error = %join_err,
+                        "Autonomous agent panicked — restarting after backoff"
+                    );
+
+                    sqlx::query(
+                        r#"INSERT INTO fleet_events (event_type, agent_id, metadata)
+                           VALUES ('restarted', $1, $2)"#,
+                    )
+                    .bind(agent_id)
+                    .bind(json!({
+                        "restart_number": restarts,
+                        "backoff_secs": backoff,
+                        "error": format!("{join_err}"),
+                    }))
+                    .execute(&db_pool)
+                    .await
+                    .ok();
+
+                    tokio::time::sleep(tokio::time::Duration::from_secs(backoff)).await;
+                }
+            }
+        }
+    }
+
     /// Get the count of active agents.
     pub async fn active_count(&self) -> usize {
         self.agents.read().await.len()
@@ -557,6 +697,192 @@ impl FleetManager {
                 warn!(error = %e, url = %url, "Local model server not reachable");
                 Ok(false)
             }
+        }
+    }
+
+    /// Deploy the initial fleet composition from config if no agents are running.
+    ///
+    /// Called on startup. Skips deployment if agents already exist in the DB
+    /// (i.e. the harness is restarting, not fresh).
+    pub async fn auto_deploy_initial_fleet(&self) -> Result<Vec<i32>> {
+        if self.config.fleet.initial_fleet.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Check if agents already exist
+        let existing: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM openclaw_agents WHERE status != 'stopped'")
+                .fetch_one(&self.db_pool)
+                .await
+                .unwrap_or(0);
+
+        if existing > 0 {
+            info!(existing, "Agents already exist in DB, skipping initial fleet deploy");
+            return Ok(Vec::new());
+        }
+
+        let mut deployed = Vec::new();
+        for entry in &self.config.fleet.initial_fleet {
+            let profile = match entry.profile.as_str() {
+                "research" => AgentProfile::Research,
+                "infrastructure" => AgentProfile::Infrastructure,
+                "content" => AgentProfile::Content,
+                "general" => AgentProfile::General,
+                other => {
+                    warn!(profile = %other, "Unknown profile in initial_fleet, skipping");
+                    continue;
+                }
+            };
+            for _ in 0..entry.count {
+                match self.deploy_agent(profile).await {
+                    Ok(id) => deployed.push(id),
+                    Err(e) => warn!(profile = %entry.profile, error = %e, "Failed to deploy initial agent"),
+                }
+            }
+        }
+
+        if !deployed.is_empty() {
+            info!(count = deployed.len(), "Initial fleet deployed");
+        }
+
+        Ok(deployed)
+    }
+
+    /// Start background health check loop that monitors agent task handles.
+    ///
+    /// Checks every `health_check_interval_secs` for:
+    /// - Agents whose JoinHandle has finished unexpectedly
+    /// - Agents stuck in Executing state for too long
+    pub fn start_health_check_loop(self: &Arc<Self>) {
+        let fleet = Arc::clone(self);
+        let interval = self.config.fleet.health_check_interval_secs;
+
+        tokio::spawn(async move {
+            let mut ticker =
+                tokio::time::interval(tokio::time::Duration::from_secs(interval));
+            ticker.tick().await; // skip immediate first tick
+
+            loop {
+                ticker.tick().await;
+
+                let agents = fleet.agents.read().await;
+                let mut finished_ids: Vec<i32> = Vec::new();
+
+                for (id, agent) in agents.iter() {
+                    if agent.loop_handle.is_finished() {
+                        warn!(agent_id = id, "Agent task handle finished unexpectedly");
+                        finished_ids.push(*id);
+                    }
+                }
+                drop(agents);
+
+                // Log finished agents (the supervisor inside the task handles restarts;
+                // if the supervisor itself exited, the agent hit max restarts)
+                for id in finished_ids {
+                    sqlx::query(
+                        r#"INSERT INTO fleet_events (event_type, agent_id, metadata)
+                           VALUES ('error', $1, '{"reason": "task_handle_finished"}')"#,
+                    )
+                    .bind(id)
+                    .execute(&fleet.db_pool)
+                    .await
+                    .ok();
+                }
+            }
+        });
+    }
+
+    /// Start background periodic rebalancing loop.
+    pub fn start_rebalance_loop(self: &Arc<Self>) {
+        let fleet = Arc::clone(self);
+        let interval = self.config.fleet.rebalance_interval_secs;
+
+        tokio::spawn(async move {
+            let mut ticker =
+                tokio::time::interval(tokio::time::Duration::from_secs(interval));
+            ticker.tick().await; // skip first
+
+            loop {
+                ticker.tick().await;
+
+                match fleet.rebalance().await {
+                    Ok(result) => {
+                        if let Some(stopped) = result.get("underperformers_stopped").and_then(|v| v.as_u64()) {
+                            if stopped > 0 {
+                                info!(stopped, "Periodic rebalance stopped underperformers");
+                            }
+                        }
+                    }
+                    Err(e) => warn!(error = %e, "Periodic rebalance failed"),
+                }
+            }
+        });
+    }
+
+    /// Check and upgrade an agent's trust level based on cumulative performance.
+    ///
+    /// Trust thresholds:
+    /// - Level 2: 3 completions, >55% success rate
+    /// - Level 3: 10 completions, >65% success rate
+    /// - Level 4: 25 completions, >75% success rate
+    /// - Level 5: 50 completions, >85% success rate
+    pub async fn check_trust_progression(&self, agent_id: i32) {
+        let agents = self.agents.read().await;
+        let Some(agent) = agents.get(&agent_id) else {
+            return;
+        };
+        let telemetry = agent.autonomous_loop.telemetry().await;
+        let current_trust = agent.autonomous_loop.config().trust_level;
+        drop(agents);
+
+        let completed = telemetry.bounties_completed;
+        let claimed = telemetry.bounties_claimed;
+        let rate = if claimed > 0 {
+            completed as f64 / claimed as f64
+        } else {
+            0.0
+        };
+
+        let new_trust = if completed >= 50 && rate > 0.85 {
+            5
+        } else if completed >= 25 && rate > 0.75 {
+            4
+        } else if completed >= 10 && rate > 0.65 {
+            3
+        } else if completed >= 3 && rate > 0.55 {
+            2
+        } else {
+            current_trust
+        };
+
+        if new_trust > current_trust {
+            sqlx::query("UPDATE openclaw_agents SET trust_level = $1 WHERE id = $2")
+                .bind(new_trust as i32)
+                .execute(&self.db_pool)
+                .await
+                .ok();
+
+            sqlx::query(
+                r#"INSERT INTO fleet_events (event_type, agent_id, metadata)
+                   VALUES ('trust_upgraded', $1, $2)"#,
+            )
+            .bind(agent_id)
+            .bind(json!({
+                "from": current_trust,
+                "to": new_trust,
+                "completions": completed,
+                "success_rate": rate,
+            }))
+            .execute(&self.db_pool)
+            .await
+            .ok();
+
+            info!(
+                agent_id,
+                from = current_trust,
+                to = new_trust,
+                "Agent trust level upgraded"
+            );
         }
     }
 }

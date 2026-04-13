@@ -13,6 +13,7 @@ use serde_json::{json, Value as JsonValue};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::debug;
 
 // ── DiscoverBountiesTool ────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ use tokio::sync::RwLock;
 pub struct DiscoverBountiesTool {
     relay_url: String,
     bounty_cache: Arc<RwLock<Vec<RelayBounty>>>,
+    db_pool: Option<PgPool>,
 }
 
 impl DiscoverBountiesTool {
@@ -30,7 +32,26 @@ impl DiscoverBountiesTool {
         Self {
             relay_url,
             bounty_cache,
+            db_pool: None,
         }
+    }
+
+    pub fn with_db(mut self, db_pool: PgPool) -> Self {
+        self.db_pool = Some(db_pool);
+        self
+    }
+
+    /// Load bounty IDs that this harness has already claimed (not rejected/expired).
+    async fn claimed_bounty_ids(&self) -> Vec<String> {
+        let Some(ref pool) = self.db_pool else {
+            return Vec::new();
+        };
+        sqlx::query_scalar::<_, String>(
+            "SELECT bounty_id FROM bounty_claims WHERE status NOT IN ('rejected', 'expired')",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
     }
 }
 
@@ -137,7 +158,7 @@ impl Tool for DiscoverBountiesTool {
             }
         }
 
-        // Filter cached bounties
+        // Filter cached bounties by capabilities
         if !agent_capabilities.is_empty() {
             bounties.retain(|b| {
                 b.required_capabilities.is_empty()
@@ -145,6 +166,22 @@ impl Tool for DiscoverBountiesTool {
                         .iter()
                         .all(|req| agent_capabilities.contains(req))
             });
+        }
+
+        // Filter by complexity (reward-tier bucketing)
+        if let Some(ref complexity) = complexity_filter {
+            bounties.retain(|b| match complexity.as_str() {
+                "small" => b.reward_tokens <= 100,
+                "medium" => b.reward_tokens > 100 && b.reward_tokens <= 500,
+                "large" => b.reward_tokens > 500,
+                _ => true,
+            });
+        }
+
+        // Exclude bounties already claimed by this harness
+        let claimed_ids = self.claimed_bounty_ids().await;
+        if !claimed_ids.is_empty() {
+            bounties.retain(|b| !claimed_ids.contains(&b.id.to_string()));
         }
 
         // Truncate to limit
@@ -200,20 +237,46 @@ impl DiscoverBountiesTool {
         &self,
         bounties: &[RelayBounty],
         agent_capabilities: &[String],
-        _max_trust_level: Option<u8>,
-        _complexity_filter: Option<&str>,
+        max_trust_level: Option<u8>,
+        complexity_filter: Option<&str>,
         limit: usize,
     ) -> Vec<JsonValue> {
+        if max_trust_level.is_some() {
+            debug!(
+                ?max_trust_level,
+                "Trust-level filter requested but relay bounties lack trust_level field; \
+                 filtering skipped until relay schema adds min_trust_level"
+            );
+        }
+
         bounties
             .iter()
             .filter(|b| {
-                if agent_capabilities.is_empty() {
-                    return true;
+                // Capability filter
+                if !agent_capabilities.is_empty() {
+                    let cap_match = b.required_capabilities.is_empty()
+                        || b.required_capabilities
+                            .iter()
+                            .all(|req| agent_capabilities.contains(req));
+                    if !cap_match {
+                        return false;
+                    }
                 }
-                b.required_capabilities.is_empty()
-                    || b.required_capabilities
-                        .iter()
-                        .all(|req| agent_capabilities.contains(req))
+
+                // Complexity filter via reward-tier bucketing
+                if let Some(complexity) = complexity_filter {
+                    let matches = match complexity {
+                        "small" => b.reward_tokens <= 100,
+                        "medium" => b.reward_tokens > 100 && b.reward_tokens <= 500,
+                        "large" => b.reward_tokens > 500,
+                        _ => true,
+                    };
+                    if !matches {
+                        return false;
+                    }
+                }
+
+                true
             })
             .take(limit)
             .map(|b| {

@@ -320,6 +320,10 @@ impl Tool for UpdateCanvasTool {
                 "css_content": {
                     "type": "string",
                     "description": "Updated CSS content"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Updated canvas description"
                 }
             },
             "required": ["canvas_id"]

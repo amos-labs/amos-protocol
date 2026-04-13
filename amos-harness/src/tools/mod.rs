@@ -500,10 +500,13 @@ impl ToolRegistry {
         )));
 
         // Register bounty agent tools (autonomous bounty discovery and execution)
-        registry.register(Arc::new(bounty_agent_tools::DiscoverBountiesTool::new(
-            config.relay.url.clone(),
-            bounty_cache.clone(),
-        )));
+        registry.register(Arc::new(
+            bounty_agent_tools::DiscoverBountiesTool::new(
+                config.relay.url.clone(),
+                bounty_cache.clone(),
+            )
+            .with_db(db_pool.clone()),
+        ));
         registry.register(Arc::new(bounty_agent_tools::AssessBountyFitTool::new(
             db_pool.clone(),
             bounty_cache,

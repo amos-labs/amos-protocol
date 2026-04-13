@@ -411,6 +411,30 @@ pub struct FleetConfig {
     /// Local open-source model configuration for cost-free bounty execution.
     #[serde(default)]
     pub local_model: LocalModelConfig,
+    /// Initial fleet composition deployed on startup (JSON array).
+    /// Example: `[{"profile":"research","count":2},{"profile":"general","count":1}]`
+    #[serde(default)]
+    pub initial_fleet: Vec<InitialFleetEntry>,
+    /// Interval in seconds for the health check loop (default: 60).
+    #[serde(default = "default_fleet_health_check_interval")]
+    pub health_check_interval_secs: u64,
+    /// Interval in seconds for automatic rebalancing (default: 1800 = 30 min).
+    #[serde(default = "default_fleet_rebalance_interval")]
+    pub rebalance_interval_secs: u64,
+}
+
+/// An entry in the initial fleet composition.
+#[derive(Debug, Deserialize, Clone)]
+pub struct InitialFleetEntry {
+    pub profile: String,
+    pub count: u32,
+}
+
+fn default_fleet_health_check_interval() -> u64 {
+    60
+}
+fn default_fleet_rebalance_interval() -> u64 {
+    1800
 }
 
 impl Default for FleetConfig {
@@ -424,6 +448,9 @@ impl Default for FleetConfig {
             min_fit_score: default_fleet_min_fit_score(),
             agent_context_path: default_fleet_agent_context_path(),
             local_model: LocalModelConfig::default(),
+            initial_fleet: Vec::new(),
+            health_check_interval_secs: default_fleet_health_check_interval(),
+            rebalance_interval_secs: default_fleet_rebalance_interval(),
         }
     }
 }

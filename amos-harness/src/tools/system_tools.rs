@@ -333,13 +333,15 @@ impl Tool for BashTool {
 
         // Limit output size to prevent exfiltration of large files
         let max_output = 10 * 1024; // 10KB
-        let stdout = if stdout.len() > max_output {
-            stdout[..max_output].to_string()
+        let stdout_truncated = stdout.len() > max_output;
+        let stderr_truncated = stderr.len() > max_output;
+        let stdout = if stdout_truncated {
+            format!("{}...\n[truncated — {} bytes total]", &stdout[..max_output], stdout.len())
         } else {
             stdout
         };
-        let stderr = if stderr.len() > max_output {
-            stderr[..max_output].to_string()
+        let stderr = if stderr_truncated {
+            format!("{}...\n[truncated — {} bytes total]", &stderr[..max_output], stderr.len())
         } else {
             stderr
         };
@@ -348,7 +350,8 @@ impl Tool for BashTool {
             "stdout": stdout,
             "stderr": stderr,
             "exit_code": output.status.code(),
-            "success": output.status.success()
+            "success": output.status.success(),
+            "truncated": stdout_truncated || stderr_truncated
         })))
     }
 
