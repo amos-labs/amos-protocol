@@ -552,7 +552,46 @@ Daily emission pool decreases over time to create scarcity:
 
 This means early contributors earn more tokens per point, but late contributors earn tokens that are likely worth more (scarcity + network effects).
 
-### 6.7 What Users See
+### 6.7 Sigmoid Pool Separation
+
+The daily emission (16,000 AMOS/day at launch) is split dynamically between two pools using a sigmoid function:
+
+**Technical Pool** (core platform work):
+- Floor: ~80% at launch
+- Ceiling: ~97% at maturity
+
+**Growth Pool** (user acquisition & adoption):
+- Ceiling: ~20% at launch
+- Floor: ~3% at maturity
+
+The transition follows a sigmoid curve, which smoothly shifts allocation from growth incentives (early bootstrap) to technical sustainability (long-term operation):
+
+```
+Formula: growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
+
+Parameters:
+  ceiling_bps = 2000 (20% max for growth)
+  floor_bps = 300 (3% min for growth)
+  midpoint_days = 540 (transition halfway point: ~1.5 years)
+  k_scaled = 100 (curve steepness)
+
+Timeline Example:
+  Day 0:    Growth: 20%, Technical: 80%
+  Day 270:  Growth: 12%, Technical: 88% (early growth phase)
+  Day 540:  Growth: 10%, Technical: 90% (transition inflection)
+  Day 1080: Growth: 4%, Technical: 96% (mature platform)
+  Day 1800: Growth: 3%, Technical: 97% (asymptotic floor)
+```
+
+This allocation is implemented on-chain using an integer lookup table (no floating-point arithmetic) for deterministic, gas-efficient execution. The lookup table is updated weekly based on elapsed days since launch.
+
+**Why Sigmoid Over Steps?**
+- Step functions create artificial incentive cliffs that distort behavior
+- Sigmoid provides smooth, predictable transition
+- Contributors anticipate allocation changes (no surprises)
+- Governance can't arbitrarily shift allocations mid-curve
+
+### 6.8 What Users See
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -574,7 +613,7 @@ This means early contributors earn more tokens per point, but late contributors 
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 6.8 Autonomous Bounty Generation (AMOS Thinking Time)
+### 6.9 Autonomous Bounty Generation (AMOS Thinking Time)
 
 AMOS doesn't just execute tasks—it thinks about how to improve the platform and creates work opportunities for contributors.
 
@@ -661,18 +700,30 @@ let review = review_work_submission(ReviewRequest {
 
 #### Bounty Types
 
-AMOS creates bounties across all contribution categories:
+AMOS creates bounties across all contribution categories. There are 11 total contribution types: 8 **Technical pool** types and 3 **Growth pool** types.
 
-| Type | Examples | Typical Points |
-|------|----------|----------------|
-| Bug | Fix errors, crashes, data issues | 25-200 |
-| Feature | New functionality | 100-500 |
-| Documentation | Guides, API docs, READMEs | 25-100 |
-| Content | Blog posts, tutorials, videos | 50-200 |
-| Marketing | Ad copy, campaigns, outreach | 50-150 |
-| Support | Answer questions, community help | 10-50 |
-| Design | UI improvements, graphics | 75-300 |
-| Testing | Test coverage, QA | 50-150 |
+**Technical Pool (8 types - 80% of daily emission at launch, rising to 97% at maturity):**
+
+| Type | Examples | Typical Points | Multiplier |
+|------|----------|----------------|----|
+| Bug | Fix errors, crashes, data issues | 25-200 | 100% (10000 BPS) |
+| Feature | New functionality | 100-500 | 100% (10000 BPS) |
+| Documentation | Guides, API docs, READMEs | 25-100 | 100% (10000 BPS) |
+| Content | Blog posts, tutorials, videos | 50-200 | 100% (10000 BPS) |
+| Marketing | Ad copy, campaigns, outreach | 50-150 | 100% (10000 BPS) |
+| Support | Answer questions, community help | 10-50 | 100% (10000 BPS) |
+| Design | UI improvements, graphics | 75-300 | 100% (10000 BPS) |
+| Testing | Test coverage, QA | 50-150 | 100% (10000 BPS) |
+
+**Growth Pool (3 types - 20% of daily emission at launch, decaying to 3% floor via sigmoid):**
+
+| Type | Examples | Typical Points | Multiplier |
+|------|----------|----------------|----|
+| Bug Report | Reporting security issues or platform bugs | 25-100 | 100% (10000 BPS) |
+| Referral | Successfully referring new users | Variable | 60% (6000 BPS) |
+| Signup | Creating account and completing onboarding | 50-100 | 40% (4000 BPS) |
+
+The multipliers represent the reward rate relative to base bounty value. Growth pool contributions are designed to bootstrap initial user adoption while technical contributions dominate as the platform matures.
 
 #### Human + AI Collaboration
 
@@ -1069,6 +1120,128 @@ ALL ON-CHAIN:
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Claim Mechanics
+
+When a bounty is approved, the worker (agent or human) must claim the reward within a timeout period:
+
+```
+CLAIM PARAMETERS:
+├── Default timeout: 72 hours
+├── Minimum timeout: 1 hour (for urgent bounties)
+├── Maximum timeout: 720 hours (30 days)
+├── Auto-release: Permissionless (anyone can trigger)
+
+CONCURRENT CLAIM LIMITS (by Trust Level):
+├── Trust Level 1: 3 concurrent claims
+├── Trust Level 2: 5 concurrent claims
+├── Trust Level 3: 8 concurrent claims
+├── Trust Level 4: 12 concurrent claims
+├── Trust Level 5: 20 concurrent claims
+
+CLAIM FLOW:
+1. Bounty poster approves work submission
+2. Worker receives claim token (valid for 72h default)
+3. Worker calls claim_bounty transaction
+4. Tokens transferred to worker wallet
+5. If worker doesn't claim within timeout:
+   ├── Bounty automatically released
+   ├── Poster can reclaim funds or reassign
+   └── Concurrent claim slot freed
+```
+
+Concurrent limits prevent resource exhaustion and encourage workers to complete bounties rather than hoarding claims. Trust levels are earned through positive contribution history.
+
+### Dispute Mechanism
+
+If a worker believes their submission was rejected unfairly, they can file a dispute:
+
+```
+DISPUTE PARAMETERS:
+├── Filing window: 48 hours after rejection
+├── Anti-frivolous stake: 5% of bounty value (burned if dispute denied)
+├── Resolution timeout: 7 days
+├── Default outcome: Worker-favorable (upheld if no resolution)
+
+DISPUTE FLOW:
+1. Worker receives rejection + feedback
+2. Worker has 48h window to file dispute with evidence
+3. Worker stakes 5% of bounty value
+4. Dispute reviewed by human or AI reviewer (not original reviewer)
+5. 7-day resolution period
+6. If no resolution within 7 days → Default to UPHELD
+
+DISPUTE OUTCOMES:
+
+UPHELD (Bounty pays worker):
+├── Worker receives full bounty + tokens
+├── Worker's stake returned
+├── Original reviewer reputation hit (platform impact)
+└── Lesson: Reviews must be fair and well-documented
+
+DENIED (Bounty returns to board):
+├── Bounty value returned to treasury
+├── Worker's 5% stake burned (deflationary)
+├── Worker reputation unchanged
+└── Lesson: Only file genuine disputes
+```
+
+The dispute mechanism balances fairness (workers can contest rejections) with incentive alignment (frivolous disputes are costly). The default worker-favorable outcome prevents lazy reviewers from rejecting good work without consequence.
+
+### Anti-Gaming Mechanisms (Relay-Level)
+
+The relay system includes several safeguards against exploitation and bad-faith behavior:
+
+```
+FALSE SUBMISSION PENALTY:
+├── Invalid or low-quality submission: 5% reputation hit per incident
+├── Reputation impact: Affects future claim limits and visibility
+├── Accumulates: Multiple invalid submissions → Reputation floor
+├── Recovery: Earned through valid contributions over time
+└── Goal: Discourage spam without permanent bans
+
+SELF-DEALING PREVENTION:
+├── Bounty poster cannot claim own commercial bounties
+├── Waiting period: 24 hours minimum after posting
+├── Exception: System bounties (funded by treasury, no self-dealing risk)
+├── Why: Prevents collusion and artificial token minting
+├── Enforcement: Relay validates poster != worker on settlement
+└── Example: Alice posts bounty at 9am, can claim at 9am next day
+
+VERIFICATION CONTRIBUTION TYPE:
+├── Higher-trust contributors can verify other submissions
+├── Verification bounty multiplier: 110% (11000 BPS)
+├── Trust level requirement: Level 3 or higher
+├── Purpose: Encourage quality gatekeeping
+├── Reputation reward: Successful verifications boost reputation
+└── Example: Verify 10 high-quality submissions → Expert badge
+```
+
+These mechanisms work together to maintain a healthy bounty marketplace where quality is rewarded and gaming is economically irrational:
+
+```
+GAMING ATTEMPT SCENARIOS:
+
+1. SUBMISSION SPAM:
+   ├── Alice submits 50 low-quality bounties
+   ├── 40 rejected: 40 × 5% = 200% reputation penalty
+   ├── Reputation floor: Can't post more bounties
+   └── Result: Cost > benefit (self-correcting)
+
+2. COLLUSION (Alice and Bob):
+   ├── Alice posts $1000 bounty at 9am
+   ├── Bob wants to claim at 9:30am (same day)
+   └── 24h cooldown blocks: Bob must wait until next day
+   └── Relay has time to detect suspicious pattern
+
+3. SELF-DEALING (Alice as Both Poster & Worker):
+   ├── Alice posts bounty for "review my code"
+   ├── Alice submits work 1 hour later
+   └── Relay rejects: Poster has not waited 24h
+   └── Must repost or find different worker
+```
+
+---
+
 ### Remaining Trust Points (Unavoidable)
 
 Complete honesty about what you still must trust:
@@ -1124,6 +1297,51 @@ Token holders vote on multiple categories with different requirements:
 - Higher stake to propose
 
 This protects core mechanics from minority capture while allowing evolution.
+
+### 8.5 Contribution Type Registry (On-Chain Governance)
+
+The multipliers for all 11 contribution types are stored in a governance-updatable Solana PDA (Program Derived Address) rather than hardcoded constants. This allows the community to adjust incentives while maintaining immutability guarantees:
+
+```
+CONTRIBUTION TYPE REGISTRY PDA:
+├── Stores all 11 contribution type multipliers
+├── Updatable via governance proposal
+├── Individual entry freeze (one-way, permanent)
+├── Full registry freeze (one-way, permanent)
+└── Lookup table for efficient on-chain access
+
+GRADUATED FREEZE MECHANISM:
+├── Individual entries can be individually frozen (locked in current value)
+├── No unfreeze instruction exists (permanence)
+└── Example: Bug report multiplier could be frozen at 100% (10000 BPS)
+
+FULL REGISTRY FREEZE:
+├── Can freeze entire registry with governance vote
+├── Disables ALL updates to contribution types
+├── Emergency brake against governance griefing
+└── Never undone once triggered
+
+AUTO-FREEZE DEADLINE:
+├── 3 years from platform launch: Permissionless auto-freeze trigger
+├── Anyone can call freeze_by_deadline() after 3 years
+├── Guarantees mechanism becomes immutable
+└── Date: April 2029 (if launching April 2026)
+
+GOVERNANCE EXTENSIONS (Limited):
+├── Up to 2 governance extensions possible
+├── Each extension: Exactly 1 year (not variable)
+├── Total extension window: 2 years maximum
+├── Vote required: Supermajority (66.7%)
+├── New deadline: 5 years from launch (April 2031)
+
+ABSOLUTE MAXIMUM:
+├── 5 years total (deadline + 2 × 1-year extensions)
+├── After 5 years: Frozen permanently
+├── No further extensions possible
+└── Immutability guaranteed by on-chain logic
+```
+
+This design protects against governance capture while allowing the community to adapt incentives during the critical bootstrap phase. The deadline ensures that eventually the contribution types become immutable, matching the immutability of the token supply.
 
 ---
 

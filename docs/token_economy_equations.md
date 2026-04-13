@@ -187,6 +187,36 @@ Halving Schedule:
   Floor:     Minimum   =    100 AMOS/day
 ```
 
+### Sigmoid Pool Separation
+
+The daily emission pool is split between technical and growth contributions using a sigmoid function that caps growth allocation over time:
+
+```
+growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
+
+Where:
+  ceiling = 2000 BPS (20%)
+  floor = 300 BPS (3%)
+  midpoint = 540 days
+  k = 0.01 (k_scaled = 100)
+```
+
+**Example Trajectory:**
+```
+Day 0:    ≈ 20% (growth_cap ≈ 2000 BPS)
+Day 270:  ≈ 18.9% (growth_cap ≈ 1889 BPS)
+Day 540:  ≈ 11.5% (growth_cap ≈ 1150 BPS)
+Day 900:  ≈ 3.5% (growth_cap ≈ 350 BPS)
+Day 1260: ≈ 3.0% (growth_cap ≈ 300 BPS)
+```
+
+**Daily Split:**
+```
+Technical pool = E_daily - growth_pool
+Growth pool = min(sigmoid_cap, natural_weighted_share)
+Unused growth allocation rolls into technical pool
+```
+
 ### Your Token Reward
 
 ```
@@ -205,6 +235,19 @@ Your Tokens = (100 / 5,000) × 16,000 = 320 AMOS
 ---
 
 ## 📈 POINTS EQUATIONS
+
+### Contribution Types (11 Total: 8 Technical + 3 Growth)
+
+#### Technical Contributions
+1. **Bounty** — Bounty Value (in AMOS)
+2. **Referral** — Emails, signups, conversions, active months
+3. **Sales** — Users signed up
+4. (Additional technical contributions tracked per activity)
+
+#### Growth Contributions
+- **bug_report**: 10,000 BPS (100%) — Growth pool
+- **referral**: 6,000 BPS (60%) — Growth pool
+- **signup**: 4,000 BPS (40%) — Growth pool
 
 ### Referral Points
 
@@ -313,6 +356,36 @@ After 90 days: Stake is confirmed permanent
 │  Fees to Stakers:       50%                                      │
 │  Grace Period:          12 months                                │
 │  Clawback Period:       90 days                                  │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│                  CLAIM MECHANICS                                  │
+├──────────────────────────────────────────────────────────────────┤
+│  DEFAULT_CLAIM_TIMEOUT_HOURS:  72 hours                          │
+│                                Range: 1-720 hours                │
+│                                                                  │
+│  MAX_CONCURRENT_CLAIMS (by trust level):                         │
+│  • Level 1: 3 concurrent claims                                  │
+│  • Level 2: 5 concurrent claims                                  │
+│  • Level 3: 8 concurrent claims                                  │
+│  • Level 4: 12 concurrent claims                                 │
+│  • Level 5: 20 concurrent claims                                 │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│                 DISPUTE PARAMETERS                                │
+├──────────────────────────────────────────────────────────────────┤
+│  DISPUTE_WINDOW_HOURS:          48 hours                         │
+│  DISPUTE_STAKE_BPS:             500 BPS (5% of bounty value)     │
+│  DISPUTE_RESOLUTION_TIMEOUT:    168 hours (7 days)               │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│                 REGISTRY PARAMETERS                               │
+├──────────────────────────────────────────────────────────────────┤
+│  REGISTRY_AUTO_FREEZE_SECONDS:  94,608,000 (3 years)             │
+│  REGISTRY_MAX_EXTENSIONS:       2                                │
+│  REGISTRY_EXTENSION_DURATION:   31,536,000 seconds (1 year)      │
 └──────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────┐

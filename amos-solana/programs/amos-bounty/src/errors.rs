@@ -230,7 +230,7 @@ pub enum BountyError {
     #[msg("Entry inactive: Cannot operate on inactive entry")]
     EntryInactive,
 
-    #[msg("Registry full: Maximum 32 contribution types")]
+    #[msg("Registry full: Maximum 16 contribution types")]
     RegistryFull,
 
     #[msg("Freeze deadline not reached: Cannot auto-freeze before deadline")]

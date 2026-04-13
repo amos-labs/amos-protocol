@@ -121,18 +121,11 @@ pub fn handler_initialize_registry(ctx: Context<InitializeRegistry>) -> Result<(
     registry.max_extensions = REGISTRY_MAX_EXTENSIONS;
     registry.extension_duration_seconds = REGISTRY_EXTENSION_DURATION_SECONDS;
 
-    // Growth phase timestamps (relative to launch)
-    registry.growth_phase_1_end = launch_time + GROWTH_PHASE_1_DURATION_SECONDS;
-    registry.growth_phase_1_cap_bps = GROWTH_PHASE_1_CAP_BPS;
-    registry.growth_phase_2_end =
-        launch_time + GROWTH_PHASE_1_DURATION_SECONDS + GROWTH_PHASE_2_DURATION_SECONDS;
-    registry.growth_phase_2_cap_bps = GROWTH_PHASE_2_CAP_BPS;
-    registry.growth_phase_3_end = launch_time
-        + GROWTH_PHASE_1_DURATION_SECONDS
-        + GROWTH_PHASE_2_DURATION_SECONDS
-        + GROWTH_PHASE_3_DURATION_SECONDS;
-    registry.growth_phase_3_cap_bps = GROWTH_PHASE_3_CAP_BPS;
-    registry.growth_phase_4_cap_bps = GROWTH_PHASE_4_CAP_BPS;
+    // Sigmoid growth cap parameters
+    registry.sigmoid_ceiling_bps = SIGMOID_GROWTH_CEILING_BPS;
+    registry.sigmoid_floor_bps = SIGMOID_GROWTH_FLOOR_BPS;
+    registry.sigmoid_midpoint_days = SIGMOID_MIDPOINT_DAYS;
+    registry.sigmoid_k_scaled = SIGMOID_K_SCALED;
 
     registry.reserved = [0; 16];
 
@@ -156,7 +149,7 @@ pub fn handler_initialize_registry(ctx: Context<InitializeRegistry>) -> Result<(
 // ============================================================================
 
 /// Governance adds a new contribution type to the registry.
-/// Requires: registry not frozen, entry_count < 32.
+/// Requires: registry not frozen, entry_count < 16.
 #[derive(Accounts)]
 pub struct AddContributionType<'info> {
     #[account(
@@ -490,17 +483,19 @@ pub fn handler_extend_freeze_deadline(ctx: Context<ExtendFreezeDeadline>) -> Res
 // Helper: Get Current Growth Cap BPS
 // ============================================================================
 
-/// Returns the current growth pool cap in BPS based on the phase.
-pub fn current_growth_cap_bps(registry: &ContributionTypeRegistry, now: i64) -> u16 {
-    if now < registry.growth_phase_1_end {
-        registry.growth_phase_1_cap_bps // Phase 1: 10%
-    } else if now < registry.growth_phase_2_end {
-        registry.growth_phase_2_cap_bps // Phase 2: 20% (peak)
-    } else if now < registry.growth_phase_3_end {
-        registry.growth_phase_3_cap_bps // Phase 3: 10% (taper)
-    } else {
-        registry.growth_phase_4_cap_bps // Phase 4: 5% (permanent)
-    }
+/// Returns the current growth pool cap in BPS using sigmoid decay.
+///
+/// growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
+///
+/// Uses registry-stored parameters so governance can adjust before freeze.
+pub fn current_growth_cap_bps(registry: &ContributionTypeRegistry, elapsed_days: u64) -> u16 {
+    sigmoid_growth_cap_bps_params(
+        elapsed_days,
+        registry.sigmoid_ceiling_bps,
+        registry.sigmoid_floor_bps,
+        registry.sigmoid_midpoint_days,
+        registry.sigmoid_k_scaled,
+    )
 }
 
 // ============================================================================
@@ -549,11 +544,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_growth_phase_constants() {
-        assert_eq!(GROWTH_PHASE_1_CAP_BPS, 1000); // 10%
-        assert_eq!(GROWTH_PHASE_2_CAP_BPS, 2000); // 20%
-        assert_eq!(GROWTH_PHASE_3_CAP_BPS, 1000); // 10%
-        assert_eq!(GROWTH_PHASE_4_CAP_BPS, 500); // 5%
+    fn test_sigmoid_growth_params() {
+        assert_eq!(SIGMOID_GROWTH_CEILING_BPS, 2000); // 20%
+        assert_eq!(SIGMOID_GROWTH_FLOOR_BPS, 300); // 3%
+        assert_eq!(SIGMOID_MIDPOINT_DAYS, 540); // 18 months
+        assert_eq!(SIGMOID_K_SCALED, 100); // k = 0.01
     }
 
     #[test]

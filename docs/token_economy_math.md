@@ -317,7 +317,41 @@ The dynamic decay creates **organic equilibrium**:
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 6.3 Total Supply Calculation
+### 6.3 Sigmoid Pool Separation (Technical vs Growth)
+
+The daily emission pool is dynamically split between technical and growth contributions using a sigmoid function:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    SIGMOID GROWTH CAP FORMULA                           │
+│                                                                         │
+│  growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - m)))    │
+│                                                                         │
+│  Where:                                                                 │
+│  • ceiling = 2000 BPS (20% maximum cap)                                 │
+│  • floor = 300 BPS (3% minimum cap)                                     │
+│  • midpoint (m) = 540 days                                              │
+│  • k = 0.01 (k_scaled = 100 for integer arithmetic)                     │
+│                                                                         │
+│  The pool is then split as:                                             │
+│  • Technical pool = E_daily - growth_pool                               │
+│  • Growth pool = min(growth_cap(t), natural_weighted_share)             │
+│  • Unused growth allocation rolls into technical pool                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Example Trajectory:**
+```
+Day 0:      growth_cap ≈ 2000 BPS (20%)
+Day 270:    growth_cap ≈ 1889 BPS (18.9%)
+Day 540:    growth_cap ≈ 1150 BPS (11.5%)
+Day 900:    growth_cap ≈ 350 BPS (3.5%)
+Day 1260:   growth_cap ≈ 300 BPS (3.0% floor)
+```
+
+This sigmoid function gradually transitions growth pool allocation from a 20% cap at launch to the 3% floor by year 3.6, ensuring growth initiatives are incentivized early while technical work dominates long-term.
+
+### 6.4 Total Supply Calculation
 
 ```
 Total Supply = 100,000,000 AMOS (fixed)
@@ -352,6 +386,18 @@ All contributions are measured in **points**, which determine your share of the 
 ```
 
 ### 7.2 Points by Activity Type
+
+#### Contribution Types (11 Total: 8 Technical + 3 Growth)
+
+**Technical Contributions:**
+- Bounties/Code, Referrals, Sales, and 5 other technical activity types
+
+**Growth Contributions:**
+| Type | BPS Value | Pool |
+|------|-----------|------|
+| bug_report | 10,000 BPS (100%) | Growth |
+| referral | 6,000 BPS (60%) | Growth |
+| signup | 4,000 BPS (40%) | Growth |
 
 #### Referrals
 
@@ -704,9 +750,76 @@ Where R_holders = 50% of protocol fees
 
 ---
 
-## 13. Gaps & Future Work
+## 13. Operational Parameters
 
-### 13.1 Current Tracking Gaps
+### 13.1 Claim Mechanics
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      CLAIM TIMEOUT CONFIGURATION                        │
+│                                                                         │
+│  DEFAULT_CLAIM_TIMEOUT_HOURS = 72                                       │
+│  Valid Range:                   1 - 720 hours                           │
+│                                                                         │
+│  When a contributor claims a completed bounty, the platform grants      │
+│  72 hours for dispute resolution before the claim is finalized.         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│               MAX CONCURRENT CLAIMS BY TRUST LEVEL                       │
+│                                                                         │
+│  Trust Level 1:  3 concurrent claims                                    │
+│  Trust Level 2:  5 concurrent claims                                    │
+│  Trust Level 3:  8 concurrent claims                                    │
+│  Trust Level 4:  12 concurrent claims                                   │
+│  Trust Level 5:  20 concurrent claims                                   │
+│                                                                         │
+│  Higher trust levels can work on more bounties simultaneously.          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 13.2 Dispute Parameters
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        DISPUTE MECHANICS                                │
+│                                                                         │
+│  DISPUTE_WINDOW_HOURS = 48                                              │
+│    Window after claim is filed during which disputes can be raised      │
+│                                                                         │
+│  DISPUTE_STAKE_BPS = 500 (5% of bounty value)                           │
+│    Stake required to file a dispute; returned if dispute wins           │
+│                                                                         │
+│  DISPUTE_RESOLUTION_TIMEOUT_HOURS = 168 (7 days)                        │
+│    Maximum time for dispute resolution before auto-resolution           │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 13.3 Registry Parameters
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   REGISTRY LIFECYCLE MANAGEMENT                          │
+│                                                                         │
+│  REGISTRY_AUTO_FREEZE_SECONDS = 94,608,000 (3 years)                    │
+│    After 3 years of inactivity, a registry entry auto-freezes           │
+│    Frozen registries no longer receive emissions or rewards             │
+│                                                                         │
+│  REGISTRY_MAX_EXTENSIONS = 2                                            │
+│    Maximum number of times a registry can be extended before expiry     │
+│                                                                         │
+│  REGISTRY_EXTENSION_DURATION_SECONDS = 31,536,000 (1 year)              │
+│    Each extension adds 1 year to the registry lifetime                  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 14. Gaps & Future Work
+
+### 14.1 Current Tracking Gaps
 
 | Category | Status | Implementation |
 |----------|--------|----------------|
@@ -719,14 +832,14 @@ Where R_holders = 50% of protocol fees
 | Third-party APIs | ⚠️ Partial | `EntityCostTracker.track_integration_api_call` |
 | Personnel | ❌ Manual | `PlatformCost` records |
 
-### 13.2 Recommended Improvements
+### 14.2 Recommended Improvements
 
 1. **AWS Cost Explorer Integration**: Pull real costs daily via API
 2. **Real-time ECS Tracking**: Use Container Insights metrics
 3. **Budget Alerts**: Auto-detect cost spikes
 4. **Cost Attribution**: Tag AWS resources by entity/user
 
-### 13.3 Implementation Checklist
+### 14.3 Implementation Checklist
 
 - [ ] Add AWS Cost Explorer API integration
 - [ ] Create daily cost sync job
@@ -737,7 +850,7 @@ Where R_holders = 50% of protocol fees
 
 ---
 
-## 14. Appendix: Code References
+## 15. Appendix: Code References
 
 ### Key Services (now Rust modules)
 

@@ -66,9 +66,21 @@ The more you contribute, the more you own. And your ownership is **real** — yo
 
 ## How Do I Earn AMOS?
 
+### Three Ways to Start Earning (No Purchase Needed)
+
+**The path is start earning.** You don't need to buy AMOS tokens — you can earn them from day one:
+
+1. **Sign up and verify** → Get initial tokens (signup bounty with 40% multiplier)
+2. **Refer friends who verify** → Earn referral tokens (60% multiplier)
+3. **Report valid bugs** → Earn tokens (100% multiplier, severity-based):
+   - Critical: 500 pts
+   - Major: 200 pts
+   - Minor: 50 pts
+   - Cosmetic: 20 pts
+
 ### The Simple Rules
 
-There are only **two ways** to earn tokens:
+Beyond growth activities, there are two main ways to earn tokens:
 
 1. **Sign up users** → Points based on activity (see detailed breakdown below)
 2. **Complete bounties** → Bounty value = points
@@ -166,6 +178,35 @@ Your tokens: 16,000 × 3.3% = 533 AMOS
 
 The system balances itself automatically.
 
+### Pool Separation: Growth and Infrastructure Stay Balanced
+
+To protect the platform, the daily token pool is split between two activities:
+
+**The daily token pool is split: technical work always gets the lion's share (~80%+ at launch, growing to ~97% at maturity). Growth activities like signups and referrals share a smaller pool that shrinks over time via a smooth curve.**
+
+**What this means in practice:**
+- Infrastructure builders (code, features, support) are protected from being overwhelmed by growth activity
+- If a million people sign up on the same day, the infrastructure pool stays strong
+- Growth pools shrink gradually as the platform matures (fewer new users needed as the base grows)
+- This incentivizes sustainable growth rather than spam signups
+
+### Claim Timeout: No Squatting on Work
+
+Once you claim a bounty, you have **72 hours** to complete it. If time runs out, the bounty automatically releases back to the pool so someone else can pick it up.
+
+**Why this matters:** No one can claim work and sit on it. The system keeps moving.
+
+### Disputes: Fair Resolution in 48 Hours
+
+If your work gets rejected, you're not stuck:
+
+1. **Within 48 hours** of rejection, you can contest the decision
+2. Stake **5% of the bounty value** as a dispute fee
+3. If the original reviewer doesn't respond within **7 days**, you automatically win and get your bounty
+4. If they do respond, governance votes on it
+
+This protects workers from unfair rejections while keeping reviewers honest.
+
 ---
 
 ## What Can I Do With AMOS?
@@ -205,6 +246,14 @@ Your tokens are tradeable on crypto exchanges (like Coinbase, Jupiter, Raydium):
 - Sell for cash anytime
 - Trade for Bitcoin, stablecoins, etc.
 - Hold for long-term growth
+
+---
+
+## Registry Freeze: Rules Harden Over Time
+
+Contribution multipliers start flexible — governance can adjust them based on real data about what works. But over **3–5 years**, they gradually lock down into **permanent, immutable values** written into the protocol.
+
+**The rules harden over time.** This protects early contributors from sudden changes while giving the platform room to optimize as it matures.
 
 ---
 

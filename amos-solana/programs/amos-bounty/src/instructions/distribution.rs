@@ -518,24 +518,16 @@ fn calculate_day_index(start_time: i64) -> Result<u32> {
     Ok(days as u32)
 }
 
-/// Determine the current growth pool cap based on elapsed time from launch.
-/// Uses constant-based phase boundaries (ContributionTypeRegistry can override
-/// these via governance, but this provides the default path).
+/// Determine the current growth pool cap using sigmoid decay.
+///
+/// growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
+///
+/// Uses the default constants. When ContributionTypeRegistry is available,
+/// the registry's stored parameters are used instead (see registry.rs).
 fn current_growth_cap_bps(now: i64, launch_time: i64) -> u64 {
-    let elapsed = now.saturating_sub(launch_time);
-    let phase_1_end = GROWTH_PHASE_1_DURATION_SECONDS;
-    let phase_2_end = phase_1_end + GROWTH_PHASE_2_DURATION_SECONDS;
-    let phase_3_end = phase_2_end + GROWTH_PHASE_3_DURATION_SECONDS;
-
-    if elapsed < phase_1_end {
-        GROWTH_PHASE_1_CAP_BPS as u64
-    } else if elapsed < phase_2_end {
-        GROWTH_PHASE_2_CAP_BPS as u64
-    } else if elapsed < phase_3_end {
-        GROWTH_PHASE_3_CAP_BPS as u64
-    } else {
-        GROWTH_PHASE_4_CAP_BPS as u64
-    }
+    let elapsed_seconds = now.saturating_sub(launch_time).max(0) as u64;
+    let elapsed_days = elapsed_seconds / 86400;
+    sigmoid_growth_cap_bps(elapsed_days) as u64
 }
 
 // ============================================================================
@@ -590,36 +582,29 @@ mod tests {
     }
 
     #[test]
-    fn test_growth_cap_phases() {
+    fn test_sigmoid_growth_cap_in_distribution() {
         let launch = 1000i64;
 
-        // Phase 1: 0-6 months → 10% cap
-        assert_eq!(current_growth_cap_bps(launch + 1, launch), 1000);
+        // At launch: near ceiling (20%)
+        let cap_launch = current_growth_cap_bps(launch + 1, launch);
+        assert!(cap_launch >= 1950, "Launch cap {} should be near 2000", cap_launch);
 
-        // Phase 2: 6-24 months → 20% cap
-        assert_eq!(
-            current_growth_cap_bps(launch + GROWTH_PHASE_1_DURATION_SECONDS + 1, launch),
-            2000
-        );
+        // At midpoint (~18 months = 540 days = 46656000 seconds): ~1150 bps
+        let cap_mid = current_growth_cap_bps(launch + 540 * 86400, launch);
+        assert!(cap_mid >= 1000 && cap_mid <= 1300, "Midpoint cap {} should be ~1150", cap_mid);
 
-        // Phase 3: 24-36 months → 10% cap
-        let phase_3_start = GROWTH_PHASE_1_DURATION_SECONDS + GROWTH_PHASE_2_DURATION_SECONDS;
-        assert_eq!(
-            current_growth_cap_bps(launch + phase_3_start + 1, launch),
-            1000
-        );
+        // At maturity (5 years): near floor (3%)
+        let cap_mature = current_growth_cap_bps(launch + 1800 * 86400, launch);
+        assert!(cap_mature <= 350, "Mature cap {} should be near 300", cap_mature);
 
-        // Phase 4: 36+ months → 5% cap
-        let phase_4_start = phase_3_start + GROWTH_PHASE_3_DURATION_SECONDS;
-        assert_eq!(
-            current_growth_cap_bps(launch + phase_4_start + 1, launch),
-            500
-        );
+        // Monotonically decreasing
+        assert!(cap_launch > cap_mid);
+        assert!(cap_mid > cap_mature);
     }
 
     #[test]
     fn test_growth_pool_cap_enforcement() {
-        // With 16000 daily emission and 10% growth cap (Phase 1):
+        // With 16000 daily emission and ~10% sigmoid growth cap (near midpoint):
         let daily_emission = 16000u64;
         let growth_cap_bps = 1000u64; // 10%
         let growth_pool_max = daily_emission * growth_cap_bps / BPS_DENOMINATOR as u64;

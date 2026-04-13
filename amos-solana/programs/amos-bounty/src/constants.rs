@@ -216,24 +216,34 @@ pub const MULTIPLIER_REFERRAL_BPS: u16 = 6000;
 pub const MULTIPLIER_SIGNUP_BPS: u16 = 4000;
 
 // ============================================================================
-// Emission Pool Separation — Protects technical work from growth floods
-// Growth cap follows a bell curve: low → peak → taper → permanent floor
+// Emission Pool Separation — Sigmoid Decay Model
+//
+// growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
+//
+// The sigmoid encodes a smooth, ungameable transition from "build the network"
+// to "sustain the network." At launch, growth allocation is near the ceiling.
+// Over time, it decays smoothly toward the permanent floor. No discontinuities,
+// no peak to target, no phase boundaries to game.
+//
+// The permanent floor means onboarding new users is always compensated — even
+// at year 10. Growth is not a phase, it's part of the economic model.
 // ============================================================================
 
-/// Phase 1 (Month 0-6): Launch — infrastructure focus
-pub const GROWTH_PHASE_1_DURATION_SECONDS: i64 = 15_768_000; // 6 months
-pub const GROWTH_PHASE_1_CAP_BPS: u16 = 1000; // 10% growth, 90% technical
+/// Maximum growth pool share at launch (20% = 2000 bps)
+pub const SIGMOID_GROWTH_CEILING_BPS: u16 = 2000;
 
-/// Phase 2 (Month 6-24): Peak growth incentive
-pub const GROWTH_PHASE_2_DURATION_SECONDS: i64 = 47_304_000; // 18 months (cumulative: 24 months)
-pub const GROWTH_PHASE_2_CAP_BPS: u16 = 2000; // 20% growth, 80% technical (maximum)
+/// Permanent minimum growth pool share (3% = 300 bps)
+/// This floor ensures growth work is always incentivized
+pub const SIGMOID_GROWTH_FLOOR_BPS: u16 = 300;
 
-/// Phase 3 (Month 24-36): Tapering
-pub const GROWTH_PHASE_3_DURATION_SECONDS: i64 = 31_536_000; // 12 months (cumulative: 36 months)
-pub const GROWTH_PHASE_3_CAP_BPS: u16 = 1000; // 10% growth, 90% technical
+/// Midpoint of sigmoid transition in days from launch (540 days ≈ 18 months)
+/// At this point, growth cap equals (ceiling + floor) / 2 ≈ 11.5%
+pub const SIGMOID_MIDPOINT_DAYS: u64 = 540;
 
-/// Phase 4 (Month 36+): Mature — permanent floor
-pub const GROWTH_PHASE_4_CAP_BPS: u16 = 500; // 5% growth, 95% technical
+/// Steepness of sigmoid transition (scaled by 10000)
+/// k=100 means k=0.01 — gives a smooth ~18-month transition window
+/// Higher = sharper transition, lower = more gradual
+pub const SIGMOID_K_SCALED: u64 = 100;
 
 /// Total number of contribution types (8 technical + 3 growth)
 pub const CONTRIBUTION_TYPE_COUNT: u8 = 11;
@@ -383,6 +393,116 @@ pub fn is_growth_contribution(contribution_type: u8) -> bool {
     contribution_type >= 8 && contribution_type <= 10
 }
 
+// ============================================================================
+// Sigmoid Growth Cap Computation
+// ============================================================================
+
+/// Lookup table for e^(x/10) where x is the table index (0..=60).
+/// Each value is e^(index/10) scaled by 10000.
+/// Covers the range [0.0, 6.0] which is sufficient since sigmoid saturates
+/// beyond ~3 standard deviations from midpoint.
+///
+/// Generated: (0..=60).map(|i| (f64::exp(i as f64 / 10.0) * 10000.0).round() as u64)
+const EXP_LOOKUP: [u64; 61] = [
+    10000, 11052, 12214, 13499, 14918, 16487, 18221, 20138, 22255, 24596, // 0.0 - 0.9
+    27183, 30042, 33201, 36693, 40552, 44817, 49530, 54739, 60496, 66859, // 1.0 - 1.9
+    73891, 81662, 90250, 99741, 110232, 121825, 134637, 148797, 164446, 181741, // 2.0 - 2.9
+    200855, 221979, 245325, 271126, 299641, 331155, 365982, 404473, 447012, 494024, // 3.0 - 3.9
+    545982, 603403, 666863, 737095, 814509, 900171, 995303, 1100317, 1215810, 1343600, // 4.0 - 4.9
+    1484132, 1640029, 1812118, 2002581, 2213643, 2447647, 2707083, 2995545, 3316723, 3674497, // 5.0 - 5.9
+    4034288, // 6.0
+];
+
+/// Compute e^x using the lookup table with linear interpolation.
+/// Input: x scaled by 100 (e.g., x=150 means e^1.5)
+/// Output: e^x scaled by 10000
+/// For negative x, returns 10000/e^|x| (reciprocal).
+fn exp_scaled(x_hundredths: i64) -> u64 {
+    if x_hundredths >= 600 {
+        return EXP_LOOKUP[60]; // e^6.0 ≈ 403.4
+    }
+    if x_hundredths <= -600 {
+        return 1; // e^-6.0 ≈ 0.0025, rounds to ~0 at our scale
+    }
+
+    let (abs_x, is_negative) = if x_hundredths < 0 {
+        ((-x_hundredths) as u64, true)
+    } else {
+        (x_hundredths as u64, false)
+    };
+
+    // Map x (in hundredths) to table index (in tenths)
+    // abs_x=150 (1.50) → table index 15 (1.5), remainder 0
+    let idx = (abs_x / 10) as usize;
+    let remainder = abs_x % 10; // 0-9, represents 0.00-0.09
+
+    let val = if idx >= 60 {
+        EXP_LOOKUP[60]
+    } else if remainder == 0 {
+        EXP_LOOKUP[idx]
+    } else {
+        // Linear interpolation between table[idx] and table[idx+1]
+        let lo = EXP_LOOKUP[idx];
+        let hi = EXP_LOOKUP[idx + 1];
+        lo + (hi - lo) * remainder / 10
+    };
+
+    if is_negative {
+        // e^(-x) = 1/e^x → scaled: 10000 * 10000 / val
+        10000u64.saturating_mul(10000) / val.max(1)
+    } else {
+        val
+    }
+}
+
+/// Compute the growth pool cap in BPS using sigmoid decay.
+///
+/// Formula: growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
+///
+/// At t=0 (launch): cap ≈ ceiling (20%)
+/// At t=midpoint: cap = (ceiling + floor) / 2 ≈ 11.5%
+/// At t→∞: cap → floor (3%)
+///
+/// All integer math, no floating point. Uses lookup table for e^x.
+pub fn sigmoid_growth_cap_bps(elapsed_days: u64) -> u16 {
+    sigmoid_growth_cap_bps_params(
+        elapsed_days,
+        SIGMOID_GROWTH_CEILING_BPS,
+        SIGMOID_GROWTH_FLOOR_BPS,
+        SIGMOID_MIDPOINT_DAYS,
+        SIGMOID_K_SCALED,
+    )
+}
+
+/// Parameterized version for use with registry-stored parameters.
+pub fn sigmoid_growth_cap_bps_params(
+    elapsed_days: u64,
+    ceiling_bps: u16,
+    floor_bps: u16,
+    midpoint_days: u64,
+    k_scaled: u64,
+) -> u16 {
+    let t = elapsed_days as i64;
+    let mid = midpoint_days as i64;
+
+    // x = k * (t - midpoint), in hundredths
+    // k_scaled=100 means k=0.01, so k*(t-mid) in hundredths = k_scaled * (t-mid) / 100
+    let x_hundredths = (k_scaled as i64) * (t - mid) / 100;
+
+    // e^x from lookup table
+    let exp_x = exp_scaled(x_hundredths);
+
+    // sigmoid = 1 / (1 + e^x), scaled by 10000
+    // = 10000 * 10000 / (10000 + exp_x)
+    let sigmoid_scaled = 100_000_000u64 / (10000u64 + exp_x).max(1);
+
+    // growth_cap = floor + (ceiling - floor) * sigmoid / 10000
+    let range = (ceiling_bps - floor_bps) as u64;
+    let result = floor_bps as u64 + (range * sigmoid_scaled) / 10000;
+
+    result.min(ceiling_bps as u64) as u16
+}
+
 /// Get the maximum concurrent claims for a given trust level
 pub fn get_max_concurrent_claims(trust_level: u8) -> Result<u8> {
     if trust_level == 0 || trust_level > 5 {
@@ -507,11 +627,77 @@ mod tests {
     }
 
     #[test]
-    fn test_growth_phase_caps() {
-        assert_eq!(GROWTH_PHASE_1_CAP_BPS, 1000); // 10%
-        assert_eq!(GROWTH_PHASE_2_CAP_BPS, 2000); // 20% (peak)
-        assert_eq!(GROWTH_PHASE_3_CAP_BPS, 1000); // 10% (taper)
-        assert_eq!(GROWTH_PHASE_4_CAP_BPS, 500); // 5% (permanent floor)
+    fn test_sigmoid_growth_cap_at_launch() {
+        // At day 0, cap should be near ceiling (20%)
+        let cap = sigmoid_growth_cap_bps(0);
+        assert!(cap >= 1950, "Launch cap {} should be near ceiling", cap);
+        assert!(cap <= SIGMOID_GROWTH_CEILING_BPS);
+    }
+
+    #[test]
+    fn test_sigmoid_growth_cap_at_midpoint() {
+        // At midpoint (day 540), cap should be ~(ceiling + floor) / 2 ≈ 1150
+        let cap = sigmoid_growth_cap_bps(SIGMOID_MIDPOINT_DAYS);
+        let expected_mid = (SIGMOID_GROWTH_CEILING_BPS + SIGMOID_GROWTH_FLOOR_BPS) / 2;
+        let tolerance = 100; // Within 1%
+        assert!(
+            (cap as i32 - expected_mid as i32).unsigned_abs() <= tolerance,
+            "Midpoint cap {} should be near {}", cap, expected_mid
+        );
+    }
+
+    #[test]
+    fn test_sigmoid_growth_cap_at_maturity() {
+        // At day 1800 (5 years), cap should be near floor (3%)
+        let cap = sigmoid_growth_cap_bps(1800);
+        assert!(cap <= SIGMOID_GROWTH_FLOOR_BPS + 50, "Mature cap {} should be near floor", cap);
+        assert!(cap >= SIGMOID_GROWTH_FLOOR_BPS);
+    }
+
+    #[test]
+    fn test_sigmoid_is_monotonically_decreasing() {
+        let mut prev = sigmoid_growth_cap_bps(0);
+        for day in (30..=1800).step_by(30) {
+            let cap = sigmoid_growth_cap_bps(day);
+            assert!(cap <= prev, "Cap at day {} ({}) > cap at day {} ({})", day, cap, day - 30, prev);
+            prev = cap;
+        }
+    }
+
+    #[test]
+    fn test_sigmoid_never_below_floor() {
+        for day in [0, 100, 540, 1000, 3650, 10000] {
+            let cap = sigmoid_growth_cap_bps(day);
+            assert!(cap >= SIGMOID_GROWTH_FLOOR_BPS, "Day {}: cap {} below floor", day, cap);
+        }
+    }
+
+    #[test]
+    fn test_sigmoid_never_above_ceiling() {
+        for day in [0, 1, 10, 100] {
+            let cap = sigmoid_growth_cap_bps(day);
+            assert!(cap <= SIGMOID_GROWTH_CEILING_BPS, "Day {}: cap {} above ceiling", day, cap);
+        }
+    }
+
+    #[test]
+    fn test_exp_lookup_accuracy() {
+        // e^0 = 1.0 → 10000
+        assert_eq!(exp_scaled(0), 10000);
+        // e^1.0 → 27183
+        assert_eq!(exp_scaled(100), 27183);
+        // e^-1.0 → 10000/27183 ≈ 3678
+        let e_neg1 = exp_scaled(-100);
+        assert!((e_neg1 as i64 - 3679).abs() <= 10, "e^-1 = {}", e_neg1);
+    }
+
+    #[test]
+    fn test_sigmoid_sample_values() {
+        // Print a sample curve for visual verification
+        println!("Day → Growth Cap BPS:");
+        for &day in &[0, 90, 180, 270, 360, 450, 540, 630, 720, 810, 900, 1080, 1260, 1800] {
+            println!("  Day {:>5}: {:>4} bps ({:.1}%)", day, sigmoid_growth_cap_bps(day), sigmoid_growth_cap_bps(day) as f64 / 100.0);
+        }
     }
 
     #[test]

@@ -185,17 +185,23 @@ pub const MULTIPLIER_REFERRAL_BPS: u64 = 6_000;
 pub const MULTIPLIER_SIGNUP_BPS: u64 = 4_000;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EMISSION POOL SEPARATION — Bell Curve Growth Cap
+// EMISSION POOL SEPARATION — Sigmoid Decay Model
+//
+// growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
+//
+// Smooth, monotonic transition from growth-focus to infrastructure-focus.
+// No discontinuities, no peak to game. Permanent floor ensures growth
+// work is always compensated, even at network maturity.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Phase 1 (Month 0-6): 10% growth, 90% technical.
-pub const GROWTH_PHASE_1_CAP_BPS: u64 = 1_000;
-/// Phase 2 (Month 6-24): 20% growth, 80% technical (peak).
-pub const GROWTH_PHASE_2_CAP_BPS: u64 = 2_000;
-/// Phase 3 (Month 24-36): 10% growth, 90% technical (taper).
-pub const GROWTH_PHASE_3_CAP_BPS: u64 = 1_000;
-/// Phase 4 (Month 36+): 5% growth, 95% technical (permanent floor).
-pub const GROWTH_PHASE_4_CAP_BPS: u64 = 500;
+/// Maximum growth pool share at launch (20%).
+pub const SIGMOID_GROWTH_CEILING_BPS: u64 = 2_000;
+/// Permanent minimum growth pool share (3%).
+pub const SIGMOID_GROWTH_FLOOR_BPS: u64 = 300;
+/// Midpoint of transition in days (540 ≈ 18 months).
+pub const SIGMOID_MIDPOINT_DAYS: u64 = 540;
+/// Steepness parameter × 10000 (100 = k of 0.01).
+pub const SIGMOID_K_SCALED: u64 = 100;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLAIM TIMEOUT
@@ -231,7 +237,7 @@ pub const DISPUTE_RESOLUTION_TIMEOUT_HOURS: u64 = 168;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Maximum contribution types in registry.
-pub const MAX_CONTRIBUTION_TYPES: u8 = 32;
+pub const MAX_CONTRIBUTION_TYPES: u8 = 16;
 /// Auto-freeze deadline: 3 years from launch.
 pub const REGISTRY_AUTO_FREEZE_SECONDS: i64 = 94_608_000;
 /// Max governance extensions: 2.

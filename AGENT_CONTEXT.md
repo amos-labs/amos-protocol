@@ -303,29 +303,39 @@ max_halving_epochs: 10                   # Prevents underflow
 
 ### Emission Pool Separation
 Daily emission is split into two pools to prevent growth floods from diluting technical work.
-The growth cap follows a **bell curve** (implemented as a 4-phase step function): low at launch, peaks during growth phase, then tapers as the network matures.
+The growth cap follows a **sigmoid (logistic) decay curve**: starts at ceiling, smoothly decreases
+through a midpoint, and asymptotically approaches a permanent floor. No discontinuities, no peaks
+to game, monotonically decreasing.
 
 ```yaml
 pool_separation:
-  # Growth cap changes over time (bell curve approximation):
-  phase_1:  # Month 0-6 — Launch, infrastructure focus
-    growth_cap_bps: 1000     # 10% growth, 90% technical
-  phase_2:  # Month 6-24 — Peak growth incentive
-    growth_cap_bps: 2000     # 20% growth, 80% technical (maximum)
-  phase_3:  # Month 24-36 — Tapering
-    growth_cap_bps: 1000     # 10% growth, 90% technical
-  phase_4:  # Month 36+ — Mature, permanent floor
-    growth_cap_bps: 500      # 5% growth, 95% technical
+  # Sigmoid decay model:
+  # growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
+  #
+  # Smooth, continuous transition from growth-focus to infrastructure-focus.
+  # No phase boundaries to game. Monotonically decreasing.
+  sigmoid_parameters:
+    ceiling_bps: 2000        # 20% — maximum growth share at launch
+    floor_bps: 300           # 3% — permanent minimum growth share at maturity
+    midpoint_days: 540       # 18 months — inflection point (steepest decline)
+    k_scaled: 100            # k = 0.01 — controls steepness of transition
+
+  # Example trajectory:
+  #   Day 0:    ~20.0% growth cap (launch — maximum growth incentive)
+  #   Day 270:  ~18.9% (gentle decline in first 9 months)
+  #   Day 540:  ~11.5% (midpoint — steepest decline)
+  #   Day 900:  ~3.5%  (approaching floor)
+  #   Day 1260: ~3.0%  (at floor — mature network)
 
   pool_categories:
     technical: [infrastructure, bug_fix, testing_qa, feature, design, content_marketing, documentation, support, verification]
     growth: [signup, referral, bug_report]
 
   # On normal days: growth pool gets its natural weighted share (may be below cap)
-  # On viral days: growth pool capped at phase limit, technical workers protected
+  # On viral days: growth pool capped at sigmoid-computed limit, technical workers protected
   # Unused growth allocation rolls into technical pool
   # Without this: 1M signups would reduce infrastructure rewards by 99.99%
-  # Phase boundaries are governance-updatable (before registry freeze)
+  # Sigmoid parameters stored on-chain in ContributionTypeRegistry (governance-updatable before freeze)
 ```
 
 ### Claim Mechanics

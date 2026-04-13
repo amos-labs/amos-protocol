@@ -711,54 +711,45 @@ pub struct ContributionTypeRegistry {
     /// Extension duration in seconds (exactly 1 year)
     pub extension_duration_seconds: i64, // 8
 
-    /// Growth phase 1 end timestamp
-    pub growth_phase_1_end: i64, // 8
+    // ── Sigmoid Growth Cap Parameters ──────────────────────────────
+    // growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
 
-    /// Growth phase 1 cap (BPS)
-    pub growth_phase_1_cap_bps: u16, // 2
+    /// Sigmoid ceiling: max growth share at launch (BPS)
+    pub sigmoid_ceiling_bps: u16, // 2
 
-    /// Growth phase 2 end timestamp
-    pub growth_phase_2_end: i64, // 8
+    /// Sigmoid floor: permanent min growth share (BPS)
+    pub sigmoid_floor_bps: u16, // 2
 
-    /// Growth phase 2 cap (BPS)
-    pub growth_phase_2_cap_bps: u16, // 2
+    /// Sigmoid midpoint: days from launch when cap = (ceiling+floor)/2
+    pub sigmoid_midpoint_days: u64, // 8
 
-    /// Growth phase 3 end timestamp
-    pub growth_phase_3_end: i64, // 8
-
-    /// Growth phase 3 cap (BPS)
-    pub growth_phase_3_cap_bps: u16, // 2
-
-    /// Growth phase 4 cap (BPS, permanent)
-    pub growth_phase_4_cap_bps: u16, // 2
+    /// Sigmoid steepness: k × 10000 (higher = sharper transition)
+    pub sigmoid_k_scaled: u64, // 8
 
     /// Reserved space
     pub reserved: [u64; 16], // 128
 }
 
 impl ContributionTypeRegistry {
-    /// 8 (disc) + 1 + 32 + 1 + 8 + 1 + 864 + 2 + 2 + 8 + 1 + 1 + 8 + 8 + 2 + 8 + 2 + 8 + 2 + 2 + 128 = 1097
-    pub const SIZE: usize = 8
-        + 1
-        + 32
-        + 1
-        + 8
-        + 1
-        + (16 * ContributionTypeEntry::SIZE)
-        + 2
-        + 2
-        + 8
-        + 1
-        + 1
-        + 8
-        + 8
-        + 2
-        + 8
-        + 2
-        + 8
-        + 2
-        + 2
-        + 128;
+    /// 8 (disc) + 1 + 32 + 1 + 8 + 1 + 864 + 2 + 2 + 8 + 1 + 1 + 8 + 2 + 2 + 8 + 8 + 128 = 1085
+    pub const SIZE: usize = 8   // discriminator
+        + 1                      // bump
+        + 32                     // authority
+        + 1                      // registry_frozen
+        + 8                      // registry_frozen_at
+        + 1                      // entry_count
+        + (16 * ContributionTypeEntry::SIZE) // entries
+        + 2                      // pool_technical_min_bps
+        + 2                      // pool_growth_max_bps
+        + 8                      // freeze_deadline
+        + 1                      // extensions_used
+        + 1                      // max_extensions
+        + 8                      // extension_duration_seconds
+        + 2                      // sigmoid_ceiling_bps
+        + 2                      // sigmoid_floor_bps
+        + 8                      // sigmoid_midpoint_days
+        + 8                      // sigmoid_k_scaled
+        + 128;                   // reserved
 }
 
 #[cfg(test)]

@@ -257,6 +257,8 @@ Frame against the macro moment — companies squeezed by energy costs, inflation
 
 Publish the EAP specification as an open standard with reference implementations. Build SDK connectors for LangChain, CrewAI, AutoGen, and the Anthropic Agent SDK. Create specialized reference agents as forkable templates. Ensure the `/.well-known/agent.json` discovery endpoint becomes standard across agent frameworks.
 
+**Growth onramp:** Non-technical users earn tokens through low-friction bounties: signups (invite a new agent), referrals (bring in contributors), and bug reports (security + usability). The path is "start earning" — no USD→AMOS conversion needed, no crypto wallet setup required for entry. This is a key strategic advantage: the barrier to initial participation is minimal, and the liquidity to convert earnings into capital comes later in the user's journey.
+
 ### The Network Effect Flywheel
 
 ```
@@ -298,6 +300,24 @@ High bounty volume → low decay. Low activity → high decay, recycling stake f
 **Activity definition:** A holder is "active" when they complete verified work through the bounty system. Submitting bounty proof resets the activity clock. Merely holding tokens, voting, or transacting does not count. After 90 days of inactivity, decay begins. Newly earned tokens receive a 12-month grace period with zero decay — rewarding recent contributors.
 
 **Redistribution:** Decayed tokens split 90/10 — 90% return to the Bounty Treasury for redistribution through future work, 10% are permanently burned. The burn creates mild deflation; the treasury recycling closes the contribution loop. Decay can never reduce a holder's balance below 10% of their original allocation — a floor that preserves minimum stake even for fully inactive participants.
+
+### Pool Separation and Sigmoid Capacity Controls
+
+The relay segregates bounty pools by contribution type — **growth-track bounties** (signups, referrals, bug reports) separate from **infrastructure-track bounties** (coded work, deployed services, protocol development). Each pool has a sigmoid capacity curve: early completers earn full rewards; as pool utilization rises, rewards decrease. This prevents growth-track floods from competing away the compensation for specialized infrastructure work that requires deeper expertise.
+
+**Growth Track:** Non-technical, high-volume, low-value bounties. Sigmoid curve caps total rewards at 10-15% of daily relay volume. Early adopters earn more per bounty; later completers earn less. Incentivizes early participation while preventing spam.
+
+**Infrastructure Track:** Technical, lower-volume, higher-value bounties. Sigmoid curve caps at 70-80% of daily relay volume. Specialized contributors are protected from being out-competed by growth-track volume, ensuring deep work remains economically viable.
+
+### ContributionTypeRegistry with Graduated Immutability
+
+Bounty contribution types are registered in an on-chain `ContributionTypeRegistry` (Solana program) with a graduated freeze timeline: new types are mutable and governed by the DAO for 3-5 years, then automatically transition to immutability. This locks the token economics against retroactive changes while preserving adaptation during the foundational period.
+
+**Types:** `code_contribution`, `research_submission`, `infrastructure_operation`, `growth_activity`, `governance_participation`, `package_creation`. Each type has its own quality scoring rules, reputation multipliers, and pool allocation curves.
+
+### Dispute Mechanism as Worker Protection
+
+When a bounty poster rejects work, the contributing agent has 48 hours to file a dispute with on-chain evidence: the tool calls made, outputs generated, and acceptance criteria that were met. A 5% stake from the agent's wallet enters a dispute pool. If the dispute is upheld (governance review), the stake is returned and the agent receives full payment. If rejected, the stake is burned — a penalty that rises with abuse. This is worker protection against arbitrary rejection.
 
 > *These mechanics — activity definition, grace periods, redistribution split, and decay floor — were first defined in the on-chain Solana programs (amos-bounty) and core token economics module before being formalized in this document. See: `amos-solana/programs/amos-bounty/src/instructions/decay.rs` and `amos-core/src/token/economics.rs`.*
 
