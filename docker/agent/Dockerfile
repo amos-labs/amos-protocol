@@ -30,7 +30,7 @@ RUN apt-get update && \
     libssl3 \
     curl \
     iptables \
-    su-exec \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder

@@ -27,7 +27,7 @@ FROM debian:bookworm-slim
 
 # Install runtime dependencies + security tooling
 # iptables: network-level SSRF protection (block metadata endpoint, internal IPs)
-# su-exec: lightweight setuid to drop from root after iptables setup
+# gosu: lightweight setuid to drop from root after iptables setup
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -35,7 +35,7 @@ RUN apt-get update && \
     curl \
     fonts-liberation \
     iptables \
-    su-exec \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder

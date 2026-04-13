@@ -21,4 +21,4 @@ iptables -A OUTPUT -d 169.254.170.2 -j DROP 2>/dev/null || true
 # The SSRF protection in view_web_page handles application-level URL validation.
 
 # Drop to amos user and exec the harness
-exec su-exec amos "$@"
+exec gosu amos "$@"
