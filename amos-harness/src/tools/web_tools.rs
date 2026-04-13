@@ -198,7 +198,7 @@ impl Tool for ViewWebPageTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch and parse the content of a web page"
+        "Fetch web pages or call external APIs. Supports GET/POST/PUT/PATCH/DELETE with custom headers and body. Use extract_format 'raw' for API JSON responses. Never use bash curl — use this tool instead."
     }
 
     fn parameters_schema(&self) -> JsonValue {
@@ -209,10 +209,24 @@ impl Tool for ViewWebPageTool {
                     "type": "string",
                     "description": "URL to fetch"
                 },
+                "method": {
+                    "type": "string",
+                    "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+                    "description": "HTTP method (default: GET)",
+                    "default": "GET"
+                },
+                "headers": {
+                    "type": "object",
+                    "description": "Custom HTTP headers as key-value pairs (e.g. {\"Authorization\": \"Bearer token\", \"Content-Type\": \"application/json\"})"
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Request body (for POST/PUT/PATCH). Send JSON as a string."
+                },
                 "extract_format": {
                     "type": "string",
-                    "enum": ["text", "markdown", "html"],
-                    "description": "Format to extract content in",
+                    "enum": ["text", "markdown", "html", "raw"],
+                    "description": "Format to extract content in. Use 'raw' for API JSON responses.",
                     "default": "text"
                 }
             },
@@ -224,6 +238,12 @@ impl Tool for ViewWebPageTool {
         let url = params["url"]
             .as_str()
             .ok_or_else(|| amos_core::AmosError::Validation("url is required".to_string()))?;
+
+        let method = params
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET")
+            .to_uppercase();
 
         let extract_format = params
             .get("extract_format")
@@ -245,7 +265,29 @@ impl Tool for ViewWebPageTool {
                 amos_core::AmosError::Internal(format!("Failed to build HTTP client: {}", e))
             })?;
 
-        let response: reqwest::Response = client.get(url).send().await.map_err(|e| {
+        let mut request = match method.as_str() {
+            "POST" => client.post(url),
+            "PUT" => client.put(url),
+            "PATCH" => client.patch(url),
+            "DELETE" => client.delete(url),
+            _ => client.get(url),
+        };
+
+        // Apply custom headers
+        if let Some(headers) = params.get("headers").and_then(|v| v.as_object()) {
+            for (key, value) in headers {
+                if let Some(val) = value.as_str() {
+                    request = request.header(key.as_str(), val);
+                }
+            }
+        }
+
+        // Apply request body
+        if let Some(body) = params.get("body").and_then(|v| v.as_str()) {
+            request = request.body(body.to_string());
+        }
+
+        let response: reqwest::Response = request.send().await.map_err(|e| {
             amos_core::AmosError::Internal(format!("External: Failed to fetch URL: {}", e))
         })?;
 
@@ -257,6 +299,7 @@ impl Tool for ViewWebPageTool {
             })?;
         }
 
+        let status_code = response.status().as_u16();
         let html = response.text().await.map_err(|e| {
             amos_core::AmosError::Internal(format!("External: Failed to read response body: {}", e))
         })?;
@@ -264,6 +307,7 @@ impl Tool for ViewWebPageTool {
         // Extract content based on format
         let content = match extract_format {
             "html" => html.clone(),
+            "raw" => html.clone(), // Return raw response (useful for API JSON)
             "markdown" => {
                 // TODO: Convert HTML to markdown
                 // For now, just strip tags
@@ -292,6 +336,7 @@ impl Tool for ViewWebPageTool {
 
         Ok(ToolResult::success(json!({
             "url": url,
+            "status_code": status_code,
             "content": content,
             "format": extract_format
         })))
