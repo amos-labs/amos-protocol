@@ -37,9 +37,12 @@ RUN apt-get update && \
 COPY --from=builder /app/target/release/amos-agent /usr/local/bin/
 
 # Create non-root user with workspace directories
+# sandbox (uid 1001) is used for bash tool subprocesses (process isolation)
 RUN useradd -m -u 1000 amos && \
+    useradd -m -u 1001 -s /bin/sh sandbox && \
     mkdir -p /app/data /workspace /tmp/amos && \
-    chown -R amos:amos /app /workspace /tmp/amos
+    chown -R amos:amos /app /workspace /tmp/amos && \
+    chown sandbox:sandbox /workspace /tmp/amos
 
 # Copy entrypoint (runs as root for iptables, then drops to amos)
 COPY docker/agent/entrypoint.sh /entrypoint.sh

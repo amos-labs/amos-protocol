@@ -216,27 +216,36 @@ impl Tool for BashTool {
                     && !k.contains("API_KEY")
                     && !k.contains("STRIPE")
                     && !k.contains("TOKEN")
-                    // Block AWS credentials (task role creds should stay internal)
-                    && !k.starts_with("AWS_SECRET")
-                    && !k.starts_with("AWS_SESSION")
-                    && k != "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
-                    && k != "AWS_CONTAINER_CREDENTIALS_FULL_URI"
-                    // Block database URLs that might appear under other names
+                    && !k.contains("PASSWORD")
+                    && !k.contains("CREDENTIAL")
+                    // Block ALL AWS env vars (access key, session, credential URIs)
+                    && !k.starts_with("AWS_")
+                    // Block internal service URLs
+                    && k != "AGENT_URL"
                     && !k.contains("DATABASE_URL")
                     && !k.contains("DB_PASSWORD")
                     && !k.contains("REDIS_URL")
             })
             .collect();
 
+        // Run the subprocess as the `sandbox` user (uid 1001) for process isolation.
+        // This prevents the subprocess from reading /proc/1/environ (owned by uid 1000/amos)
+        // even if they bypass the string-based command blocklist.
+        let sandbox_uid = 1001u32;
+        let sandbox_gid = 1001u32;
+
         let timeout = std::time::Duration::from_secs(timeout_secs);
         let output = match tokio::time::timeout(
             timeout,
             tokio::task::spawn_blocking(move || {
+                use std::os::unix::process::CommandExt;
                 Command::new("sh")
                     .arg("-c")
                     .arg(command)
                     .env_clear()
                     .envs(scrubbed_env)
+                    .uid(sandbox_uid)
+                    .gid(sandbox_gid)
                     .output()
             }),
         )

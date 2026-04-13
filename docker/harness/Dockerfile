@@ -45,9 +45,13 @@ COPY --from=builder /app/target/release/amos-harness /usr/local/bin/
 COPY --from=builder /app/amos-harness/static /app/static
 
 # Create non-root user with workspace directories
+# sandbox (uid 1001) is an unprivileged user for bash tool subprocesses —
+# it cannot read /proc/*/environ of the amos (uid 1000) harness process.
 RUN useradd -m -u 1000 amos && \
+    useradd -m -u 1001 -s /bin/sh sandbox && \
     mkdir -p /app/data /app/uploads /workspace /tmp/amos && \
-    chown -R amos:amos /app /workspace /tmp/amos
+    chown -R amos:amos /app /workspace /tmp/amos && \
+    chown sandbox:sandbox /workspace /tmp/amos
 
 # Copy entrypoint (runs as root for iptables, then drops to amos)
 COPY docker/harness/entrypoint.sh /entrypoint.sh

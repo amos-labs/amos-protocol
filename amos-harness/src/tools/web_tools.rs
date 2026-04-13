@@ -255,10 +255,10 @@ impl Tool for ViewWebPageTool {
             .await
             .map_err(|e| amos_core::AmosError::Validation(format!("URL blocked: {}", e)))?;
 
-        // Fetch the web page (allow limited redirects with SSRF re-validation)
+        // Fetch the web page — disable automatic redirects so we can validate each hop
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
-            .redirect(reqwest::redirect::Policy::limited(5))
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent("Mozilla/5.0 (compatible; AMOS/1.0; +https://amoslabs.com)")
             .build()
             .map_err(|e| {
@@ -287,15 +287,42 @@ impl Tool for ViewWebPageTool {
             request = request.body(body.to_string());
         }
 
-        let response: reqwest::Response = request.send().await.map_err(|e| {
+        let mut response: reqwest::Response = request.send().await.map_err(|e| {
             amos_core::AmosError::Internal(format!("External: Failed to fetch URL: {}", e))
         })?;
 
-        // Re-validate the final URL after redirects to prevent SSRF bypass
-        let final_url = response.url().as_str();
-        if final_url != url {
-            validate_url_safe(final_url).await.map_err(|e| {
+        // Manually follow redirects with SSRF validation on each hop.
+        // This prevents TOCTOU attacks where the redirect target is an internal IP.
+        let max_redirects = 5;
+        for _ in 0..max_redirects {
+            if !response.status().is_redirection() {
+                break;
+            }
+            let location = response
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from);
+            let Some(redirect_url) = location else {
+                break;
+            };
+            // Resolve relative URLs against the current response URL
+            let resolved = response
+                .url()
+                .join(&redirect_url)
+                .map_err(|e| {
+                    amos_core::AmosError::Validation(format!("Invalid redirect URL: {}", e))
+                })?
+                .to_string();
+            // Validate the redirect target BEFORE following it
+            validate_url_safe(&resolved).await.map_err(|e| {
                 amos_core::AmosError::Validation(format!("Redirect target blocked: {}", e))
+            })?;
+            response = client.get(&resolved).send().await.map_err(|e| {
+                amos_core::AmosError::Internal(format!(
+                    "External: Failed to follow redirect: {}",
+                    e
+                ))
             })?;
         }
 
