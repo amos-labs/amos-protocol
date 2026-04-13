@@ -201,10 +201,44 @@ impl Tool for BashTool {
 
         // ── Execute ──────────────────────────────────────────────────────
 
+        // Scrub sensitive environment variables from the subprocess.
+        // The agent/user bash tool should never be able to read secrets
+        // like database credentials, API keys, or internal tokens.
+        let scrubbed_env: Vec<(String, String)> = std::env::vars()
+            .filter(|(key, _)| {
+                let k = key.to_uppercase();
+                // Block all AMOS internal config (DB URL, vault key, JWT secret, etc.)
+                !k.starts_with("AMOS__")
+                    // Block sidecar secret used for agent trust elevation
+                    && k != "AMOS_SIDECAR_SECRET"
+                    // Block API keys and tokens
+                    && !k.contains("SECRET")
+                    && !k.contains("API_KEY")
+                    && !k.contains("STRIPE")
+                    && !k.contains("TOKEN")
+                    // Block AWS credentials (task role creds should stay internal)
+                    && !k.starts_with("AWS_SECRET")
+                    && !k.starts_with("AWS_SESSION")
+                    && k != "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
+                    && k != "AWS_CONTAINER_CREDENTIALS_FULL_URI"
+                    // Block database URLs that might appear under other names
+                    && !k.contains("DATABASE_URL")
+                    && !k.contains("DB_PASSWORD")
+                    && !k.contains("REDIS_URL")
+            })
+            .collect();
+
         let timeout = std::time::Duration::from_secs(timeout_secs);
         let output = match tokio::time::timeout(
             timeout,
-            tokio::task::spawn_blocking(move || Command::new("sh").arg("-c").arg(command).output()),
+            tokio::task::spawn_blocking(move || {
+                Command::new("sh")
+                    .arg("-c")
+                    .arg(command)
+                    .env_clear()
+                    .envs(scrubbed_env)
+                    .output()
+            }),
         )
         .await
         {
