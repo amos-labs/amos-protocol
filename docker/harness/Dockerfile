@@ -25,13 +25,17 @@ RUN RUST_MIN_STACK=16777216 SQLX_OFFLINE=true cargo build --release --bin amos-h
 # Stage 2: Runtime
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
+# Install runtime dependencies + security tooling
+# iptables: network-level SSRF protection (block metadata endpoint, internal IPs)
+# su-exec: lightweight setuid to drop from root after iptables setup
 RUN apt-get update && \
-    apt-get install -y \
+    apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
     curl \
     fonts-liberation \
+    iptables \
+    su-exec \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy binary from builder
@@ -40,12 +44,14 @@ COPY --from=builder /app/target/release/amos-harness /usr/local/bin/
 # Copy static assets (chat UI) into runtime image
 COPY --from=builder /app/amos-harness/static /app/static
 
-# Create non-root user
+# Create non-root user with workspace directories
 RUN useradd -m -u 1000 amos && \
-    mkdir -p /app/data && \
-    chown -R amos:amos /app
+    mkdir -p /app/data /app/uploads /workspace /tmp/amos && \
+    chown -R amos:amos /app /workspace /tmp/amos
 
-USER amos
+# Copy entrypoint (runs as root for iptables, then drops to amos)
+COPY docker/harness/entrypoint.sh /entrypoint.sh
+
 WORKDIR /app
 
 # Expose HTTP port
@@ -55,5 +61,6 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:3000/health || exit 1
 
-# Run the harness
+# Entrypoint applies network hardening then drops to amos user
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["amos-harness"]

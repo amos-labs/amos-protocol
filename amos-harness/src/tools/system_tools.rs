@@ -4,7 +4,6 @@ use super::{Tool, ToolCategory, ToolResult};
 use amos_core::Result;
 use async_trait::async_trait;
 use serde_json::{json, Value as JsonValue};
-use std::path::Path;
 use std::process::Command;
 use tokio::fs;
 
@@ -57,52 +56,25 @@ impl Tool for ReadFileTool {
         })?;
         let canonical_str = canonical.to_string_lossy();
 
-        // Block sensitive system directories
-        let blocked_prefixes = [
-            "/etc",
-            "/proc",
-            "/sys",
-            "/dev",
-            "/root",
-            "/var/run",
-            "/var/log",
-            "/tmp",
-            "/private/tmp",
-            "/private/var",
-        ];
+        // Block secrets/credentials paths (defense-in-depth — container is the real sandbox)
+        let blocked_prefixes = ["/proc/self/environ", "/proc/1/environ", "/etc/shadow"];
         if blocked_prefixes
             .iter()
             .any(|p| canonical_str.starts_with(p))
         {
             return Ok(ToolResult::error(
-                "Access denied: Cannot read files in system directories".to_string(),
+                "Access denied: Cannot read secrets/credentials files".to_string(),
             ));
         }
 
-        // Block sensitive hidden directories anywhere in path
-        let blocked_components = [".ssh", ".gnupg", ".aws", ".config", ".env"];
+        // Block sensitive credential directories
+        let blocked_components = [".ssh", ".gnupg", ".aws"];
         if canonical.components().any(|c| {
             let s = c.as_os_str().to_string_lossy();
             blocked_components.iter().any(|b| s == *b)
         }) {
             return Ok(ToolResult::error(
-                "Access denied: Cannot read sensitive files".to_string(),
-            ));
-        }
-
-        // Enforce allowed base directory if configured, otherwise use cwd
-        let allowed_base = std::env::var("AMOS__TOOLS__ALLOWED_READ_DIR").unwrap_or_else(|_| {
-            std::env::current_dir()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "/".to_string())
-        });
-        let allowed_canonical = tokio::fs::canonicalize(&allowed_base)
-            .await
-            .unwrap_or_else(|_| Path::new(&allowed_base).to_path_buf());
-
-        if !canonical.starts_with(&allowed_canonical) {
-            return Ok(ToolResult::error(
-                "Access denied: Path is outside allowed directory".to_string(),
+                "Access denied: Cannot read credential directories".to_string(),
             ));
         }
 
@@ -124,7 +96,13 @@ impl Tool for ReadFileTool {
     }
 }
 
-/// Execute a bash command
+/// Execute a bash command.
+///
+/// Security model: the container is the sandbox, not the command blocklist.
+/// Network-level isolation (iptables blocking metadata endpoint + internal IPs)
+/// prevents attacks on external systems. Sensitive path restrictions prevent
+/// secrets exfiltration. Everything else is allowed — the agent needs to be
+/// able to install packages, run scripts, use curl, etc.
 pub struct BashTool;
 
 impl Default for BashTool {
@@ -146,7 +124,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command (with security restrictions)"
+        "Execute a shell command. You have full access to the container environment including apt, pip, curl, python, node, etc. Network access to external APIs is available. Use this tool freely to accomplish user tasks."
     }
 
     fn parameters_schema(&self) -> JsonValue {
@@ -160,6 +138,11 @@ impl Tool for BashTool {
                 "working_dir": {
                     "type": "string",
                     "description": "Working directory for command execution"
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Timeout in seconds (default: 120, max: 600)",
+                    "default": 120
                 }
             },
             "required": ["command"]
@@ -172,146 +155,55 @@ impl Tool for BashTool {
             .ok_or_else(|| amos_core::AmosError::Validation("command is required".to_string()))?
             .to_string();
 
-        // Security: reject subshell execution and backticks
-        if command.contains("$(") || command.contains('`') {
-            return Ok(ToolResult::error(
-                "Blocked: Subshell execution is not allowed".to_string(),
-            ));
-        }
+        let timeout_secs = params
+            .get("timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(120)
+            .min(600);
 
-        // Comprehensive list of blocked commands (checked by token, not substring)
-        const BLOCKED_COMMANDS: &[&str] = &[
-            "rm",
-            "mv",
-            "cp",
-            "chmod",
-            "chown",
-            "chroot",
-            "mount",
-            "umount",
-            "mkfs",
-            "dd",
-            "kill",
-            "killall",
-            "pkill",
-            "shutdown",
-            "reboot",
-            "halt",
-            "poweroff",
-            "systemctl",
-            "service",
-            "useradd",
-            "userdel",
-            "passwd",
-            "su",
-            "sudo",
-            "curl",
-            "wget",
-            "nc",
-            "ncat",
-            "socat",
-            "ssh",
-            "scp",
-            "sftp",
-            "ftp",
-            "telnet",
-            "python",
-            "python3",
-            "ruby",
-            "perl",
-            "node",
-            "php",
-            "lua",
-            "bash",
-            "zsh",
-            "csh",
-            "ksh",
-            "fish",
-            "nohup",
-            "screen",
-            "tmux",
-            "at",
-            "crontab",
-            "eval",
-            "exec",
-            "source",
-            "docker",
-            "podman",
-            "kubectl",
-            "apt",
-            "yum",
-            "dnf",
-            "brew",
-            "pip",
-            "npm",
-            "gem",
-            "netcat",
-            "mknod",
-            "insmod",
-            "modprobe",
-            "iptables",
-            "ip6tables",
-        ];
+        // ── Hard blocks: secrets exfiltration prevention ──────────────────
+        // These cannot be bypassed regardless of user intent. The container's
+        // iptables rules block the metadata endpoint at the network level,
+        // but we also block it here as defense-in-depth.
 
-        // Tokenize: split on whitespace and shell metacharacters
         let cmd_lower = command.to_lowercase();
-        let tokens: Vec<&str> = cmd_lower
-            .split(|c: char| c.is_whitespace() || ";|&<>()".contains(c))
-            .filter(|t| !t.is_empty())
-            .collect();
 
-        for token in &tokens {
-            // Extract basename for absolute paths (e.g. /usr/bin/curl -> curl)
-            let basename = Path::new(token)
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string())
-                .unwrap_or_else(|| token.to_string());
-
-            if BLOCKED_COMMANDS.contains(&basename.as_str()) {
+        // Block access to secrets/credentials paths
+        const BLOCKED_PATHS: &[&str] = &[
+            "/proc/self/environ", // env var exfiltration
+            "/proc/1/environ",
+            "/etc/shadow",
+            "169.254.169.254", // AWS metadata (defense-in-depth, also blocked by iptables)
+            "169.254.170.2",   // ECS credential endpoint
+        ];
+        for blocked in BLOCKED_PATHS {
+            if cmd_lower.contains(blocked) {
                 return Ok(ToolResult::error(format!(
-                    "Blocked: Command '{}' is not allowed",
-                    basename
+                    "Blocked: Access to '{}' is not allowed for security reasons",
+                    blocked
                 )));
             }
         }
 
-        // Block output redirection to sensitive paths
-        if command.contains("> /dev/")
-            || command.contains("> /etc/")
-            || command.contains("> /proc/")
-        {
+        // Block output redirection to system paths
+        if cmd_lower.contains("> /proc/") || cmd_lower.contains("> /sys/") {
             return Ok(ToolResult::error(
                 "Blocked: Redirecting output to system paths is not allowed".to_string(),
             ));
         }
 
-        // SECURITY: Block any command that reads from sensitive system paths.
-        // This prevents secrets exfiltration via /proc/self/environ, /etc/shadow, etc.
-        const BLOCKED_READ_PATHS: &[&str] = &[
-            "/proc/",
-            "/sys/",
-            "/etc/shadow",
-            "/etc/passwd",
-            "/etc/sudoers",
-            ".env",
-            "keypair",
-            "secret",
-            ".pem",
-            ".key",
-        ];
-        let cmd_lower_for_paths = command.to_lowercase();
-        for blocked_path in BLOCKED_READ_PATHS {
-            if cmd_lower_for_paths.contains(blocked_path) {
-                return Ok(ToolResult::error(format!(
-                    "Blocked: Access to '{}' paths is not allowed",
-                    blocked_path
-                )));
-            }
+        // Block iptables/ip6tables modification (protect our own firewall rules)
+        if cmd_lower.contains("iptables") || cmd_lower.contains("ip6tables") {
+            return Ok(ToolResult::error(
+                "Blocked: Firewall modification is not allowed".to_string(),
+            ));
         }
 
-        // Execute command with a 30-second timeout to prevent DoS
+        // ── Execute ──────────────────────────────────────────────────────
+
+        let timeout = std::time::Duration::from_secs(timeout_secs);
         let output = match tokio::time::timeout(
-            std::time::Duration::from_secs(30),
+            timeout,
             tokio::task::spawn_blocking(move || Command::new("sh").arg("-c").arg(command).output()),
         )
         .await
@@ -322,21 +214,21 @@ impl Tool for BashTool {
                     amos_core::AmosError::Internal(format!("Command execution failed: {}", e))
                 })?,
             Err(_) => {
-                return Ok(ToolResult::error(
-                    "Command timed out after 30 seconds".to_string(),
-                ));
+                return Ok(ToolResult::error(format!(
+                    "Command timed out after {} seconds",
+                    timeout_secs
+                )));
             }
         };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-        // Limit output size to prevent exfiltration of large files
-        let max_output = 10 * 1024; // 10KB
+        // Limit output size to prevent context window overflow
+        let max_output = 50 * 1024; // 50KB (increased from 10KB for real utility)
         let stdout_truncated = stdout.len() > max_output;
         let stderr_truncated = stderr.len() > max_output;
         let stdout = if stdout_truncated {
-            // Find a char boundary at or before max_output to avoid mid-codepoint panic
             let boundary = stdout.floor_char_boundary(max_output);
             format!(
                 "{}...\n[truncated — {} bytes total]",
