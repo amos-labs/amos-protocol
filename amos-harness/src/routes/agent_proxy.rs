@@ -352,7 +352,7 @@ async fn inject_llm_provider(state: &AppState, body: &str) -> Result<String, Str
             // The agent picks up AWS creds from its environment (ECS task role).
             let model = super::settings::get_setting(state, "llm_model")
                 .await
-                .unwrap_or_else(|| "us.anthropic.claude-sonnet-4-6-20250514-v1:0".to_string());
+                .unwrap_or_else(|| "us.anthropic.claude-sonnet-4-6".to_string());
 
             obj.insert(
                 "provider_type".to_string(),

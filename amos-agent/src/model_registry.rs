@@ -77,17 +77,17 @@ impl ModelRegistry {
                 max_tokens: 4096,
             },
             ModelInfo {
-                model_id: "us.anthropic.claude-sonnet-4-20250514-v1:0".to_string(),
+                model_id: "us.anthropic.claude-sonnet-4-6".to_string(),
                 tier: ModelTier::Default,
                 provider: "bedrock".to_string(),
-                display_name: "Claude Sonnet 4".to_string(),
+                display_name: "Claude Sonnet 4.6".to_string(),
                 max_tokens: 16384,
             },
             ModelInfo {
-                model_id: "us.anthropic.claude-opus-4-20250514-v1:0".to_string(),
+                model_id: "us.anthropic.claude-opus-4-6-v1".to_string(),
                 tier: ModelTier::Complex,
                 provider: "bedrock".to_string(),
-                display_name: "Claude Opus 4".to_string(),
+                display_name: "Claude Opus 4.6".to_string(),
                 max_tokens: 16384,
             },
         ];

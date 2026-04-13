@@ -71,7 +71,7 @@ const AVAILABLE_MODELS: &[ModelInfo] = &[
         output_price_per_mtok: 4.12,
     },
     ModelInfo {
-        id: "us.anthropic.claude-sonnet-4-6-20250514-v1:0",
+        id: "us.anthropic.claude-sonnet-4-6",
         display_name: "Claude Sonnet 4.6",
         tier: "balanced",
         // Base: $3.00 / $15.00 → with markup: $3.09 / $15.45
@@ -79,7 +79,7 @@ const AVAILABLE_MODELS: &[ModelInfo] = &[
         output_price_per_mtok: 15.45,
     },
     ModelInfo {
-        id: "us.anthropic.claude-opus-4-6-20250514-v1:0",
+        id: "us.anthropic.claude-opus-4-6-v1",
         display_name: "Claude Opus 4.6",
         tier: "powerful",
         // Base: $15.00 / $75.00 → with markup: $15.45 / $77.25
@@ -88,7 +88,7 @@ const AVAILABLE_MODELS: &[ModelInfo] = &[
     },
 ];
 
-const DEFAULT_MODEL: &str = "us.anthropic.claude-sonnet-4-6-20250514-v1:0";
+const DEFAULT_MODEL: &str = "us.anthropic.claude-sonnet-4-6";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Handlers

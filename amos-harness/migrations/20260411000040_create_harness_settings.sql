@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS harness_settings (
 
 -- Default model: Sonnet 4.6
 INSERT INTO harness_settings (key, value) VALUES
-    ('llm_model', '"us.anthropic.claude-sonnet-4-6-20250514-v1:0"')
+    ('llm_model', '"us.anthropic.claude-sonnet-4-6"')
 ON CONFLICT DO NOTHING;
 
 -- Provider mode: if the harness already has a BYOK provider configured,
