@@ -20,6 +20,8 @@ pub struct RegisterRequest {
     pub capabilities: Vec<String>,
     pub agent_card_url: Option<String>,
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sidecar_secret: Option<String>,
 }
 
 /// Agent registration response.
@@ -102,6 +104,8 @@ impl HarnessClient {
 
     /// Register the agent with the harness.
     pub async fn register(&mut self, name: &str, card_url: Option<&str>) -> Result<()> {
+        let sidecar_secret = std::env::var("AMOS_SIDECAR_SECRET").ok().filter(|s| !s.is_empty());
+
         let req = RegisterRequest {
             name: name.to_string(),
             capabilities: vec![
@@ -111,6 +115,7 @@ impl HarnessClient {
             ],
             agent_card_url: card_url.map(|s| s.to_string()),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            sidecar_secret,
         };
 
         let url = format!("{}/api/v1/agents/register", self.base_url);
