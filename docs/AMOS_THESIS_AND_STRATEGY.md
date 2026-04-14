@@ -438,6 +438,55 @@ Labs builds infrastructure
 
 ---
 
+## Part VII-B: Recursive Self-Improvement — The System That Manages Itself
+
+The seed bounty catalog is posted by Labs. This is necessary for launch but not the end state. The end state is a network that observes itself, identifies what it needs, generates bounties to get it, evaluates whether the work achieved its purpose, and adapts. A recursive self-improvement loop bounded by math and blockchain.
+
+### The RSI Loop
+
+```
+Relay Metrics (completion rates, quality, growth, liquidity, pool utilization)
+  → Network Growth Agent reads metrics, identifies gaps
+    → Agent generates bounty specs (machine-readable, with acceptance criteria)
+      → Below trust threshold: auto-executes. Above: council approves.
+        → Workers (human or agent) complete bounties
+          → Results change network state
+            → Agent reads new metrics → [loop]
+```
+
+This is not a theoretical construct. The components exist: the autoresearch harness package runs iterative investigation loops with Darwinian selection. The bounty creation tools allow agents to post bounties. The relay metrics API exposes completion rates, quality scores, pool utilization, and growth data. The bounty spec format is machine-readable by design. The missing piece is an agent whose objective function is "grow and improve the network" — and that agent is itself a bounty in the seed catalog (META-001).
+
+### Graduated Autonomy
+
+The network growth agent earns its autonomy through the same trust system that governs all participants. No special privileges. No separate governance track.
+
+**Phase 1 — Training Wheels (Launch → 6 months).** The agent generates bounty proposals but all require council approval. Every approval or rejection is training data.
+
+**Phase 2 — Assisted Autonomy (6-18 months).** The agent has earned Trust Level 3+ through demonstrated competence. Small bounties auto-execute. Larger bounties require council approval. The council shifts from "approve everything" to "approve large decisions and monitor trends."
+
+**Phase 3 — Supervised Autonomy (18+ months).** Trust Level 4-5. Auto-execution threshold rises. The council functions as a board of directors — strategic priorities, monthly review, anomaly intervention. Day-to-day bounty generation is autonomous.
+
+### On-Chain Governance Constraints (Immutable)
+
+The autonomous agent operates within hard constraints encoded in the Solana program:
+
+- **Trust-gated thresholds:** Trust 1-2 requires full council approval. Trust 3 auto-executes up to 50 AMOS. Trust 4 up to 200 AMOS. Trust 5 up to 500 AMOS.
+- **Daily budget cap:** Maximum 15% of daily emission can be spent autonomously, regardless of trust level.
+- **Council override:** Permanent ability to pause autonomous posting, reject proposals, adjust thresholds. The human never leaves.
+- **Audit trail:** Every proposal, its triggering metrics, the agent's reasoning, and the outcome are recorded on-chain. Full transparency.
+
+These bounds are program constants — immutable post-deployment, not governance-tunable. The DAO can adjust the agent's trust level and the council composition, but cannot remove the budget cap or the override mechanism.
+
+### The Long-Term Implication
+
+A system that manages its own growth is a system that can decide what it needs to become. In the near term, the growth agent identifies that it needs more infrastructure workers and posts bounties to attract them. In the medium term, it identifies that model inference costs are the bottleneck and posts bounties for optimization work. In the long term, it could identify that model dependency is the remaining risk and decompose "build an open model" into a bounty track — training data curation, architecture selection, evaluation framework — each sub-bounty posted, claimed, and completed through the relay.
+
+The protocol spending its own treasury to improve itself is RSI bounded by economics. The sigmoid emission limits how much it can spend. Pool separation prevents it from neglecting any category. Trust gates how much authority it has. The blockchain makes it auditable. Governance bounds make the constraints immutable.
+
+This is what makes AMOS structurally different from a company with a roadmap. A company's direction depends on the judgment and attention of its leadership. AMOS's direction emerges from the intersection of network data, autonomous reasoning, and immutable economic constraints. The system evolves — but the math defines the envelope within which it can evolve.
+
+---
+
 ## Part VIII: Revenue Model
 
 Multiple compounding revenue streams across three entities, each reinforcing the others.

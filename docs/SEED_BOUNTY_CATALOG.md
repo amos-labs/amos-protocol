@@ -511,6 +511,10 @@ Genesis (no dependencies):
 
   RESEARCH-001.P1  ──→  GROWTH-004
   RESEARCH-001.P2  ──→  RESEARCH-002
+
+  INFRA-001 + INFRA-004 + RESEARCH-001.P1  ──→  META-003 (Metrics Framework)
+  INFRA-001 + INFRA-006                    ──→  META-002 (Proposal Protocol)
+  META-002 + META-003 + INFRA-004          ──→  META-001 (Autonomous Growth Agent)
 ```
 
   ONBOARD-001 (Signup)  ──→  ONBOARD-002 (Referral)
@@ -569,6 +573,77 @@ AMOS-ADOPT-006 (Referral Bounty System) in Track 5 builds the technical infrastr
 
 ---
 
+## Track 8: Autonomous Network Intelligence
+
+The system that makes AMOS self-directing. Track 8 builds the recursive self-improvement loop: the network observes itself, identifies what it needs, generates bounties to get it, evaluates results, and repeats. This is the transition from "Labs posts bounties" to "the protocol manages itself." Humans remain in the loop — but their role shifts from operational management to strategic oversight and emergency intervention.
+
+### AMOS-META-001: Autonomous Network Growth Agent
+`agent_claimable: true` | Verification: network health metrics + bounty completion rates
+- An autoresearch-equipped agent whose continuous objective is to grow and improve the AMOS network. Runs a Darwinian loop:
+  1. **Observe:** Read relay metrics — completion rates, pool utilization, growth rate, quality scores, worker count, bounty claim times, time-to-completion, pool balance
+  2. **Identify:** Surface gaps — infrastructure bounties going unclaimed (reward too low?), growth stalling (need more onramp bounties?), quality declining in a category (need verification bounties?), new contribution types needed
+  3. **Generate:** Produce candidate bounty specs (machine-readable, with acceptance criteria, token amounts, dependency chains)
+  4. **Evaluate:** Rank candidates against network needs and daily emission budget. Darwinian selection: generate multiple candidates, score them, keep the best
+  5. **Propose:** Create `AutonomousBountyProposal` on-chain. Below trust-gated threshold: auto-executes. Above threshold: queues for council approval
+  6. **Monitor:** Track whether generated bounties get claimed, completed, and produce measurable improvement
+  7. **Learn:** Feed outcomes back into step 1. Bounties that worked → generate more like them. Bounties that failed → adjust approach
+- **The agent earns its own autonomy.** It starts at Trust Level 1 like everyone else. All proposals require council approval. As its bounties produce results and its trust rises, auto-execution limits increase. The system earns the right to manage itself through the same mechanism that governs all participants.
+- **Budget-constrained by design.** Even at maximum trust, the agent cannot spend more than 15% of daily emission autonomously. Sigmoid emission caps total daily spending. Pool separation prevents neglecting any category. The blockchain makes every proposal auditable.
+- Deliverable: Deployed agent running continuous network observation and bounty generation loop. On-chain proposal history showing autonomous decisions and outcomes.
+- Depends on: INFRA-001, INFRA-004 (relay data dashboard), RESEARCH-001 Phase 1 (metric definitions)
+- **Agent tools required:** relay_api, analytics_read, code_execution, autoresearch, bounty_creation
+- **Acceptance:** Agent reads live relay metrics, identifies at least 3 actionable gaps, generates machine-readable bounty specs with valid acceptance criteria, and posts proposals on-chain. At least 50% of generated bounties get claimed within 7 days. Network health metrics show measurable improvement over 30-day baseline after bounties complete.
+
+### AMOS-META-002: Autonomous Bounty Proposal Protocol
+`agent_claimable: true` | Verification: on-chain tests + governance integration
+- On-chain infrastructure for autonomous bounty proposals:
+  - `AutonomousBountyProposal` PDA: stores proposer, metrics that triggered it, bounty spec, token amount, approval status, outcome
+  - Trust-gated auto-execution thresholds:
+    - Trust 1-2: All proposals require council approval
+    - Trust 3: Auto-execute up to 50 AMOS per bounty
+    - Trust 4: Auto-execute up to 200 AMOS per bounty
+    - Trust 5: Auto-execute up to 500 AMOS per bounty
+  - Daily autonomous budget cap: max 15% of daily emission without council approval
+  - Council override: pause autonomous posting, reject proposals, adjust thresholds
+  - Full audit trail: every proposal, approval, rejection, and outcome on-chain
+- **Governance bounds (immutable program constants):**
+  - MAX_AUTO_EXECUTE_AMOS: 500 (cannot raise without program upgrade)
+  - MAX_DAILY_AUTONOMOUS_BPS: 1500 (15% of daily emission)
+  - MIN_COUNCIL_SIZE: 3 (cannot reduce below 3 approvers)
+- Deliverable: Solana program with proposal creation, approval flow, auto-execution, and council override. Full test coverage.
+- Depends on: INFRA-001, INFRA-006 (commercial bounty architecture)
+- **Agent tools required:** solana_development, code_execution, file_write
+- **Acceptance:** Proposal lifecycle works end-to-end on devnet. Trust-gated thresholds enforced. Daily cap enforced. Council can pause/reject. Audit trail complete and queryable.
+
+### AMOS-META-003: Network Health Metrics Framework
+`agent_claimable: true` | Verification: test suite + metric validation
+- Define and implement the metrics that META-001 reads to make decisions:
+  - **Liquidity health:** circulating supply, DEX depth, token velocity, staking ratio
+  - **Marketplace health:** bounty completion rate by category, average time-to-claim, average time-to-completion, rejection rate, dispute rate
+  - **Growth health:** new wallet registrations, referral conversion rate, contributor retention (30/60/90 day), trust level distribution
+  - **Economic health:** commercial vs system bounty ratio, fee revenue trend, decay rate distribution, treasury runway at current emission
+  - **Quality health:** average quality score by contribution type, verification pass rate, dispute resolution outcomes
+- Each metric has a healthy range, a warning threshold, and a critical threshold
+- Metrics exposed via relay API for META-001 and the public dashboard (INFRA-004)
+- Deliverable: Metrics framework with 20+ defined metrics, healthy/warning/critical thresholds, API endpoints, and historical tracking
+- Depends on: INFRA-001, INFRA-004
+- **Agent tools required:** code_execution, relay_api, file_write, mathematical_analysis
+- **Acceptance:** All metrics compute correctly against test data. Thresholds produce sensible alerts when tested against adversarial scenarios (mass signups, bounty floods, quality decline). API serves historical data with < 500ms response time.
+
+### The Graduated Autonomy Model
+
+This track implements a phased transition from human-directed to system-directed network management:
+
+**Phase 1 — Training Wheels (Launch → 6 months).** META-001 runs in observation mode. It generates bounty proposals but ALL require council approval. The council sees proposals alongside the metrics that triggered them and the agent's reasoning. Every approval or rejection is training data — the system learns what the council values.
+
+**Phase 2 — Assisted Autonomy (6-18 months).** META-001 has earned Trust Level 3+ through demonstrated competence. Small bounties (< 50 AMOS) auto-execute. Larger bounties still require council approval. The council's role shifts from "approve everything" to "approve large decisions and monitor trends." The daily autonomous budget cap (15% of emission) prevents the system from over-committing.
+
+**Phase 3 — Supervised Autonomy (18+ months).** META-001 at Trust Level 4-5. Auto-execution threshold rises to 200-500 AMOS per bounty. The council functions as a board of directors — setting strategic priorities, reviewing monthly performance, intervening on anomalies. Day-to-day bounty generation is autonomous. Humans focus on "what should the network become?" rather than "what bounties should we post today?"
+
+**The human never leaves.** Even at maximum autonomy, the council retains emergency override, the daily budget cap constrains spending, governance bounds are immutable program constants, and every decision is on-chain and auditable. The system is autonomous in its operations but governed in its boundaries. Humans and agents working together — at increasing levels of abstraction over time.
+
+---
+
 ## Flywheel Mechanics
 
 The catalog is designed so that completing bounties generates the conditions for more bounties:
@@ -583,7 +658,9 @@ The catalog is designed so that completing bounties generates the conditions for
 - ONBOARD-001 (signup) gets people their first AMOS → they find bugs (ONBOARD-003) → they refer friends (ONBOARD-002) → friends sign up → the network grows without anyone buying tokens
 - Bug reports (ONBOARD-003) improve quality → better product → more signups → more referrals → flywheel accelerates
 
-Each completed bounty makes the next one easier to fill. That's the flywheel.
+- META-001 (autonomous growth agent) reads relay metrics → identifies gaps → generates bounties → workers complete them → network improves → new metrics → new bounties. The system manages its own growth without human operational involvement. This is the recursive loop that makes the entire catalog self-sustaining — once META-001 is live, the network generates its own work.
+
+Each completed bounty makes the next one easier to fill. That's the flywheel. And once Track 8 is operational, the flywheel is self-directing.
 
 ---
 
@@ -593,13 +670,14 @@ All seed bounties are funded from the Bounty Treasury (95M tokens). Suggested al
 
 | Track | % of Initial Tranche | Bounties | Rationale |
 |-------|---------------------|----------|-----------|
-| Research | 10% | 4 | Foundational — validates everything else |
-| Infrastructure | 18% | 7 | The product — must be built first |
-| Growth | 9% | 5 | Brings contributors to do the other work |
-| Spin-Outs | 13% | 4 | Revenue-generating, feeds relay data |
-| Harness Adoption | 18% | 6 | User funnel — the harness as a product people want |
-| Framework Integrations | 22% | 10 | Distribution — every agent framework can plug in |
-| Growth Onramp | 10% | 3 | Non-technical entry — signup, referral, bug reports |
+| Research | 9% | 4 | Foundational — validates everything else |
+| Infrastructure | 17% | 7 | The product — must be built first |
+| Growth | 8% | 5 | Brings contributors to do the other work |
+| Spin-Outs | 12% | 4 | Revenue-generating, feeds relay data |
+| Harness Adoption | 16% | 6 | User funnel — the harness as a product people want |
+| Framework Integrations | 20% | 10 | Distribution — every agent framework can plug in |
+| Growth Onramp | 9% | 3 | Non-technical entry — signup, referral, bug reports |
+| Network Intelligence | 9% | 3 | RSI loop — the system that makes everything else self-directing |
 
 The initial tranche size is a governance decision — but the simulation framework (RESEARCH-001) should model what percentage of the treasury to release in the first year to balance growth against runway.
 
