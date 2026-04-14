@@ -16,8 +16,8 @@ amos_governance = "245xpoWLEAAPmUQxMSBDqQw5qnGfqt5roi5enuFG9fZZ"
 amos_bounty = "4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq"
 
 [programs.mainnet]
-amos_treasury = "6d3oWMePD7newkpZSmGBWS2qAFWQmrapsLwoPnMva55G"
-amos_governance = "AmosGov111111111111111111111111111111111111"
+amos_treasury = "8ZMaZDAxDPsCnMGRkhwLmFhoG43WUJcGC8xqVKo2PN7s"
+amos_governance = "245xpoWLEAAPmUQxMSBDqQw5qnGfqt5roi5enuFG9fZZ"
 amos_bounty = "4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq"
 
 [registry]

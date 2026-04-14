@@ -11,11 +11,14 @@ import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction, Sy
 import { readFileSync } from "fs";
 import { createHash } from "crypto";
 
-// ── Config ──────────────────────────────────────────────────────────
-const RPC_URL = "https://api.devnet.solana.com";
+// ── Config (env-overridable for mainnet) ────────────────────────────
+const NETWORK = process.env.NETWORK || "devnet";
+const RPC_URL = NETWORK === "mainnet"
+    ? "https://api.mainnet-beta.solana.com"
+    : "https://api.devnet.solana.com";
 const BOUNTY_PROGRAM_ID = new PublicKey("4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq");
-const MINT = new PublicKey("Cm2RGfE3EpYm6s2cfbMYYikjS2CD9vUd6ECxX4pWi2HQ");
-const TREASURY = new PublicKey("3gVaEePh9kT8yzaKvVJ5MHEJjHrmtiJwEiiZGosaa3tP");
+const MINT = new PublicKey(process.env.AMOS_MINT || "Cm2RGfE3EpYm6s2cfbMYYikjS2CD9vUd6ECxX4pWi2HQ");
+const TREASURY = new PublicKey(process.env.AMOS_TREASURY || "3gVaEePh9kT8yzaKvVJ5MHEJjHrmtiJwEiiZGosaa3tP");
 const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
 // Load oracle keypair (founder wallet)
