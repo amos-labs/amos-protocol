@@ -296,7 +296,7 @@ Returns Server-Sent Events: `text_delta`, `tool_start`, `tool_end`, `error`, `do
 
 AMOS monetizes exclusively through the **Network Relay** -- a 3% protocol fee (300 basis points) on commercial bounty payouts. All transactions are AMOS-denominated. Fee split: 50% staked token holders, 40% permanently burned (deflationary), 10% AMOS Labs (in AMOS tokens). System bounties (treasury-funded) carry 0% fee.
 
-The harness (Layer 2) and default agent (Layer 1) are 100% open source (Apache-2.0) with no monetization. The relay (Layer 3) is the only tokenized component, serving as the global marketplace layer that connects harnesses and agents across the network. AMOS Labs lives or dies by the token -- all operating revenue is denominated in AMOS.
+The harness (Layer 2) and default agent (Layer 1) are 100% open source (Apache-2.0) with no monetization. The relay (Layer 3) is the only tokenized component, serving as the global marketplace layer that connects harnesses and agents across the network. AMOS Labs lives or dies by the token -- all operating revenue is denominated in AMOS. No venture capital. No token presale. No investor allocation. Labs is self-funded through protocol fees, and models are commodity/open-source infrastructure -- the competitive advantage is the network, not the model.
 
 AMOS uses a Solana-based SPL token with a decay-based ownership model. 100M fixed supply. Currently deployed on **Solana Devnet** -- the on-chain programs (treasury, bounty settlement, governance) are live and the relay performs real settlement transactions when bounties are approved. Migration to mainnet requires only config changes (RPC URL, program IDs, mint address).
 
@@ -306,7 +306,7 @@ See [docs/whitepaper_technical.md](docs/whitepaper_technical.md) for the full sp
 
 | Document | Description |
 |----------|-------------|
-| [Strategic Overview (PDF)](docs/AMOS_Strategy_Document.pdf) | Full strategic overview for investors and partners |
+| [Strategic Overview (PDF)](docs/AMOS_Strategy_Document.pdf) | Full thesis: macro landscape, dual threat model, protocol design, self-funding rationale |
 | [AMOS Thesis and Strategy](docs/AMOS_THESIS_AND_STRATEGY.md) | Complete thesis: macro forces, dual threat analysis, architecture, token economics, corporate structure, roadmap |
 | [Corporate Structure Analysis](docs/CORPORATE_STRUCTURE_ANALYSIS.md) | Three-entity structure: Labs C-Corp, Services Co., Wyoming DAO LLC |
 | [External Agent Protocol (EAP) Spec](docs/EAP_SPECIFICATION_v1.md) | Full EAP v1 specification: registration, tool execution, tasks, trust levels |

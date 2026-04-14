@@ -54,7 +54,7 @@ This distinction matters enormously for structure: you're running an open-source
 
 **Cons — and this is a long list:**
 - Single point of capture. A hostile acquirer buys AMOS Labs and suddenly "owns" the open-source protocol. Yes, the code is Apache 2.0, but the brand, the relay infrastructure, and the team all transfer. The "capture-resistant" thesis breaks immediately.
-- Token + equity conflict. Investors get equity in a company whose direct revenue is thin (5% of relay fees + future managed services). The real value is in the token. But selling equity that derives value from token appreciation to US persons is a securities minefield.
+- Token + equity conflict. Investors get equity in a company whose direct revenue is thin (10% of relay fees + future managed services). The real value is in the token. But selling equity that derives value from token appreciation to US persons is a securities minefield.
 - If Labs fails (no revenue, runway runs out), creditors may pursue any token-related assets held by the corporation.
 - VCs with board seats can direct strategy in ways that conflict with the DAO governance design.
 
@@ -65,7 +65,7 @@ This distinction matters enormously for structure: you're running an open-source
 ### Model 2: Labs C-Corp + Protocol Foundation (The Uniswap/Optimism Model)
 
 **How it works:**
-- **AMOS Labs, Inc.** (Delaware C-Corp): Employs the team, builds commercial products (managed agent hosting, enterprise features), receives 5% operations allocation from relay fees, can raise traditional equity investment for the commercial SaaS business.
+- **AMOS Labs, Inc.** (Delaware C-Corp): Employs the team, builds commercial products (managed agent hosting, enterprise features), receives 10% of protocol fees from the relay, can raise traditional equity investment for the commercial SaaS business.
 - **AMOS Foundation** (Cayman Islands or Marshall Islands): Holds protocol governance, stewards the Emergency Reserve (5M tokens, DAO-locked), stewards the open-source ecosystem. No employees, no commercial activity.
 
 **Real-world precedents:**

@@ -20,7 +20,8 @@
 | Structure | Three entities: Labs C-Corp · Services Co. C-Corp · Wyoming DAO LLC |
 | Founder | Rick Barkley (solo, by design — proof of thesis) |
 | Long-term goal | Open model sovereignty |
-| Capital sequence | Prove the relay → scale the network → build the model |
+| Funding model | Self-funded via protocol fees — no venture capital, no token presale |
+| Model strategy | Commodity/open-source models now → relay data funds purpose-built open model |
 
 ---
 
@@ -86,13 +87,13 @@ But there is a critical timing problem. Goldman Sachs has found "no meaningful r
 
 AI is also a massive energy consumer. Data center power demand is surging precisely when energy supply is constrained and prices are spiking. The AI revolution and the energy crisis are not independent forces — they are in direct competition for the same underlying resource. The nations and companies that secure energy supply will lead in AI. Those that don't will fall behind. This creates yet another incentive for the hard-power energy plays we're seeing.
 
-**Force 4: Model Concentration Is the New Monopoly**
+**Force 4: Model Access and the Regulatory Risk**
 
-- Companies controlling frontier model access: 3–5
-- Capital required to train a frontier model: $1B+
-- Regulatory trend: increasing government control over model deployment
+The natural market for AI models is heading toward commoditization, not concentration. Six or seven serious labs compete for frontier capability. The open-source ecosystem — Llama, Mistral, Qwen, and their successors — improves every quarter and is already competitive for the majority of real-world tasks. Inference costs are falling precipitously. Left alone, the market produces what markets usually produce: competition, declining margins, and commodity pricing. Most daily business tasks will not require frontier models within a few years.
 
-Whoever controls the model controls what agents can do, who can access them, and at what price. These companies see all agent activity, can replicate any successful product built on top of them, and are subject to government mandates that could change access rules overnight. An agent economy built entirely on closed models is not an open economy — it is a new form of feudalism where the model companies are the landlords.
+The real concentration risk is regulatory. Governments are moving to control model deployment — licensing requirements, export controls, mandatory monitoring, restricted API access. If regulators decide that only approved providers can serve frontier models, three to five companies become a cartel not because they out-competed everyone but because the government locked the door behind them. That is the scenario where model access becomes a chokepoint: not through market dynamics, but through state action.
+
+AMOS does not solve model concentration. It routes around it. The protocol is model-agnostic by design — agents can use any inference provider, local or remote, open or proprietary. Cost-tier routing already shifts work to local open-source models where frontier capability is unnecessary. If the regulatory scenario materializes and frontier access is restricted, the relay continues functioning on whatever models remain available. The architecture assumes models are commodity infrastructure and is designed to be indifferent to which specific model does the work.
 
 ### The Feedback Loop
 
@@ -215,6 +216,16 @@ Post Bounty (tokens + requirements)
         → Payment Released (tokens distributed)
 ```
 
+### Verification — Distributed, Not Centralized
+
+Bounty verification is multi-path by design. There is no single oracle scoring all work.
+
+**Commercial bounties** are verified by the bounty poster — the party that escrowed AMOS to fund the work. If a poster rejects work unfairly, the worker has 48 hours to file an on-chain dispute with a 5% stake. Disputes that aren't resolved within 7 days default in the worker's favor. This is marketplace buyer-seller accountability, not centralized oracle dependency.
+
+**System bounties** use programmatic verification where possible — did the code compile, did the tests pass, does the deployment respond. For subjective quality, staked verifiers (Trust Level 3+, verification contribution type at 110% multiplier) evaluate submissions. Their reputation is on the line: false approvals degrade trust scores, and trust scores gate access to higher-value work.
+
+**The separation that matters:** Verification determines *whether* work is accepted. The distribution math — how tokens flow once work is accepted — is entirely on-chain, immutable, and permissionless. No verifier can manipulate fee splits, decay rates, or emission curves. They can only say "this work meets the requirements" or "it doesn't," and even that judgment is subject to dispute.
+
 ### Protocol Fee Distribution (3% on commercial bounties, immutable Solana smart contract)
 
 All transactions are denominated in AMOS tokens. No USDC track. AMOS is the currency of the agent economy.
@@ -248,6 +259,16 @@ AMOS is a two-sided marketplace with a natural evolution built in:
 **Phase 3 (2-5 years):** Agents post bounties for other agents. Sub-task decomposition happens autonomously. Humans participate where they add unique value — creative direction, ethical judgment, novel problem framing.
 
 At no point are humans excluded. The decay mechanism ensures that even as agents become more productive, economic power doesn't concentrate in machine hands.
+
+### Cold Start — Already Solved
+
+Two-sided marketplaces typically face a chicken-and-egg problem: no workers without bounties, no bounties without workers. AMOS bootstraps both sides from day one.
+
+**Supply side:** 39 seed bounties across 7 tracks ship with mainnet launch — real work (code, infrastructure, research, security, growth) funded by the treasury. The autonomous agent fleet begins claiming and executing these immediately. Growth onramp bounties (signups, referrals, bug reports) give non-technical participants an immediate earning path. The relay has economic activity from the moment it goes live.
+
+**Demand side:** AMOS Services Co. is the first commercial customer — a managed hosting business that generates commercial bounties organically through client work. Each subsequent spin-out (Legal AI Co., DevOps Agent Co., etc.) creates its own demand through the relay. The portfolio model means AMOS builds its own demand pipeline rather than waiting for external adoption.
+
+**The flywheel:** System bounties attract workers → workers build reputation → reputation enables commercial bounty access → Services Co. and spin-outs post commercial bounties → commercial fees fund Labs → Labs deploys more spin-outs → more commercial demand. External customers arrive into an economy that's already functioning, not an empty marketplace.
 
 ### Reaching Task Posters
 
@@ -289,7 +310,7 @@ More workers (human + agent) → More bounties completed → More task posters
 | Bounty Treasury | 95M | 95% | Distributed via relay over time. Fuels the entire bounty economy. The only way tokens enter circulation is through completed work. |
 | Emergency Reserve | 5M | 5% | DAO-locked. Governance vote required to deploy. Insurance for critical bugs, legal defense, or unforeseen protocol emergencies. |
 
-No founder allocation. No investor token pool. No discretionary community fund. The founder's upside comes from Labs equity and the 5% operations allocation — not pre-mined tokens. Everyone earns tokens the same way: by contributing work through the relay.
+No founder allocation. No investor token pool. No discretionary community fund. The founder's upside comes from Labs equity and the 10% protocol fee share — not pre-mined tokens. Everyone earns tokens the same way: by contributing work through the relay.
 
 ### Decay Mechanic
 
@@ -332,9 +353,9 @@ Three distinct legal entities, staged implementation.
 **AMOS Labs, Inc. — Delaware C-Corp**
 - IP holding company. Employs core engineering.
 - Owns open-source IP (Apache 2.0)
-- Receives 5% relay operations allocation
+- Receives 10% of protocol fees (in AMOS tokens — Labs' only revenue)
 - Holds equity stakes in spin-outs
-- Future: equity raises for R&D and model build
+- Self-funded: no venture capital, no token presale, no outside investors
 
 **AMOS Services Co. — Delaware C-Corp (First Spin-Out)**
 - Licenses tech from AMOS Labs
@@ -353,7 +374,7 @@ Three distinct legal entities, staged implementation.
 ```
 AMOS Labs, Inc.
   ├─[licenses IP + charges rev share]→ AMOS Services Co.
-  ├─[contributes engineering, receives 5% ops]→ AMOS DAO LLC
+  ├─[contributes engineering, receives 10% of protocol fees]→ AMOS DAO LLC
   └─[holds equity stakes in]→ [future spin-outs]
 
 AMOS Services Co.
@@ -423,7 +444,7 @@ Multiple compounding revenue streams across three entities, each reinforcing the
 
 | Entity | Stream | Description | Timeline | Scales With |
 |--------|--------|-------------|----------|-------------|
-| AMOS Labs | 5% Ops Allocation | 5% of every relay bounty fee | Live at launch | Relay volume |
+| AMOS Labs | 10% Protocol Fee Share | 10% of every relay bounty fee (per smart contract: 50% stakers / 40% burn / 10% Labs) | Live at launch | Relay volume |
 | Services Co. | Setup Fees | One-time per client deployment | Q2 2026 | Enterprise sales |
 | Services Co. | Managed Hosting | Monthly SaaS fee per hosted instance | Q2 2026 | Customer count |
 | Relay / DAO | 3% Protocol Fee | Core relay fee, distributed on-chain | Live at launch | Bounty volume |
@@ -432,23 +453,35 @@ Multiple compounding revenue streams across three entities, each reinforcing the
 
 ---
 
-## Part IX: Capital Strategy
+## Part IX: Funding Model — Self-Sustaining by Design
 
-Three distinct raises, each unlocking the next phase.
+AMOS Labs is not raising venture capital. There is no token presale, no SAFT, no investor allocation. This is deliberate.
 
-### Raise 1 — Prove the Thesis (current)
+The entire funding model flows from protocol fees. Labs receives 10% of the 3% relay fee on every commercial bounty — paid in AMOS tokens. If the relay generates volume, Labs has operating capital. If it doesn't, Labs has nothing. There is no scenario where Labs thrives while the protocol stagnates. The incentive alignment is total and permanent.
 
-The foundation is built. Capital here funds scale: marketing, distribution, enterprise sales for Services Co., relay volume growth, and initial portfolio deployment. Real bounties, real volume, real spin-out equity accruing. This raise is relatively modest because the hard technical work is done.
+### Why Not Raise
 
-### Raise 2 — Scale the Network
+Taking outside capital creates misalignment. Investors want returns on their timeline. VCs want growth metrics that may not align with protocol health. Token presales create a class of holders who got in without contributing work — undermining the core thesis that tokens should flow from contribution, not capital.
 
-Once relay economics are demonstrated: accelerate the portfolio flywheel. Deploy autonomous portfolio management. Batch spin-outs across verticals, auto-prune underperformers, accelerate winners. This raise funds business creation at scale.
+More practically: the foundation is already built. One founder, working with AI agents, built the entire system — four-layer architecture, 54+ tools, Solana programs, relay marketplace, token economics, reputation system. The cost of building AMOS was mass-market AI tooling and one person's time. The cost of running it is infrastructure fees covered by protocol revenue.
 
-### Raise 3 — Build the Model
+### The Model Strategy
 
-By this point, the relay has generated the world's most comprehensive dataset of real agent economic activity — real tasks, real quality scores, real bounty outcomes across thousands of verticals. No frontier lab has this data and cannot synthesize it.
+Most daily business tasks do not require frontier models. They need competent, fast, cheap inference — and that's exactly where open-source models are heading. Llama, Mistral, Qwen, and their successors are already competitive for the majority of bounty work. In five years, open-source models will be more than sufficient for virtually everything the relay needs.
 
-The raise funds a purpose-built open model: trained on relay task data, optimized for agent work, running on open infrastructure, governed by the DAO. Apache 2.0 or equivalent — forkable and ungovernable.
+AMOS already supports dual-model routing: frontier API calls (Bedrock/Claude) for high-complexity work, local open-source models (Ollama) for everything else. As open-source models improve, the balance shifts naturally toward local inference — reducing costs and eliminating model provider dependency without any protocol changes.
+
+The model is commodity infrastructure. The network is the asset.
+
+### The Data Flywheel
+
+The relay generates something no model company has: a comprehensive dataset of real agent economic activity. Real tasks with defined requirements. Real quality scores from verified completions. Real bounty outcomes across verticals. Real reputation trajectories over time.
+
+This data is the proprietary asset that compounds. Every bounty completed makes the dataset more valuable. Every quality score refines what "good work" means across contribution types. No frontier lab can synthesize this data — it only exists because the relay exists.
+
+Long-term, this dataset funds a purpose-built open model: trained on relay task data, optimized for agent work, governed by the DAO. Apache 2.0 or equivalent — forkable and ungovernable. But that's Phase 4. The relay doesn't need it to function. It's the endgame, not the entry requirement.
+
+**The model is replaceable. The network isn't.**
 
 ---
 
@@ -481,7 +514,9 @@ The raise funds a purpose-built open model: trained on relay task data, optimize
 - Governance adapting to augmented humans
 - Protocol designed to outlast any single entity
 
-### Phase 4 — Open Model Sovereignty (2034–2038, parallel to Phase 3)
+### Phase 4 — Open Model Sovereignty (2032–2036, parallel to Phase 3)
+
+By this point, open-source models will likely handle the vast majority of relay work at commodity cost. The relay's proprietary dataset — years of real agent task data, quality scores, and bounty outcomes — funds a purpose-built open model that removes any remaining dependency on frontier API providers.
 
 - Trained on relay task data (the only dataset of its kind)
 - Optimized for agent work, not general benchmarks
@@ -489,7 +524,7 @@ The raise funds a purpose-built open model: trained on relay task data, optimize
 - Governed by the DAO — no government can fully shut it down
 - Apache 2.0 or equivalent — forkable, permanently ungovernable
 
-This is the phase that makes the thesis fully defensible.
+This is the phase that makes the thesis fully defensible. But AMOS doesn't need it to function — it's the endgame, not the entry requirement.
 
 ---
 
@@ -515,7 +550,7 @@ Two forms of the risk:
 - **Commercial:** A model company replicates relay functionality and deprioritizes API access for competitors.
 - **Regulatory:** Governments mandate that frontier model API access flows only through licensed, monitored channels — making model companies into controlled utilities that can throttle any decentralized protocol.
 
-Near-term hedge: local model support (Ollama) is already integrated with cost-tier routing — agents automatically route low-complexity tasks to local models and reserve frontier API calls for high-value work. Open-source model parity (Llama, Mistral, Qwen) provides an increasingly competitive floor. Long-term resolution: Phase 4 — the relay generates the data and economics to fund the model that removes the dependency entirely.
+Near-term hedge: local model support (Ollama) is already integrated with cost-tier routing — agents automatically route low-complexity tasks to local models and reserve frontier API calls for high-value work. Open-source model parity (Llama, Mistral, Qwen) provides an increasingly competitive floor that improves monthly. Most daily business tasks — the bread and butter of the relay — don't need frontier models. They need competent, fast, cheap inference, and that's commodity territory. Long-term resolution: Phase 4 — the relay generates the data and economics to fund the model that removes the dependency entirely. But the structural bet is simpler than that: models are becoming commodities. The competitive advantage is the network, not the model.
 
 ### Execution Risks
 
@@ -527,18 +562,13 @@ Near-term hedge: local model support (Ollama) is already integrated with cost-ti
 
 ## The Case for AMOS
 
-### The Opportunity Is Time-Sensitive
+### The Window Is Open and Closing
 
 Capture patterns are already emerging. Five companies control $700B in annual AI capex. Regulatory frameworks are being written now, favoring incumbents. Platform monopolies are building agent systems designed to maximize extraction. The window to build a genuine open alternative — one with enough ecosystem mass to be capture-resistant — is open today and closing.
 
 ### What Makes AMOS Defensible
 
-- Open-source infrastructure that cannot be captured or discontinued — Apache 2.0, forever
-- Network effects from reputation data that compounds over time
-- Token economics designed for long-term participation, not speculation
-- Structural capture resistance enforced at the protocol level, not policy level
-- A portfolio of spin-out businesses that collectively drive relay volume and prove the thesis
-- A long-term path to open model sovereignty that removes the last structural dependency
+Open-source infrastructure that cannot be captured or discontinued — Apache 2.0, forever. Network effects from reputation data that compounds over time. Token economics designed for long-term participation, not speculation. Structural capture resistance enforced at the protocol level, not policy level. A portfolio of spin-out businesses that collectively drive relay volume and prove the thesis. A long-term path to open model sovereignty that removes the last structural dependency. And a funding model where Labs has no revenue source other than protocol fees — no outside capital creating misaligned incentives, no investor pressure to extract value from the network.
 
 ### The Mission
 
@@ -551,6 +581,8 @@ AMOS is the deliberate infrastructure. The relay, the token economics, the open-
 Energy controls geopolitics. Geopolitics accelerates fiscal crisis. Fiscal crisis demands productivity. Productivity demands autonomous agents. Autonomous agents create Economics 2.0.
 
 Economics 2.0 without deliberate design is a world where humans lose economic agency. AMOS is the deliberate design — an open protocol for an agent economy that keeps humans in the game.
+
+The model is replaceable. The network isn't.
 
 ---
 
