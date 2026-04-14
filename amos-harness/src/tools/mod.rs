@@ -285,6 +285,7 @@ impl ToolRegistry {
         automation_engine: Arc<AutomationEngine>,
         bounty_cache: Arc<RwLock<Vec<RelayBounty>>>,
         storage: Arc<crate::storage::StorageClient>,
+        pending_confirmations: Arc<crate::state::PendingConfirmations>,
     ) -> Self {
         let mut registry = Self::new(db_pool.clone(), config.clone());
 
@@ -330,7 +331,9 @@ impl ToolRegistry {
 
         // Register system tools
         registry.register(Arc::new(system_tools::ReadFileTool::new()));
-        registry.register(Arc::new(system_tools::BashTool::new()));
+        registry.register(Arc::new(system_tools::BashTool::new(
+            pending_confirmations.clone(),
+        )));
 
         // Register memory tools (with optional embedding support)
         registry.register(Arc::new(memory_tools::RememberThisTool::new(

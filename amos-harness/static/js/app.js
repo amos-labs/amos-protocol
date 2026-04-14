@@ -539,7 +539,9 @@ async function sendMessage() {
 
                             // Check for canvas actions in tool result metadata
                             const metadata = data.metadata;
-                            if (metadata && metadata.__canvas_action === 'secure_input') {
+                            if (metadata && metadata.__confirmation_required) {
+                                showCommandConfirmation(assistantEl, metadata.__confirmation_required);
+                            } else if (metadata && metadata.__canvas_action === 'secure_input') {
                                 openSecureInputCanvas(metadata);
                             } else if (metadata && metadata.__canvas_action === 'preview_site') {
                                 openSitePreview(metadata.url, metadata.site_slug);
@@ -974,6 +976,158 @@ function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+}
+
+// ============================================================================
+// Destructive Command Confirmation
+// ============================================================================
+
+/**
+ * Show an inline approve/deny prompt for a destructive bash command.
+ * Called when a tool_end event contains __confirmation_required metadata.
+ *
+ * @param {HTMLElement} messageEl - The assistant message element
+ * @param {Object} confirmation - { token, command, warning }
+ */
+function showCommandConfirmation(messageEl, confirmation) {
+    const activityLog = messageEl.querySelector('.tool-activity-log');
+    if (!activityLog) return;
+    activityLog.style.display = '';
+
+    const items = activityLog.querySelector('.activity-items');
+    const confirmEl = document.createElement('div');
+    confirmEl.className = 'confirmation-prompt';
+    confirmEl.innerHTML = `
+        <div class="flex flex-col gap-2 p-3 my-2 rounded-lg border border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30">
+            <div class="flex items-center gap-2 text-amber-700 dark:text-amber-400 text-sm font-medium">
+                <i data-lucide="shield-alert" class="w-4 h-4"></i>
+                <span>Confirmation Required</span>
+            </div>
+            <div class="text-xs text-gray-600 dark:text-gray-400">${escapeHtml(confirmation.warning)}</div>
+            <code class="block text-xs p-2 rounded bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 overflow-x-auto">${escapeHtml(confirmation.command)}</code>
+            <div class="flex gap-2 mt-1">
+                <button class="confirm-approve-btn inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md bg-green-600 hover:bg-green-700 text-white transition-colors">
+                    <i data-lucide="check" class="w-3 h-3"></i> Approve
+                </button>
+                <button class="confirm-deny-btn inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md bg-red-500 hover:bg-red-600 text-white transition-colors">
+                    <i data-lucide="x" class="w-3 h-3"></i> Deny
+                </button>
+            </div>
+        </div>
+    `;
+    items.appendChild(confirmEl);
+    lucide.createIcons();
+
+    const approveBtn = confirmEl.querySelector('.confirm-approve-btn');
+    const denyBtn = confirmEl.querySelector('.confirm-deny-btn');
+
+    approveBtn.addEventListener('click', () => handleConfirmation(confirmEl, confirmation, true));
+    denyBtn.addEventListener('click', () => handleConfirmation(confirmEl, confirmation, false));
+
+    // Auto-scroll
+    const container = document.getElementById('chatMessages');
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
+/**
+ * Handle the user's confirmation decision (approve or deny).
+ * Calls the confirm API endpoint and injects the result into chat.
+ */
+async function handleConfirmation(confirmEl, confirmation, approved) {
+    // Disable buttons immediately
+    const buttons = confirmEl.querySelectorAll('button');
+    buttons.forEach(btn => { btn.disabled = true; btn.classList.add('opacity-50', 'cursor-not-allowed'); });
+
+    // Replace the prompt with a status indicator
+    const statusDiv = confirmEl.querySelector('.flex.flex-col');
+    const statusText = approved ? 'Executing...' : 'Denied';
+    const statusColor = approved ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400';
+    const statusIcon = approved ? 'loader' : 'x-circle';
+
+    // Update the button area with status
+    const buttonArea = confirmEl.querySelector('.flex.gap-2.mt-1');
+    buttonArea.innerHTML = `<span class="inline-flex items-center gap-1 text-xs ${statusColor}"><i data-lucide="${statusIcon}" class="w-3 h-3 ${approved ? 'animate-spin' : ''}"></i> ${statusText}</span>`;
+    lucide.createIcons();
+
+    try {
+        const response = await fetch(`${state.apiBase}/api/v1/tools/confirm`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: confirmation.token, approved }),
+        });
+
+        const result = await response.json();
+
+        if (!approved) {
+            // User denied — update UI and send denial to agent
+            buttonArea.innerHTML = `<span class="inline-flex items-center gap-1 text-xs text-red-500 dark:text-red-400"><i data-lucide="x-circle" class="w-3 h-3"></i> Command denied by user</span>`;
+            lucide.createIcons();
+            sendFollowUpMessage(`I denied the command: \`${confirmation.command}\`. Do not execute it.`);
+            return;
+        }
+
+        if (result.status === 'executed') {
+            // Show execution result
+            const success = result.success;
+            const icon = success ? 'check-circle' : 'alert-circle';
+            const color = success ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400';
+            buttonArea.innerHTML = `<span class="inline-flex items-center gap-1 text-xs ${color}"><i data-lucide="${icon}" class="w-3 h-3"></i> ${success ? 'Executed successfully' : 'Command failed'} (exit ${result.exit_code})</span>`;
+            lucide.createIcons();
+
+            // Build result text for the agent
+            let resultText = `Command executed: \`${confirmation.command}\`\n`;
+            if (result.stdout) resultText += `\nstdout:\n\`\`\`\n${result.stdout}\n\`\`\``;
+            if (result.stderr) resultText += `\nstderr:\n\`\`\`\n${result.stderr}\n\`\`\``;
+            resultText += `\nexit code: ${result.exit_code}`;
+
+            // Show output in the UI if there is any
+            if (result.stdout || result.stderr) {
+                const outputEl = document.createElement('div');
+                outputEl.className = 'text-xs mt-2 p-2 rounded bg-gray-100 dark:bg-gray-800 max-h-40 overflow-auto';
+                let outputHtml = '';
+                if (result.stdout) outputHtml += `<pre class="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">${escapeHtml(result.stdout)}</pre>`;
+                if (result.stderr) outputHtml += `<pre class="text-red-600 dark:text-red-400 whitespace-pre-wrap">${escapeHtml(result.stderr)}</pre>`;
+                outputEl.innerHTML = outputHtml;
+                statusDiv.appendChild(outputEl);
+            }
+
+            // Send result to agent so it can continue reasoning
+            sendFollowUpMessage(resultText);
+        } else if (result.status === 'error' || result.status === 'timeout') {
+            buttonArea.innerHTML = `<span class="inline-flex items-center gap-1 text-xs text-red-500 dark:text-red-400"><i data-lucide="alert-circle" class="w-3 h-3"></i> ${escapeHtml(result.message)}</span>`;
+            lucide.createIcons();
+            sendFollowUpMessage(`Command failed: ${result.message}`);
+        }
+    } catch (err) {
+        buttonArea.innerHTML = `<span class="inline-flex items-center gap-1 text-xs text-red-500 dark:text-red-400"><i data-lucide="alert-circle" class="w-3 h-3"></i> Failed to confirm: ${escapeHtml(err.message)}</span>`;
+        lucide.createIcons();
+    }
+
+    // Auto-scroll
+    const container = document.getElementById('chatMessages');
+    if (container) container.scrollTop = container.scrollHeight;
+}
+
+/**
+ * Send a follow-up message to the agent with command execution results.
+ * This is a lightweight message send that doesn't create a new user bubble —
+ * it just feeds the result back into the conversation so the agent can continue.
+ */
+function sendFollowUpMessage(text) {
+    // Only send if we have a session
+    if (!state.sessionId) return;
+
+    // Fire and forget — the agent will pick up the result in its next turn
+    fetch(`${state.apiBase}/api/v1/agent/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            message: text,
+            session_id: state.sessionId,
+        }),
+    }).catch(err => {
+        console.warn('Failed to send follow-up message:', err);
+    });
 }
 
 // ============================================================================

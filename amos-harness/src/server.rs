@@ -111,6 +111,8 @@ pub async fn create_server(
     let storage_config = StorageConfig::from_env();
     let storage = Arc::new(StorageClient::new(storage_config).await?);
 
+    let pending_confirmations = Arc::new(crate::state::PendingConfirmations::new());
+
     let mut tool_registry = ToolRegistry::default_registry(
         db_pool.clone(),
         config.clone(),
@@ -122,6 +124,7 @@ pub async fn create_server(
         automation_engine.clone(),
         bounty_cache.clone(),
         storage.clone(),
+        pending_confirmations.clone(),
     );
 
     // Load configured packages and register their tools (AMOS_PACKAGES env var).
@@ -269,6 +272,7 @@ pub async fn create_server(
         orchestrator,
         fleet_manager,
         activity_counters,
+        pending_confirmations,
     });
 
     // Activate packages (bootstrap schemas, collect routes)

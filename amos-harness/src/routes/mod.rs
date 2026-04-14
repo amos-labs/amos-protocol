@@ -4,6 +4,7 @@ pub mod agent_proxy;
 pub mod bots;
 pub mod bounties;
 pub mod canvas;
+pub mod confirm;
 pub mod credentials;
 pub mod data;
 pub mod fleet;
@@ -116,6 +117,8 @@ pub fn build_routes(state: Arc<AppState>) -> Router {
         .nest("/api/v1/packages", packages::routes(state.clone()))
         // Site management routes
         .nest("/api/v1/sites", sites::routes(state.clone()))
+        // Tool confirmation routes (destructive command approve/deny)
+        .nest("/api/v1/tools", confirm::routes(state.clone()))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::authenticate,

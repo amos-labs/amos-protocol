@@ -15,8 +15,72 @@ use crate::{
     tools::ToolRegistry,
 };
 use amos_core::{AppConfig, CredentialVault};
+use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::sync::Arc;
+
+/// A destructive command awaiting user confirmation before execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingConfirmation {
+    /// The shell command to execute if approved
+    pub command: String,
+    /// Working directory (optional)
+    pub working_dir: Option<String>,
+    /// Timeout in seconds
+    pub timeout_secs: u64,
+    /// Human-readable warning shown to the user
+    pub warning: String,
+    /// When this confirmation was created (epoch secs)
+    pub created_at: u64,
+}
+
+/// Thread-safe store for commands awaiting user confirmation.
+///
+/// Keys are confirmation tokens (UUID strings). Entries auto-expire
+/// after `TTL_SECS` — the confirm endpoint checks this before executing.
+pub struct PendingConfirmations {
+    inner: DashMap<String, PendingConfirmation>,
+}
+
+impl PendingConfirmations {
+    /// Confirmations expire after 5 minutes.
+    const TTL_SECS: u64 = 300;
+
+    pub fn new() -> Self {
+        Self {
+            inner: DashMap::new(),
+        }
+    }
+
+    /// Store a pending confirmation. Returns the token.
+    pub fn insert(&self, token: String, entry: PendingConfirmation) {
+        self.inner.insert(token, entry);
+    }
+
+    /// Remove and return a pending confirmation if it exists and hasn't expired.
+    pub fn take(&self, token: &str) -> Option<PendingConfirmation> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        match self.inner.remove(token) {
+            Some((_, entry)) if now - entry.created_at <= Self::TTL_SECS => Some(entry),
+            Some(_) => None, // expired
+            None => None,
+        }
+    }
+
+    /// Prune expired entries (call periodically if desired).
+    pub fn prune_expired(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.inner
+            .retain(|_, entry| now - entry.created_at <= Self::TTL_SECS);
+    }
+}
 
 /// Shared application state
 ///
@@ -87,6 +151,9 @@ pub struct AppState {
 
     /// Activity counters for platform telemetry (token usage, conversations, etc.)
     pub activity_counters: Arc<crate::platform_sync::ActivityCounters>,
+
+    /// Pending destructive commands awaiting user confirmation before execution.
+    pub pending_confirmations: Arc<PendingConfirmations>,
 }
 
 impl AppState {
