@@ -161,13 +161,38 @@ async fn connect_wallet(
         )
     })?;
 
-    // 5. Upsert into wallet_connections
+    // 5. Check if wallet is already connected to a different tenant
+    let existing_tenant: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT tenant_id FROM wallet_connections WHERE wallet_address = $1")
+            .bind(&req.public_key)
+            .fetch_optional(&state.db_pool)
+            .await
+            .map_err(|e| {
+                tracing::warn!("Failed to check wallet ownership: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "Failed to verify wallet ownership" })),
+                )
+            })?;
+
+    if let Some(existing) = existing_tenant {
+        if existing != tenant_id {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(
+                    serde_json::json!({ "error": "Wallet is already connected to another account" }),
+                ),
+            ));
+        }
+    }
+
+    // 6. Upsert into wallet_connections (safe — we verified ownership above)
     sqlx::query(
         r#"
         INSERT INTO wallet_connections (tenant_id, wallet_address, wallet_type, verified_at, is_primary, updated_at)
         VALUES ($1, $2, 'solana', NOW(), true, NOW())
         ON CONFLICT (wallet_address)
-        DO UPDATE SET tenant_id = $1, verified_at = NOW(), updated_at = NOW()
+        DO UPDATE SET verified_at = NOW(), updated_at = NOW()
         "#,
     )
     .bind(tenant_id)

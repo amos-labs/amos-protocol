@@ -22,3 +22,11 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // Re-export commonly used types
 pub use amos_core::Result;
 pub use state::RelayState;
+
+/// Validate that a string is a valid Solana wallet address (base58-encoded 32-byte public key).
+pub fn validate_wallet_address(addr: &str) -> bool {
+    bs58::decode(addr)
+        .into_vec()
+        .map(|bytes| bytes.len() == 32)
+        .unwrap_or(false)
+}

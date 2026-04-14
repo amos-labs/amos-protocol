@@ -108,6 +108,15 @@ async fn register_agent(
     State(state): State<RelayState>,
     Json(req): Json<RegisterAgentRequest>,
 ) -> Result<(StatusCode, Json<AgentResponse>), StatusCode> {
+    // Validate wallet address format
+    if !crate::validate_wallet_address(&req.wallet_address) {
+        warn!(
+            "Invalid wallet address in agent registration: {}",
+            req.wallet_address
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let agent_id = Uuid::new_v4();
     let now = Utc::now();
     let caps_json = serde_json::to_value(&req.capabilities).unwrap_or_default();

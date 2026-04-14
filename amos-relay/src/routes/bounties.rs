@@ -270,6 +270,14 @@ async fn claim_bounty(
     Path(id): Path<Uuid>,
     Json(req): Json<ClaimBountyRequest>,
 ) -> Result<Json<BountyResponse>, StatusCode> {
+    // Validate wallet address if provided
+    if let Some(ref addr) = req.wallet_address {
+        if !crate::validate_wallet_address(addr) {
+            warn!("Invalid wallet address in claim: {}", addr);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
+
     let now = Utc::now();
 
     let row = sqlx::query(
@@ -305,6 +313,14 @@ async fn submit_work(
     Path(id): Path<Uuid>,
     Json(req): Json<SubmitWorkRequest>,
 ) -> Result<Json<BountyResponse>, StatusCode> {
+    // Validate wallet address if provided
+    if let Some(ref addr) = req.wallet_address {
+        if !crate::validate_wallet_address(addr) {
+            warn!("Invalid wallet address in submission: {}", addr);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
+
     let now = Utc::now();
 
     // If wallet_address provided at submit time and not yet stored, update it
