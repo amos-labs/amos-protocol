@@ -3,12 +3,13 @@
 //! The harness acts as a transparent proxy so the frontend canvas and agent
 //! can interact with bounties without knowing the relay URL directly.
 
+use crate::middleware::Claims;
 use crate::state::AppState;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use std::sync::Arc;
 
@@ -80,11 +81,14 @@ async fn get_bounty(
 }
 
 /// Forward POST /api/v1/bounties/:id/claim to relay.
+/// Injects the user's connected wallet address if available.
 async fn claim_bounty(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let payload = inject_wallet_address(&state, &claims, payload).await;
     proxy_post(
         &state.config.relay.url,
         &format!("/api/v1/bounties/{}/claim", id),
@@ -94,11 +98,14 @@ async fn claim_bounty(
 }
 
 /// Forward POST /api/v1/bounties/:id/submit to relay.
+/// Injects the user's connected wallet address if available.
 async fn submit_work(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let payload = inject_wallet_address(&state, &claims, payload).await;
     proxy_post(
         &state.config.relay.url,
         &format!("/api/v1/bounties/{}/submit", id),
@@ -175,6 +182,35 @@ async fn proxy_post(
     } else {
         Err(StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY))
     }
+}
+
+/// Look up the user's connected wallet and inject it into the payload.
+/// If no wallet is connected, the payload is returned unchanged.
+async fn inject_wallet_address(
+    state: &AppState,
+    claims: &Claims,
+    mut payload: serde_json::Value,
+) -> serde_json::Value {
+    if let Ok(tenant_id) = claims.tenant_id.parse::<uuid::Uuid>() {
+        let wallet: Option<String> = sqlx::query_scalar(
+            "SELECT wallet_address FROM wallet_connections WHERE tenant_id = $1 AND is_primary = true",
+        )
+        .bind(tenant_id)
+        .fetch_optional(&state.db_pool)
+        .await
+        .ok()
+        .flatten();
+
+        if let Some(addr) = wallet {
+            if let Some(obj) = payload.as_object_mut() {
+                obj.insert(
+                    "wallet_address".to_string(),
+                    serde_json::Value::String(addr),
+                );
+            }
+        }
+    }
+    payload
 }
 
 #[cfg(test)]

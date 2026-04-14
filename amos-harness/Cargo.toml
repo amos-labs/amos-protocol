@@ -83,6 +83,10 @@ jsonwebtoken = { workspace = true }
 dotenvy = { workspace = true }
 config = { workspace = true }
 
+# Wallet signature verification
+ed25519-dalek = { workspace = true, features = ["std"] }
+bs58 = { workspace = true }
+
 # AWS signing (for Bedrock API)
 sha2 = { workspace = true }
 hmac = { workspace = true }

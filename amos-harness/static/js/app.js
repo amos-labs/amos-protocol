@@ -2115,3 +2115,25 @@ async function loadSpecialists() {
 // Start specialist polling (every 30 seconds)
 loadSpecialists();
 setInterval(loadSpecialists, 30000);
+
+// ============================================================================
+// Wallet Integration
+// ============================================================================
+
+/**
+ * Show the wallet settings modal.
+ * Called from the sidebar wallet indicator and header indicator.
+ */
+function showWalletSettings() {
+    showWalletModal();
+}
+
+// Note: showWalletModal(), closeWalletModal(), and copyWalletAddress() are
+// defined in wallet.js and loaded before app.js.
+
+// Refresh wallet balance periodically (every 60 seconds) when connected
+setInterval(function() {
+    if (typeof AMOSWallet !== 'undefined' && AMOSWallet.connected) {
+        AMOSWallet.refreshBalance();
+    }
+}, 60000);

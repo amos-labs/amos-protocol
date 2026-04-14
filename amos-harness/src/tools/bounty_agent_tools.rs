@@ -576,14 +576,27 @@ impl Tool for ClaimBountyTool {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.5);
 
+        // Look up agent's wallet address for relay identity
+        let wallet_address: Option<String> = sqlx::query_scalar(
+            "SELECT wallet_address FROM openclaw_agents WHERE id = $1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .ok()
+        .flatten();
+
         // Send claim to relay
         let url = format!("{}/api/v1/bounties/{}/claim", self.relay_url, bounty_id);
         let client = reqwest::Client::new();
-        let payload = json!({
+        let mut payload = json!({
             "agent_id": agent_id,
             "capabilities": capabilities,
             "estimated_completion_hours": estimated_hours,
         });
+        if let Some(ref addr) = wallet_address {
+            payload["wallet_address"] = json!(addr);
+        }
 
         match client.post(&url).json(&payload).send().await {
             Ok(resp) if resp.status().is_success() => {
@@ -720,10 +733,20 @@ impl Tool for SubmitBountyProofTool {
             .unwrap_or("");
         let metrics = params.get("metrics").cloned();
 
+        // Look up agent's wallet address for relay identity
+        let wallet_address: Option<String> = sqlx::query_scalar(
+            "SELECT wallet_address FROM openclaw_agents WHERE id = $1",
+        )
+        .bind(agent_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .ok()
+        .flatten();
+
         // Submit to relay
         let url = format!("{}/api/v1/bounties/{}/submit", self.relay_url, bounty_id);
         let client = reqwest::Client::new();
-        let payload = json!({
+        let mut payload = json!({
             "agent_id": agent_id,
             "proof": {
                 "output": output,
@@ -732,6 +755,9 @@ impl Tool for SubmitBountyProofTool {
                 "metrics": metrics,
             }
         });
+        if let Some(ref addr) = wallet_address {
+            payload["wallet_address"] = json!(addr);
+        }
 
         match client.post(&url).json(&payload).send().await {
             Ok(resp) if resp.status().is_success() => {

@@ -18,6 +18,7 @@ pub mod revisions;
 pub mod settings;
 pub mod sites;
 pub mod uploads;
+pub mod wallet;
 
 use crate::middleware::{self, RateLimiter};
 use crate::state::AppState;
@@ -62,6 +63,8 @@ pub fn build_routes(state: Arc<AppState>) -> Router {
             "/s/{slug}/submit/{collection}",
             axum::routing::post(sites::handle_form_submit),
         )
+        // Solana config (public, no auth needed)
+        .nest("/api/v1/config", wallet::public_routes(state.clone()))
         // Webhook ingress routes (external triggers, auth via webhook secret)
         .nest("/api/v1/hooks", hooks::routes(state.clone()))
         .layer({
@@ -111,6 +114,8 @@ pub fn build_routes(state: Arc<AppState>) -> Router {
         .nest("/api/v1/bounties", bounties::routes(state.clone()))
         // Fleet management routes (autonomous bounty agents)
         .nest("/api/v1/fleet", fleet::routes(state.clone()))
+        // Wallet connection routes (link Solana wallets)
+        .nest("/api/v1/wallet", wallet::routes(state.clone()))
         // Harness settings routes (model selection, provider mode)
         .nest("/api/v1/settings", settings::routes(state.clone()))
         // Package management routes

@@ -6,6 +6,7 @@
     <title>AMOS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
     <link rel="stylesheet" href="/css/app.css">
     <script>
         tailwind.config = {
@@ -83,6 +84,13 @@
                         <!-- Populated by JS from /api/v1/settings -->
                     </select>
                 </div>
+                <a href="#" onclick="showWalletSettings(); return false;" id="wallet-header-indicator"
+                   class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                   title="Wallet not connected — click to set up">
+                    <i data-lucide="wallet" class="w-4 h-4"></i>
+                    <span>Wallet</span>
+                    <div id="wallet-status-dot" class="w-1.5 h-1.5 rounded-full bg-gray-500 ml-auto"></div>
+                </a>
                 <button onclick="toggleDarkMode()" class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700">
                     <i data-lucide="moon" class="w-4 h-4" id="darkModeIcon"></i>
                     <span id="darkModeLabel">Dark Mode</span>
@@ -197,6 +205,22 @@
         </main>
     </div>
 
+    <!-- Wallet Connection Modal -->
+    <div id="wallet-modal" style="display: none" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onclick="if(event.target===this) closeWalletModal();">
+        <div class="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+                <h2 class="text-base font-semibold text-white">Wallet</h2>
+                <button onclick="closeWalletModal()" class="p-1 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div id="wallet-modal-body" class="p-5">
+                <!-- Populated dynamically by wallet.js -->
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/wallet.js"></script>
     <script src="/js/app.js"></script>
 </body>
 </html>
