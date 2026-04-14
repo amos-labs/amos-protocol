@@ -124,11 +124,13 @@ pub mod amos_bounty {
     ///
     /// # Arguments
     /// * `operator_key` - The operator's public key (for operator_stats PDA)
+    /// * `day_index` - Current day index since program start (validated on-chain)
     pub fn prepare_bounty_submission(
         ctx: Context<PrepareBountySubmission>,
         operator_key: Pubkey,
+        day_index: u32,
     ) -> Result<()> {
-        instructions::prepare::handler_prepare(ctx, operator_key)
+        instructions::prepare::handler_prepare(ctx, operator_key, day_index)
     }
 
     // ========================================================================
@@ -166,6 +168,7 @@ pub mod amos_bounty {
         contribution_type: u8,
         is_agent: bool,
         agent_id: [u8; 32],
+        day_index: u32,
         reviewer: Pubkey,
         evidence_hash: [u8; 32],
         external_reference: [u8; 64],
@@ -178,6 +181,7 @@ pub mod amos_bounty {
             contribution_type,
             is_agent,
             agent_id,
+            day_index,
             reviewer,
             evidence_hash,
             external_reference,

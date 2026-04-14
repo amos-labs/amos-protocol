@@ -13,7 +13,7 @@ use crate::errors::BountyError;
 use crate::state::*;
 
 #[derive(Accounts)]
-#[instruction(operator_key: Pubkey)]
+#[instruction(operator_key: Pubkey, day_index: u32)]
 pub struct PrepareBountySubmission<'info> {
     #[account(
         seeds = [BOUNTY_CONFIG_SEED],
@@ -25,7 +25,7 @@ pub struct PrepareBountySubmission<'info> {
         init_if_needed,
         payer = payer,
         space = DailyPool::SIZE,
-        seeds = [DAILY_POOL_SEED, &calculate_day_index(config.start_time)?.to_le_bytes()],
+        seeds = [DAILY_POOL_SEED, &day_index.to_le_bytes()],
         bump
     )]
     pub daily_pool: Account<'info, DailyPool>,
@@ -45,13 +45,18 @@ pub struct PrepareBountySubmission<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler_prepare(ctx: Context<PrepareBountySubmission>, operator_key: Pubkey) -> Result<()> {
+pub fn handler_prepare(
+    ctx: Context<PrepareBountySubmission>,
+    operator_key: Pubkey,
+    day_index: u32,
+) -> Result<()> {
     let config = &ctx.accounts.config;
     let daily_pool = &mut ctx.accounts.daily_pool;
     let operator_stats = &mut ctx.accounts.operator_stats;
 
-    // Initialize daily pool if newly created (day_index == 0 means fresh)
+    // Validate day_index matches current day (belt-and-suspenders; PDA derivation also validates)
     let current_day = calculate_day_index(config.start_time)?;
+    require!(day_index == current_day, BountyError::InvalidDayIndex);
     if daily_pool.day_index == 0 {
         daily_pool.day_index = current_day;
         // Compute emission from sigmoid curve — stateless, no halving epochs needed

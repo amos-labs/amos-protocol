@@ -35,7 +35,7 @@ use crate::state::*;
 /// * `evidence_hash` - Hash of the work product/evidence
 /// * `external_reference` - External ID (issue number, PR number, etc.)
 #[derive(Accounts)]
-#[instruction(bounty_id: [u8; 32], base_points: u16, quality_score: u8, contribution_type: u8, is_agent: bool, agent_id: [u8; 32])]
+#[instruction(bounty_id: [u8; 32], base_points: u16, quality_score: u8, contribution_type: u8, is_agent: bool, agent_id: [u8; 32], day_index: u32)]
 pub struct SubmitBountyProof<'info> {
     #[account(
         mut,
@@ -50,7 +50,7 @@ pub struct SubmitBountyProof<'info> {
     /// Daily pool — must already exist (created by prepare_bounty_submission)
     #[account(
         mut,
-        seeds = [DAILY_POOL_SEED, &calculate_day_index(config.start_time)?.to_le_bytes()],
+        seeds = [DAILY_POOL_SEED, &day_index.to_le_bytes()],
         bump = daily_pool.bump
     )]
     pub daily_pool: Box<Account<'info, DailyPool>>,
@@ -119,6 +119,7 @@ pub fn handler_submit_proof(
     contribution_type: u8,
     is_agent: bool,
     agent_id: [u8; 32],
+    day_index: u32,
     reviewer: Pubkey,
     evidence_hash: [u8; 32],
     external_reference: [u8; 64],
@@ -157,8 +158,9 @@ pub fn handler_submit_proof(
         BountyError::InvalidOperator
     );
 
-    // Calculate current day index
+    // Validate day_index matches current day
     let current_day = calculate_day_index(config.start_time)?;
+    require!(day_index == current_day, BountyError::InvalidDayIndex);
 
     // Reset daily counter if new day
     if operator_stats.last_submission_day != current_day {

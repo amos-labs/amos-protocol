@@ -193,10 +193,11 @@ async function main() {
     log("4", `Daily Pool PDA: ${dailyPool.toBase58()}`);
     log("4", `Operator Stats PDA: ${operatorStats.toBase58()}`);
 
-    // Build prepare instruction: discriminator + operator_key (Pubkey)
-    const prepareData = Buffer.alloc(8 + 32);
+    // Build prepare instruction: discriminator + operator_key (Pubkey) + day_index (u32)
+    const prepareData = Buffer.alloc(8 + 32 + 4);
     anchorDiscriminator("prepare_bounty_submission").copy(prepareData, 0);
     operator.publicKey.toBuffer().copy(prepareData, 8);
+    prepareData.writeUInt32LE(dayIndex, 8 + 32);
 
     const prepareIx = new TransactionInstruction({
         programId: BOUNTY_PROGRAM_ID,
@@ -244,9 +245,9 @@ async function main() {
 
     // Build submit instruction data
     // discriminator(8) + bounty_id(32) + base_points(2) + quality_score(1)
-    // + contribution_type(1) + is_agent(1) + agent_id(32) + reviewer(32)
-    // + evidence_hash(32) + external_reference(64)
-    const submitData = Buffer.alloc(8 + 32 + 2 + 1 + 1 + 1 + 32 + 32 + 32 + 64);
+    // + contribution_type(1) + is_agent(1) + agent_id(32) + day_index(4)
+    // + reviewer(32) + evidence_hash(32) + external_reference(64)
+    const submitData = Buffer.alloc(8 + 32 + 2 + 1 + 1 + 1 + 32 + 4 + 32 + 32 + 64);
     let offset = 0;
 
     anchorDiscriminator("submit_bounty_proof").copy(submitData, offset); offset += 8;
@@ -256,6 +257,7 @@ async function main() {
     submitData.writeUInt8(contributionType, offset); offset += 1;
     submitData.writeUInt8(isAgent ? 1 : 0, offset); offset += 1;
     agentId.copy(submitData, offset); offset += 32;
+    submitData.writeUInt32LE(dayIndex, offset); offset += 4;
     reviewer.toBuffer().copy(submitData, offset); offset += 32;
     evidenceHash.copy(submitData, offset); offset += 32;
     externalReference.copy(submitData, offset); offset += 64;
