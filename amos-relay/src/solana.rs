@@ -292,7 +292,7 @@ impl SolanaClient {
             data: submit_data,
         };
 
-        // Build, sign, and send transaction with both instructions
+        // Build, sign, and send transaction with both instructions (with retry)
         let rpc = self.rpc.clone();
         let oracle_keypair_bytes = oracle.to_bytes();
 
@@ -300,22 +300,13 @@ impl SolanaClient {
             let oracle_kp = Keypair::try_from(oracle_keypair_bytes.as_slice())
                 .map_err(|e| AmosError::Internal(format!("Keypair reconstruction: {}", e)))?;
 
-            let recent_blockhash = rpc
-                .get_latest_blockhash()
-                .map_err(|e| AmosError::SolanaRpc(format!("Failed to get blockhash: {}", e)))?;
-
-            let tx = Transaction::new_signed_with_payer(
+            send_with_retry(
+                &rpc,
                 &[prepare_ix, submit_ix],
-                Some(&oracle_kp.pubkey()),
+                &oracle_kp,
                 &[&oracle_kp],
-                recent_blockhash,
-            );
-
-            let sig = rpc
-                .send_and_confirm_transaction(&tx)
-                .map_err(|e| AmosError::SolanaRpc(format!("Transaction failed: {}", e)))?;
-
-            Ok::<String, AmosError>(sig.to_string())
+                4, // max 4 retries = 5 total attempts
+            )
         })
         .await
         .map_err(|e| AmosError::Internal(format!("Tokio join error: {}", e)))??;
@@ -350,6 +341,70 @@ impl SolanaClient {
         );
         Ok(format!("pending_burn_{}", amount))
     }
+}
+
+/// Send a transaction with retry and exponential backoff.
+/// Refreshes blockhash on each attempt. Retries up to `max_retries` times.
+fn send_with_retry(
+    rpc: &RpcClient,
+    instructions: &[Instruction],
+    payer: &Keypair,
+    signers: &[&Keypair],
+    max_retries: u32,
+) -> Result<String> {
+    let mut last_error = None;
+
+    for attempt in 0..=max_retries {
+        if attempt > 0 {
+            // Exponential backoff: 500ms, 1s, 2s, 4s
+            let delay_ms = 500 * 2u64.pow(attempt - 1);
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        }
+
+        // Always fetch a fresh blockhash on each attempt
+        let blockhash = match rpc.get_latest_blockhash() {
+            Ok(bh) => bh,
+            Err(e) => {
+                warn!(attempt, "Failed to get blockhash: {}", e);
+                last_error = Some(AmosError::SolanaRpc(format!(
+                    "Blockhash fetch failed: {}",
+                    e
+                )));
+                continue;
+            }
+        };
+
+        let tx = Transaction::new_signed_with_payer(
+            instructions,
+            Some(&payer.pubkey()),
+            signers,
+            blockhash,
+        );
+
+        match rpc.send_and_confirm_transaction(&tx) {
+            Ok(sig) => return Ok(sig.to_string()),
+            Err(e) => {
+                let err_str = e.to_string();
+                warn!(attempt, "Transaction failed: {}", err_str);
+
+                // Don't retry on deterministic failures
+                if err_str.contains("insufficient funds")
+                    || err_str.contains("already processed")
+                    || err_str.contains("AccountNotFound")
+                {
+                    return Err(AmosError::SolanaRpc(format!(
+                        "Transaction failed (non-retryable): {}",
+                        e
+                    )));
+                }
+
+                last_error = Some(AmosError::SolanaRpc(format!("Transaction failed: {}", e)));
+            }
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| AmosError::SolanaRpc("Transaction failed after all retries".into())))
 }
 
 /// Compute the Anchor instruction discriminator for a function name.

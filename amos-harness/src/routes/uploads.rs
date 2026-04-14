@@ -329,16 +329,27 @@ pub async fn serve_file(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let safe_filename = sanitize_content_disposition_filename(&original_filename);
     let headers = [
         (header::CONTENT_TYPE, content_type),
         (
             header::CONTENT_DISPOSITION,
-            format!("inline; filename=\"{}\"", original_filename),
+            format!("inline; filename=\"{}\"", safe_filename),
         ),
         (header::CACHE_CONTROL, "public, max-age=86400".to_string()),
     ];
 
     Ok((headers, Body::from(data)))
+}
+
+/// Sanitize a filename for use in Content-Disposition header.
+/// Strips characters that could enable header injection.
+fn sanitize_content_disposition_filename(filename: &str) -> String {
+    let sanitized: String = filename
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_' || *c == ' ')
+        .collect();
+    sanitized.trim().to_string()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -378,13 +378,14 @@ impl TaskQueue {
         }
         if status_filter.is_some() {
             sql.push_str(&format!(" AND status = ${param_idx}"));
-            // param_idx += 1; // Last use, no need to increment
+            param_idx += 1;
         }
 
         sql.push_str(" ORDER BY priority ASC, created_at DESC");
 
-        if let Some(lim) = limit {
-            sql.push_str(&format!(" LIMIT {lim}"));
+        if limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${param_idx}"));
+            // param_idx += 1;
         }
 
         // We need to build the query with dynamic binds.
@@ -396,6 +397,9 @@ impl TaskQueue {
         }
         if let Some(sf) = status_filter {
             query = query.bind(sf.as_str().to_string());
+        }
+        if let Some(lim) = limit {
+            query = query.bind(lim);
         }
 
         let rows = query
