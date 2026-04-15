@@ -602,8 +602,30 @@ async fn approve_submission(
                     out
                 };
 
-                // Convert reward tokens to base points (1 token = 1 point, capped at 2000)
-                let base_points = (reward_tokens.min(2000)) as u16;
+                // Look up agent's trust level to cap points per on-chain limits
+                let agent_trust_level: i16 = if let Some(aid) = bounty.claimed_by_agent_id {
+                    sqlx::query_scalar::<_, i16>(
+                        "SELECT trust_level FROM relay_agents WHERE id = $1",
+                    )
+                    .bind(aid)
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or(1)
+                } else {
+                    1
+                };
+
+                // On-chain max points per trust level: [100, 200, 500, 1000, 2000]
+                let max_for_trust = match agent_trust_level {
+                    1 => 100u64,
+                    2 => 200,
+                    3 => 500,
+                    4 => 1000,
+                    _ => 2000,
+                };
+                let base_points = (reward_tokens.min(max_for_trust)) as u16;
 
                 let params = SettlementParams {
                     bounty_id: bounty_id_str,

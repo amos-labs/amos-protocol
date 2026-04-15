@@ -990,6 +990,34 @@ mod tests {
         assert_ne!(ata, mint);
     }
 
+    #[test]
+    fn test_ata_derivation_mainnet_mint() {
+        let wallet = Pubkey::from_str("HxfBT3nUz4xTL6zSbXF9HanW2Ext99Ah9f6NPU6dhr5N").unwrap();
+        let mainnet_mint =
+            Pubkey::from_str("8DjVELBUno2XmqLdtyDbbS9NGkR5KHAnRx5rUqgZmpej").unwrap();
+        let devnet_mint = Pubkey::from_str("Cm2RGfE3EpYm6s2cfbMYYikjS2CD9vUd6ECxX4pWi2HQ").unwrap();
+
+        let mainnet_ata = derive_associated_token_account(&wallet, &mainnet_mint);
+        let devnet_ata = derive_associated_token_account(&wallet, &devnet_mint);
+
+        // Mainnet ATA should match spl-token CLI output
+        assert_eq!(
+            mainnet_ata.to_string(),
+            "2tUtjpWzqin11LZBhAzg7Qwfn6YrQjTvvwB3saqq2R24",
+            "Mainnet mint ATA mismatch"
+        );
+        // Devnet ATA should be different
+        assert_eq!(
+            devnet_ata.to_string(),
+            "D5CQKsgtXrzMeyBUJJPV2Wih1Vc8JXkoffY5FtPGiyaa",
+            "Devnet mint ATA mismatch"
+        );
+        assert_ne!(
+            mainnet_ata, devnet_ata,
+            "Different mints should yield different ATAs"
+        );
+    }
+
     // ── PDA derivation ─────────────────────────────────────────────────
 
     #[test]
