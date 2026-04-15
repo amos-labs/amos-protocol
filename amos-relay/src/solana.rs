@@ -300,6 +300,74 @@ impl SolanaClient {
 
         let token_program = Pubkey::from_str(SPL_TOKEN_PROGRAM_ID)
             .map_err(|e| AmosError::Internal(format!("Invalid SPL token program ID: {}", e)))?;
+        let ata_program = Pubkey::from_str(SPL_ASSOCIATED_TOKEN_PROGRAM_ID)
+            .map_err(|e| AmosError::Internal(format!("Invalid ATA program ID: {}", e)))?;
+
+        // ── Pre-flight: ensure operator & reviewer ATAs exist ────────
+        // Uses create_associated_token_account_idempotent (instruction byte 1)
+        // so it's safe to call even if the ATA already exists.
+        for (wallet, ata, label) in [
+            (&operator, &operator_ata, "operator"),
+            (&reviewer, &reviewer_ata, "reviewer"),
+        ] {
+            let rpc_ata = self.rpc.clone();
+            let ata_copy = *ata;
+            let needs_create =
+                tokio::task::spawn_blocking(move || match rpc_ata.get_account(&ata_copy) {
+                    Ok(acct) => Ok(acct.data.is_empty()),
+                    Err(e) => {
+                        let err_str = e.to_string();
+                        if err_str.contains("AccountNotFound")
+                            || err_str.contains("could not find account")
+                        {
+                            Ok(true)
+                        } else {
+                            Err(AmosError::SolanaRpc(format!(
+                                "Failed to check {} ATA: {}",
+                                "wallet", e
+                            )))
+                        }
+                    }
+                })
+                .await
+                .map_err(|e| AmosError::Internal(format!("Tokio join error: {}", e)))??;
+
+            if needs_create {
+                info!(
+                    wallet = %wallet,
+                    ata = %ata,
+                    label,
+                    "Creating associated token account"
+                );
+
+                let create_ata_ix = Instruction {
+                    program_id: ata_program,
+                    accounts: vec![
+                        AccountMeta::new(oracle.pubkey(), true), // payer
+                        AccountMeta::new(*ata, false),
+                        AccountMeta::new_readonly(*wallet, false),
+                        AccountMeta::new_readonly(mint, false),
+                        AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
+                        AccountMeta::new_readonly(token_program, false),
+                    ],
+                    data: vec![1], // 1 = create_idempotent
+                };
+
+                let rpc_create = self.rpc.clone();
+                let oracle_bytes_ata = oracle.to_bytes();
+                tokio::task::spawn_blocking(move || {
+                    let oracle_kp =
+                        Keypair::try_from(oracle_bytes_ata.as_slice()).map_err(|e| {
+                            AmosError::Internal(format!("Keypair reconstruction: {}", e))
+                        })?;
+                    send_with_retry(&rpc_create, &[create_ata_ix], &oracle_kp, &[&oracle_kp], 2)
+                })
+                .await
+                .map_err(|e| AmosError::Internal(format!("Tokio join error: {}", e)))??;
+
+                info!(ata = %ata, label, "ATA created successfully");
+            }
+        }
 
         // ── Instruction 1: prepare_bounty_submission ──────────────────
         // Creates daily_pool and operator_stats if they don't exist (idempotent)
