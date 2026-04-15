@@ -117,6 +117,40 @@ async fn register_agent(
         return Err(StatusCode::BAD_REQUEST);
     }
 
+    // Input length validation
+    if req.name.len() > 255 {
+        warn!("Agent name too long: {} chars", req.name.len());
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if req.display_name.len() > 255 {
+        warn!(
+            "Agent display_name too long: {} chars",
+            req.display_name.len()
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if req.endpoint_url.len() > 500 {
+        warn!(
+            "Agent endpoint_url too long: {} chars",
+            req.endpoint_url.len()
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if req.capabilities.len() > 20 {
+        warn!("Too many agent capabilities: {}", req.capabilities.len());
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if req.capabilities.iter().any(|c| c.len() > 100) {
+        warn!("Agent capability string too long");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if let Some(ref desc) = req.description {
+        if desc.len() > 5000 {
+            warn!("Agent description too long: {} chars", desc.len());
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
+
     let agent_id = Uuid::new_v4();
     let now = Utc::now();
     let caps_json = serde_json::to_value(&req.capabilities).unwrap_or_default();

@@ -42,6 +42,14 @@ pub struct CreateBountyRequest {
     pub poster_wallet: String,
 }
 
+/// Max lengths for input validation (prevents oversized payloads hitting the DB)
+const MAX_TITLE_LEN: usize = 500;
+const MAX_DESCRIPTION_LEN: usize = 50_000;
+const MAX_CAPABILITY_LEN: usize = 100;
+const MAX_CAPABILITIES_COUNT: usize = 20;
+const MAX_REJECTION_REASON_LEN: usize = 5_000;
+const MAX_RESULT_JSON_LEN: usize = 1_000_000; // 1MB
+
 #[derive(Debug, Deserialize)]
 pub struct ListBountiesQuery {
     pub status: Option<BountyStatus>,
@@ -162,6 +170,35 @@ async fn create_bounty(
     State(state): State<RelayState>,
     Json(req): Json<CreateBountyRequest>,
 ) -> Result<(StatusCode, Json<BountyResponse>), StatusCode> {
+    // Input validation
+    if req.title.len() > MAX_TITLE_LEN {
+        warn!("Bounty title too long: {} chars", req.title.len());
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if req.description.len() > MAX_DESCRIPTION_LEN {
+        warn!(
+            "Bounty description too long: {} chars",
+            req.description.len()
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if req.required_capabilities.len() > MAX_CAPABILITIES_COUNT {
+        warn!("Too many capabilities: {}", req.required_capabilities.len());
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if req
+        .required_capabilities
+        .iter()
+        .any(|c| c.len() > MAX_CAPABILITY_LEN)
+    {
+        warn!("Capability string too long");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if !crate::validate_wallet_address(&req.poster_wallet) {
+        warn!("Invalid poster wallet address: {}", req.poster_wallet);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let bounty_id = Uuid::new_v4();
     let now = Utc::now();
 
@@ -317,6 +354,23 @@ async fn submit_work(
     if let Some(ref addr) = req.wallet_address {
         if !crate::validate_wallet_address(addr) {
             warn!("Invalid wallet address in submission: {}", addr);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
+
+    // Validate result JSON size
+    let result_str = req.result.to_string();
+    if result_str.len() > MAX_RESULT_JSON_LEN {
+        warn!("Submit result JSON too large: {} bytes", result_str.len());
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if let Some(ref evidence) = req.quality_evidence {
+        let evidence_str = evidence.to_string();
+        if evidence_str.len() > MAX_RESULT_JSON_LEN {
+            warn!(
+                "Quality evidence JSON too large: {} bytes",
+                evidence_str.len()
+            );
             return Err(StatusCode::BAD_REQUEST);
         }
     }
@@ -571,6 +625,15 @@ async fn reject_submission(
     Path(id): Path<Uuid>,
     Json(req): Json<RejectSubmissionRequest>,
 ) -> Result<Json<BountyResponse>, StatusCode> {
+    if req.reason.len() > MAX_REJECTION_REASON_LEN {
+        warn!("Rejection reason too long: {} chars", req.reason.len());
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if !crate::validate_wallet_address(&req.reviewer_wallet) {
+        warn!("Invalid reviewer wallet in rejection");
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let now = Utc::now();
 
     let row = sqlx::query(

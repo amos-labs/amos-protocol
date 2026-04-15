@@ -281,18 +281,20 @@ impl SchemaEngine {
 
         let total: i64 = count_row.get("total");
 
-        // Build ORDER BY — support created_at, updated_at, or any JSONB field
+        // Build ORDER BY — support created_at, updated_at, or validated JSONB field names.
+        // Allowlist: only ASCII alphanumeric + underscore, max 64 chars.
         let order_expr = match sort_by {
             Some("updated_at") => "r.updated_at".to_string(),
             Some("created_at") | None => "r.created_at".to_string(),
-            Some(field_name) => {
-                // Sanitize: only allow alphanumeric + underscore
-                if field_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    format!("r.data->>'{}'", field_name)
-                } else {
-                    "r.created_at".to_string()
-                }
+            Some(field_name)
+                if field_name.len() <= 64
+                    && field_name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_') =>
+            {
+                format!("r.data->>'{}'", field_name)
             }
+            Some(_) => "r.created_at".to_string(),
         };
 
         let dir = match sort_dir {

@@ -341,6 +341,29 @@ impl Tool for BashTool {
             ));
         }
 
+        // Block shell metacharacter tricks that could bypass pattern-based detection.
+        // These block piping commands into a new shell or using eval to construct commands.
+        const SHELL_BYPASS_PATTERNS: &[&str] = &[
+            "| bash", // pipe into bash
+            "| sh",   // pipe into sh
+            "|bash",  // no-space variant
+            "|sh",    // no-space variant
+            "| /bin/sh",
+            "| /bin/bash",
+            "eval ", // eval executes constructed strings
+            "`",     // backtick subshell (command substitution that hides intent)
+            "| zsh",
+            "|zsh",
+        ];
+        for pattern in SHELL_BYPASS_PATTERNS {
+            if cmd_lower.contains(pattern) {
+                return Ok(ToolResult::error(format!(
+                    "Blocked: Shell bypass pattern '{}' is not allowed for security reasons",
+                    pattern.trim()
+                )));
+            }
+        }
+
         // ── Destructive command confirmation gate ────────────────────────
         // If the command looks destructive, check for a confirmation token.
         // If confirmed, verify the token matches a pending entry and proceed.

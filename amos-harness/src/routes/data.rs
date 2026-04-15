@@ -227,16 +227,20 @@ async fn search_records(
 
     let total: i64 = count_row.get("total");
 
+    // Allowlist approach: only permit known column names or validated JSONB field names.
+    // Field names are restricted to [a-zA-Z0-9_] and max 64 chars to prevent injection.
     let order_expr = match sort_by {
         Some("updated_at") => "r.updated_at".to_string(),
         Some("created_at") | None => "r.created_at".to_string(),
-        Some(field_name) => {
-            if field_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                format!("r.data->>'{}'", field_name)
-            } else {
-                "r.created_at".to_string()
-            }
+        Some(field_name)
+            if field_name.len() <= 64
+                && field_name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_') =>
+        {
+            format!("r.data->>'{}'", field_name)
         }
+        Some(_) => "r.created_at".to_string(),
     };
 
     let dir = match sort_dir {
