@@ -17,7 +17,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
+use solana_sdk::pubkey::Pubkey;
 use sqlx::Row;
+use std::str::FromStr;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -366,6 +368,59 @@ async fn create_bounty(
         "Created bounty {} with reward {}",
         bounty_id, req.reward_tokens
     );
+
+    // Post bounty listing on-chain (non-blocking — on-chain is supplementary)
+    if let Some(ref solana) = state.solana {
+        let solana = solana.clone();
+        let db = state.db.clone();
+        let bid = bounty_id;
+        let reward = req.reward_tokens;
+        let deadline_ts = req.deadline.timestamp();
+        // Map relay category → on-chain contribution_type
+        let contribution_type: u8 = match category {
+            "infrastructure" => 7,
+            "growth" => 8,
+            "research" => 3,
+            "content" => 9,
+            _ => 1, // default: feature
+        };
+        tokio::spawn(async move {
+            let bounty_id_hash = {
+                let mut hasher = Sha256::new();
+                hasher.update(bid.to_string().as_bytes());
+                let result = hasher.finalize();
+                let mut out = [0u8; 32];
+                out.copy_from_slice(&result);
+                out
+            };
+            match solana
+                .post_bounty_on_chain(
+                    &bounty_id_hash,
+                    0, // bounty_source: 0 = Treasury (system bounty)
+                    reward,
+                    contribution_type,
+                    1,  // required_trust_level: Newcomer
+                    72, // claim_timeout_hours: 3 days
+                    deadline_ts,
+                )
+                .await
+            {
+                Ok(tx_sig) => {
+                    info!(bounty_id = %bid, tx = %tx_sig, "Bounty posted on-chain");
+                    let _ = sqlx::query(
+                        "UPDATE relay_bounties SET onchain_listing_tx = $1 WHERE id = $2",
+                    )
+                    .bind(&tx_sig)
+                    .bind(bid)
+                    .execute(&db)
+                    .await;
+                }
+                Err(e) => {
+                    warn!(bounty_id = %bid, error = %e, "Failed to post bounty on-chain (non-critical)");
+                }
+            }
+        });
+    }
 
     Ok((StatusCode::CREATED, Json(bounty)))
 }
@@ -818,22 +873,11 @@ async fn approve_submission(
             };
 
             if let Some(wallet) = agent_wallet {
-                // Hash the bounty ID and agent ID for on-chain records
+                // Use wallet pubkey bytes as agent_id (portable across relays)
                 let bounty_id_str = id.to_string();
-                let agent_id_bytes = {
-                    let mut hasher = Sha256::new();
-                    hasher.update(
-                        bounty
-                            .claimed_by_agent_id
-                            .map(|a| a.to_string())
-                            .unwrap_or_default()
-                            .as_bytes(),
-                    );
-                    let result = hasher.finalize();
-                    let mut out = [0u8; 32];
-                    out.copy_from_slice(&result);
-                    out
-                };
+                let agent_id_bytes: [u8; 32] = Pubkey::from_str(&wallet)
+                    .map(|pk| pk.to_bytes())
+                    .unwrap_or([0u8; 32]);
                 let evidence_hash = {
                     let mut hasher = Sha256::new();
                     hasher.update(

@@ -9,7 +9,9 @@ use crate::{
     state::RelayState,
 };
 use sha2::{Digest, Sha256};
+use solana_sdk::pubkey::Pubkey;
 use sqlx::Row;
+use std::str::FromStr;
 use std::time::Duration;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -106,21 +108,11 @@ async fn retry_failed_settlements(state: &RelayState) -> Result<(), String> {
             }
         };
 
-        // Build settlement params
+        // Build settlement params — use wallet pubkey bytes as agent_id (portable across relays)
         let bounty_id_str = id.to_string();
-        let agent_id_bytes = {
-            let mut hasher = Sha256::new();
-            hasher.update(
-                claimed_by_agent_id
-                    .map(|a| a.to_string())
-                    .unwrap_or_default()
-                    .as_bytes(),
-            );
-            let result = hasher.finalize();
-            let mut out = [0u8; 32];
-            out.copy_from_slice(&result);
-            out
-        };
+        let agent_id_bytes: [u8; 32] = Pubkey::from_str(&wallet)
+            .map(|pk| pk.to_bytes())
+            .unwrap_or([0u8; 32]);
 
         let result_json: Option<serde_json::Value> = row.get("result");
         let evidence_hash = {

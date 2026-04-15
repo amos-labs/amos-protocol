@@ -29,6 +29,7 @@ const DAILY_POOL_SEED: &[u8] = b"daily_pool";
 const BOUNTY_PROOF_SEED: &[u8] = b"bounty_proof";
 const OPERATOR_STATS_SEED: &[u8] = b"operator_stats";
 const AGENT_TRUST_SEED: &[u8] = b"agent_trust";
+const BOUNTY_LISTING_SEED: &[u8] = b"bounty_listing";
 
 // ── Dynamic payout constants ─────────────────────────────────────────
 /// Virtual points added to the denominator so no single submission can drain the pool.
@@ -663,6 +664,125 @@ impl SolanaClient {
         );
         Ok(format!("pending_burn_{}", amount))
     }
+
+    // ── On-Chain Bounty Posting ────────────────────────────────────────
+
+    /// Post a bounty listing on-chain via `post_bounty_listing`.
+    ///
+    /// Creates an immutable `BountyListing` PDA that any relay can read.
+    /// The oracle signs as the poster for system/treasury bounties.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn post_bounty_on_chain(
+        &self,
+        bounty_id_hash: &[u8; 32],
+        bounty_source: u8,
+        reward_amount: u64,
+        contribution_type: u8,
+        required_trust_level: u8,
+        claim_timeout_hours: u64,
+        deadline: i64,
+    ) -> Result<String> {
+        let oracle = self.oracle_keypair.as_ref().ok_or_else(|| {
+            AmosError::Internal(
+                "Oracle keypair not configured — cannot post bounty on-chain".into(),
+            )
+        })?;
+
+        let program_id = self.bounty_program_id;
+        let oracle_pubkey = oracle.pubkey();
+
+        // Derive PDAs
+        let (config_pda, _) = Pubkey::find_program_address(&[BOUNTY_CONFIG_SEED], &program_id);
+        let (listing_pda, _) =
+            Pubkey::find_program_address(&[BOUNTY_LISTING_SEED, bounty_id_hash], &program_id);
+
+        let data = build_post_bounty_listing_data(
+            bounty_id_hash,
+            bounty_source,
+            reward_amount,
+            contribution_type,
+            required_trust_level,
+            claim_timeout_hours,
+            deadline,
+        );
+
+        let ix = Instruction {
+            program_id,
+            accounts: vec![
+                AccountMeta::new_readonly(config_pda, false),
+                AccountMeta::new(listing_pda, false),
+                AccountMeta::new(oracle_pubkey, true), // poster = oracle (signer)
+                AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
+            ],
+            data,
+        };
+
+        let rpc = self.rpc.clone();
+        let oracle_bytes: Vec<u8> = oracle.to_bytes().to_vec();
+
+        let tx_sig = tokio::task::spawn_blocking(move || {
+            let oracle_kp = Keypair::try_from(oracle_bytes.as_slice()).map_err(|e| {
+                AmosError::Internal(format!("Failed to reconstruct keypair: {}", e))
+            })?;
+            send_with_retry(&rpc, &[ix], &oracle_kp, &[&oracle_kp], 2)
+        })
+        .await
+        .map_err(|e| AmosError::Internal(format!("Tokio join error: {}", e)))??;
+
+        info!(tx = %tx_sig, "Bounty listing posted on-chain");
+        Ok(tx_sig)
+    }
+
+    // ── On-Chain Agent Registration ────────────────────────────────────
+
+    /// Register an agent's trust record on-chain via `register_agent_trust`.
+    ///
+    /// Uses the wallet pubkey bytes as `agent_id` so the PDA is deterministically
+    /// derivable from the wallet address alone (portable across relays).
+    pub async fn register_agent_on_chain(&self, wallet_address: &str) -> Result<String> {
+        let oracle = self.oracle_keypair.as_ref().ok_or_else(|| {
+            AmosError::Internal(
+                "Oracle keypair not configured — cannot register agent on-chain".into(),
+            )
+        })?;
+
+        let wallet_pubkey = Pubkey::from_str(wallet_address)
+            .map_err(|e| AmosError::Internal(format!("Invalid wallet address: {}", e)))?;
+        let agent_id = wallet_pubkey.to_bytes();
+
+        let program_id = self.bounty_program_id;
+        let oracle_pubkey = oracle.pubkey();
+
+        let (trust_pda, _) =
+            Pubkey::find_program_address(&[AGENT_TRUST_SEED, &agent_id], &program_id);
+
+        let data = build_register_agent_trust_data(&agent_id);
+
+        let ix = Instruction {
+            program_id,
+            accounts: vec![
+                AccountMeta::new(trust_pda, false),
+                AccountMeta::new(oracle_pubkey, true), // operator = oracle (signer)
+                AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
+            ],
+            data,
+        };
+
+        let rpc = self.rpc.clone();
+        let oracle_bytes: Vec<u8> = oracle.to_bytes().to_vec();
+
+        let tx_sig = tokio::task::spawn_blocking(move || {
+            let oracle_kp = Keypair::try_from(oracle_bytes.as_slice()).map_err(|e| {
+                AmosError::Internal(format!("Failed to reconstruct keypair: {}", e))
+            })?;
+            send_with_retry(&rpc, &[ix], &oracle_kp, &[&oracle_kp], 2)
+        })
+        .await
+        .map_err(|e| AmosError::Internal(format!("Tokio join error: {}", e)))??;
+
+        info!(wallet = %wallet_address, tx = %tx_sig, "Agent trust registered on-chain");
+        Ok(tx_sig)
+    }
 }
 
 /// Send a transaction with retry and exponential backoff.
@@ -753,6 +873,33 @@ fn build_register_agent_trust_data(agent_id: &[u8; 32]) -> Vec<u8> {
     let mut data = Vec::with_capacity(8 + 32);
     data.extend_from_slice(&disc);
     data.extend_from_slice(agent_id);
+    data
+}
+
+/// Build the instruction data for `post_bounty_listing`.
+/// Layout: 8-byte discriminator + bounty_id (32) + bounty_source (1) + reward_amount (8)
+///       + contribution_type (1) + required_trust_level (1) + claim_timeout_hours (8) + deadline (8)
+///       = 67 bytes total.
+#[allow(clippy::too_many_arguments)]
+fn build_post_bounty_listing_data(
+    bounty_id: &[u8; 32],
+    bounty_source: u8,
+    reward_amount: u64,
+    contribution_type: u8,
+    required_trust_level: u8,
+    claim_timeout_hours: u64,
+    deadline: i64,
+) -> Vec<u8> {
+    let disc = anchor_discriminator("post_bounty_listing");
+    let mut data = Vec::with_capacity(8 + 32 + 1 + 8 + 1 + 1 + 8 + 8);
+    data.extend_from_slice(&disc);
+    data.extend_from_slice(bounty_id);
+    data.push(bounty_source);
+    data.extend_from_slice(&reward_amount.to_le_bytes());
+    data.push(contribution_type);
+    data.push(required_trust_level);
+    data.extend_from_slice(&claim_timeout_hours.to_le_bytes());
+    data.extend_from_slice(&deadline.to_le_bytes());
     data
 }
 
@@ -1290,6 +1437,54 @@ mod tests {
         // Discriminator should match anchor naming
         let expected_disc = anchor_discriminator("register_agent_trust");
         assert_eq!(&data[0..8], &expected_disc);
+    }
+
+    // ── Bounty listing instruction data ──────────────────────────────────
+
+    #[test]
+    fn test_post_bounty_listing_data_length() {
+        let bounty_id = [1u8; 32];
+        let data = build_post_bounty_listing_data(&bounty_id, 0, 500, 7, 1, 72, 1713200000);
+        // 8 (disc) + 32 (bounty_id) + 1 (source) + 8 (reward) + 1 (type) + 1 (trust) + 8 (timeout) + 8 (deadline) = 67
+        assert_eq!(data.len(), 67);
+    }
+
+    #[test]
+    fn test_post_bounty_listing_data_discriminator() {
+        let bounty_id = [0u8; 32];
+        let data = build_post_bounty_listing_data(&bounty_id, 0, 0, 0, 0, 0, 0);
+        let expected_disc = anchor_discriminator("post_bounty_listing");
+        assert_eq!(&data[..8], &expected_disc);
+    }
+
+    #[test]
+    fn test_post_bounty_listing_data_encodes_fields() {
+        let bounty_id = [42u8; 32];
+        let data = build_post_bounty_listing_data(&bounty_id, 1, 500, 7, 3, 72, 1713200000);
+
+        // bounty_id at offset 8..40
+        assert_eq!(&data[8..40], &bounty_id);
+        // bounty_source at offset 40
+        assert_eq!(data[40], 1);
+        // reward_amount at offset 41..49 (u64 LE)
+        assert_eq!(&data[41..49], &500u64.to_le_bytes());
+        // contribution_type at offset 49
+        assert_eq!(data[49], 7);
+        // required_trust_level at offset 50
+        assert_eq!(data[50], 3);
+        // claim_timeout_hours at offset 51..59 (u64 LE)
+        assert_eq!(&data[51..59], &72u64.to_le_bytes());
+        // deadline at offset 59..67 (i64 LE)
+        assert_eq!(&data[59..67], &1713200000i64.to_le_bytes());
+    }
+
+    #[test]
+    fn test_post_bounty_listing_data_different_inputs() {
+        let id1 = [1u8; 32];
+        let id2 = [2u8; 32];
+        let data1 = build_post_bounty_listing_data(&id1, 0, 100, 1, 1, 24, 1000);
+        let data2 = build_post_bounty_listing_data(&id2, 1, 200, 3, 5, 48, 2000);
+        assert_ne!(data1, data2);
     }
 
     // ── Burn fees ──────────────────────────────────────────────────────

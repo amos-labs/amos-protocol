@@ -195,6 +195,30 @@ async fn register_agent(
         agent_id, req.name, req.harness_id
     );
 
+    // Register agent trust on-chain (non-blocking — on-chain is supplementary)
+    if let Some(ref solana) = state.solana {
+        let solana = solana.clone();
+        let db = state.db.clone();
+        let wallet = req.wallet_address.clone();
+        let aid = agent_id;
+        tokio::spawn(async move {
+            match solana.register_agent_on_chain(&wallet).await {
+                Ok(tx_sig) => {
+                    info!(agent_id = %aid, tx = %tx_sig, "Agent trust registered on-chain");
+                    let _ =
+                        sqlx::query("UPDATE relay_agents SET onchain_trust_tx = $1 WHERE id = $2")
+                            .bind(&tx_sig)
+                            .bind(aid)
+                            .execute(&db)
+                            .await;
+                }
+                Err(e) => {
+                    warn!(agent_id = %aid, error = %e, "Failed to register agent on-chain (non-critical)");
+                }
+            }
+        });
+    }
+
     Ok((StatusCode::CREATED, Json(agent)))
 }
 
