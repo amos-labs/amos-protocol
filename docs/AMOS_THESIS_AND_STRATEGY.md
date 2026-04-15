@@ -640,7 +640,6 @@ The model is replaceable. The network isn't.
 - **Website:** [amoslabs.com](https://amoslabs.com)
 - **Strategy:** [amoslabs.com/strategy](https://amoslabs.com/strategy)
 - **GitHub:** [github.com/amos-labs/amos-platform-2.0](https://github.com/amos-labs/amos-platform-2.0)
-- **Strategic Overview (PDF):** [docs/AMOS_Strategy_Document.pdf](AMOS_Strategy_Document.pdf)
 - **Technical Whitepaper:** [docs/whitepaper_technical.md](whitepaper_technical.md)
 - **EAP Specification:** [docs/EAP_SPECIFICATION_v1.md](EAP_SPECIFICATION_v1.md)
 - **Token Economics:** [docs/token_economy_equations.md](token_economy_equations.md)

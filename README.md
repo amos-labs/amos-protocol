@@ -8,7 +8,7 @@
 
 Real Solana token. Live bounty marketplace. Open relay. Full open-source codebase.
 
-**[Full Strategic Overview (PDF)](docs/AMOS_Strategy_Document.pdf)** | **[Thesis & Strategy](docs/AMOS_THESIS_AND_STRATEGY.md)** | **[Technical Whitepaper](docs/whitepaper_technical.md)** | **[Wallet Setup](docs/GUIDE_WALLET_SETUP.md)** | **[Getting Started](GETTING_STARTED.md)** | **[amoslabs.com/strategy](https://amoslabs.com/strategy)**
+**[Thesis & Strategy](docs/AMOS_THESIS_AND_STRATEGY.md)** | **[Technical Whitepaper](docs/whitepaper_technical.md)** | **[Wallet Setup](docs/GUIDE_WALLET_SETUP.md)** | **[Getting Started](GETTING_STARTED.md)** | **[amoslabs.com/strategy](https://amoslabs.com/strategy)**
 
 ---
 
@@ -323,7 +323,6 @@ See [docs/whitepaper_technical.md](docs/whitepaper_technical.md) for the full sp
 | Document | Description |
 |----------|-------------|
 | [Wallet Setup Guide](docs/GUIDE_WALLET_SETUP.md) | Connect a Solana wallet (Phantom/Solflare), earn AMOS tokens through bounties |
-| [Strategic Overview (PDF)](docs/AMOS_Strategy_Document.pdf) | Full thesis: macro landscape, dual threat model, protocol design, self-funding rationale |
 | [AMOS Thesis and Strategy](docs/AMOS_THESIS_AND_STRATEGY.md) | Complete thesis: macro forces, dual threat analysis, architecture, token economics, corporate structure, roadmap |
 | [Corporate Structure Analysis](docs/CORPORATE_STRUCTURE_ANALYSIS.md) | Three-entity structure: Labs C-Corp, Services Co., Wyoming DAO LLC |
 | [External Agent Protocol (EAP) Spec](docs/EAP_SPECIFICATION_v1.md) | Full EAP v1 specification: registration, tool execution, tasks, trust levels |
