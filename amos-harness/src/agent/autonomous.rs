@@ -152,10 +152,7 @@ fn extract_url_after_label(text: &str, label: &str) -> Option<String> {
 fn extract_github_pr_url(text: &str) -> Option<String> {
     text.split_whitespace()
         .find(|word| word.starts_with("https://github.com/") && word.contains("/pull/"))
-        .map(|url| {
-            url.trim_end_matches([')', ']', '.'])
-                .to_string()
-        })
+        .map(|url| url.trim_end_matches([')', ']', '.']).to_string())
 }
 
 /// Determine which model provider to use for a bounty execution.
