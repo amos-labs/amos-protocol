@@ -114,10 +114,9 @@ impl SolanaClient {
                 .map_err(|e| AmosError::Internal(format!("Invalid keypair bytes: {}", e)))?,
         );
 
-        info!(
-            oracle = %self.oracle_keypair.as_ref().unwrap().pubkey(),
-            "Oracle keypair loaded"
-        );
+        if let Some(ref kp) = self.oracle_keypair {
+            info!(oracle = %kp.pubkey(), "Oracle keypair loaded");
+        }
         Ok(())
     }
 
@@ -206,7 +205,11 @@ impl SolanaClient {
             if data.len() < 8 + 32 + 32 + 32 + 8 {
                 return Err(AmosError::Internal("Config account too small".into()));
             }
-            let ts = i64::from_le_bytes(data[104..112].try_into().unwrap());
+            let ts = i64::from_le_bytes(
+                data[104..112]
+                    .try_into()
+                    .map_err(|_| AmosError::Internal("Config account data slice conversion failed".into()))?,
+            );
             Ok::<i64, AmosError>(ts)
         })
         .await
@@ -237,7 +240,8 @@ impl SolanaClient {
         let operator_ata = derive_associated_token_account(&operator, &mint);
         let reviewer_ata = derive_associated_token_account(&reviewer, &mint);
 
-        let token_program = Pubkey::from_str(SPL_TOKEN_PROGRAM_ID).unwrap();
+        let token_program = Pubkey::from_str(SPL_TOKEN_PROGRAM_ID)
+            .map_err(|e| AmosError::Internal(format!("Invalid SPL token program ID: {}", e)))?;
 
         // ── Instruction 1: prepare_bounty_submission ──────────────────
         // Creates daily_pool and operator_stats if they don't exist (idempotent)
@@ -470,8 +474,11 @@ fn hash_to_32_bytes(input: &str) -> [u8; 32] {
 
 /// Derive an Associated Token Account (ATA) address.
 fn derive_associated_token_account(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
-    let ata_program = Pubkey::from_str(SPL_ASSOCIATED_TOKEN_PROGRAM_ID).unwrap();
-    let token_program = Pubkey::from_str(SPL_TOKEN_PROGRAM_ID).unwrap();
+    // These are well-known constant program IDs — parsing cannot fail.
+    let ata_program = Pubkey::from_str(SPL_ASSOCIATED_TOKEN_PROGRAM_ID)
+        .expect("constant SPL ATA program ID");
+    let token_program = Pubkey::from_str(SPL_TOKEN_PROGRAM_ID)
+        .expect("constant SPL token program ID");
 
     let (ata, _) = Pubkey::find_program_address(
         &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
