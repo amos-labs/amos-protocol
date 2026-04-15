@@ -234,6 +234,66 @@ impl SolanaClient {
             program_id // signals "None" to Anchor optional account
         };
 
+        // ── Pre-flight: ensure agent_trust PDA is initialized on-chain ──
+        if params.is_agent {
+            let rpc_check = self.rpc.clone();
+            let agent_trust_pda = agent_trust_account;
+            let account_exists = tokio::task::spawn_blocking(move || {
+                match rpc_check.get_account(&agent_trust_pda) {
+                    Ok(acct) => Ok(!acct.data.is_empty()),
+                    Err(e) => {
+                        let err_str = e.to_string();
+                        if err_str.contains("AccountNotFound")
+                            || err_str.contains("could not find account")
+                        {
+                            Ok(false)
+                        } else {
+                            Err(AmosError::SolanaRpc(format!(
+                                "Failed to check agent_trust account: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+            })
+            .await
+            .map_err(|e| AmosError::Internal(format!("Tokio join error: {}", e)))??;
+
+            if !account_exists {
+                info!(
+                    agent_id = ?params.agent_id,
+                    pda = %agent_trust_account,
+                    "Agent trust PDA not initialized — registering on-chain"
+                );
+
+                let register_data = build_register_agent_trust_data(&params.agent_id);
+                let register_accounts = vec![
+                    AccountMeta::new(agent_trust_account, false),
+                    AccountMeta::new(oracle.pubkey(), true), // operator (payer + signer)
+                    AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
+                ];
+                let register_ix = Instruction {
+                    program_id,
+                    accounts: register_accounts,
+                    data: register_data,
+                };
+
+                let rpc_reg = self.rpc.clone();
+                let oracle_bytes_reg = oracle.to_bytes();
+                tokio::task::spawn_blocking(move || {
+                    let oracle_kp =
+                        Keypair::try_from(oracle_bytes_reg.as_slice()).map_err(|e| {
+                            AmosError::Internal(format!("Keypair reconstruction: {}", e))
+                        })?;
+                    send_with_retry(&rpc_reg, &[register_ix], &oracle_kp, &[&oracle_kp], 2)
+                })
+                .await
+                .map_err(|e| AmosError::Internal(format!("Tokio join error: {}", e)))??;
+
+                info!(pda = %agent_trust_account, "Agent trust PDA registered successfully");
+            }
+        }
+
         // Derive associated token accounts for operator and reviewer
         let operator_ata = derive_associated_token_account(&operator, &mint);
         let reviewer_ata = derive_associated_token_account(&reviewer, &mint);
@@ -394,6 +454,8 @@ fn send_with_retry(
                 if err_str.contains("insufficient funds")
                     || err_str.contains("already processed")
                     || err_str.contains("AccountNotFound")
+                    || err_str.contains("AccountNotInitialized")
+                    || err_str.contains("already in use")
                 {
                     return Err(AmosError::SolanaRpc(format!(
                         "Transaction failed (non-retryable): {}",
@@ -419,6 +481,16 @@ fn anchor_discriminator(name: &str) -> [u8; 8] {
     let mut disc = [0u8; 8];
     disc.copy_from_slice(&hash[..8]);
     disc
+}
+
+/// Build the instruction data for `register_agent_trust`.
+/// Layout: 8-byte discriminator + agent_id ([u8; 32]).
+fn build_register_agent_trust_data(agent_id: &[u8; 32]) -> Vec<u8> {
+    let disc = anchor_discriminator("register_agent_trust");
+    let mut data = Vec::with_capacity(8 + 32);
+    data.extend_from_slice(&disc);
+    data.extend_from_slice(agent_id);
+    data
 }
 
 /// Build the instruction data for `prepare_bounty_submission`.
@@ -905,6 +977,18 @@ mod tests {
         let (trust2, _) =
             Pubkey::find_program_address(&[AGENT_TRUST_SEED, &agent_id_2], &program_id);
         assert_ne!(trust1, trust2);
+    }
+
+    #[test]
+    fn test_register_agent_trust_data_layout() {
+        let agent_id = [42u8; 32];
+        let data = build_register_agent_trust_data(&agent_id);
+        // 8-byte discriminator + 32-byte agent_id
+        assert_eq!(data.len(), 40);
+        assert_eq!(&data[8..40], &agent_id);
+        // Discriminator should match anchor naming
+        let expected_disc = anchor_discriminator("register_agent_trust");
+        assert_eq!(&data[0..8], &expected_disc);
     }
 
     // ── Burn fees ──────────────────────────────────────────────────────
