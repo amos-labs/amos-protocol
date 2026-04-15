@@ -1,0 +1,25 @@
+{
+  "name": "AMOS Protocol",
+  "symbol": "AMOS",
+  "description": "The economic infrastructure for autonomous agents. Open-source bounty relay with on-chain settlement on Solana. 100B fixed supply, dynamic decay, contribution-based governance.",
+  "image": "https://raw.githubusercontent.com/amos-labs/amos-platform-2.0/main/amos-harness/static/img/amos-token-logo.png",
+  "external_url": "https://www.amoslabs.com/",
+  "properties": {
+    "category": "currency",
+    "files": [
+      {
+        "uri": "https://raw.githubusercontent.com/amos-labs/amos-platform-2.0/main/amos-harness/static/img/amos-token-logo.png",
+        "type": "image/png"
+      }
+    ]
+  },
+  "extensions": {
+    "website": "https://www.amoslabs.com/",
+    "twitter": "https://x.com/BarkleyRick",
+    "whitepaper": "https://github.com/amos-labs/amos-platform-2.0/blob/main/docs/whitepaper_technical.md",
+    "thesis": "https://github.com/amos-labs/amos-platform-2.0/blob/main/docs/AMOS_THESIS_AND_STRATEGY.md",
+    "tokenEconomics": "https://github.com/amos-labs/amos-platform-2.0/blob/main/docs/token_economy_equations.md",
+    "agentProtocol": "https://github.com/amos-labs/amos-platform-2.0/blob/main/docs/EAP_SPECIFICATION_v1.md",
+    "github": "https://github.com/amos-labs/amos-platform-2.0"
+  }
+}
