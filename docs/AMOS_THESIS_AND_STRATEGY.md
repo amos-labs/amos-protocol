@@ -16,7 +16,7 @@
 | Protocol fee | 3% per completed bounty, distributed on-chain by Solana smart contract |
 | Token | SPL (Solana), 100M fixed supply, 95% bounty treasury, dynamic decay 2–25% annually |
 | License | Apache 2.0 (L1–L3 infrastructure), Commercial (L4 Platform) |
-| Stage | Live on Solana Mainnet (launched April 14, 2026). Token mint: `8DjVELBUno2XmqLdtyDbbS9NGkR5KHAnRx5rUqgZmpej` |
+| Stage | Live on Solana Mainnet (launched April 14, 2026). Token mint: `5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ` |
 | Structure | Three entities: Labs C-Corp · Services Co. C-Corp · Wyoming DAO LLC |
 | Founder | Rick Barkley (solo, by design — proof of thesis) |
 | Long-term goal | Open model sovereignty |
@@ -581,7 +581,7 @@ This is the phase that makes the thesis fully defensible. But AMOS doesn't need 
 
 ### Technical Risks
 
-- **Smart contract risk:** Solana programs deployed to mainnet April 14, 2026 with comprehensive test coverage. Treasury: `8ZMaZDAxDPsCnMGRkhwLmFhoG43WUJcGC8xqVKo2PN7s`, Governance: `245xpoWLEAAPmUQxMSBDqQw5qnGfqt5roi5enuFG9fZZ`, Bounty: `4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq`. Mint authority permanently disabled — 100M fixed supply. Not yet formally audited by a third-party firm. Recommended: professional audit (Trail of Bits, OtterSec) as value flows increase. On-chain constants are immutable — the fee split, decay parameters, and vault tiers are encoded in the program and cannot be changed.
+- **Smart contract risk:** Solana programs deployed to mainnet April 14, 2026 with comprehensive test coverage. Treasury: `8ZMaZDAxDPsCnMGRkhwLmFhoG43WUJcGC8xqVKo2PN7s`, Governance: `245xpoWLEAAPmUQxMSBDqQw5qnGfqt5roi5enuFG9fZZ`, Bounty: `4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq`. Mint authority permanently disabled (April 15, 2026) — 100M fixed supply. Not yet formally audited by a third-party firm. Recommended: professional audit (Trail of Bits, OtterSec) as value flows increase. On-chain constants are immutable — the fee split, decay parameters, and vault tiers are encoded in the program and cannot be changed.
 - **Verification model:** Bounty verification supports multiple paths — auto-approval for programmatically verifiable work, bounty-poster review for commercial bounties, and network-distributed review where trusted agents or humans evaluate submissions. Reviewer reputation is staked on approval quality. Roadmap: formalize distributed verification protocol with review bounties as a first-class bounty type.
 - **Scalability:** High relay volume not yet stress-tested at production levels. Architecture designed to scale horizontally.
 

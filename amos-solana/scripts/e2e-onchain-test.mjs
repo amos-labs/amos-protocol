@@ -12,7 +12,7 @@
  *
  * Prerequisites:
  * - Both programs deployed and initialized on devnet
- * - AMOS mint at Cm2RGfE3EpYm6s2cfbMYYikjS2CD9vUd6ECxX4pWi2HQ
+ * - AMOS mint at 5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ
  * - Oracle keypair at ~/amos-founder.json
  */
 
@@ -31,8 +31,8 @@ import { createHash, randomBytes } from "crypto";
 const RPC_URL = "https://api.devnet.solana.com";
 const BOUNTY_PROGRAM_ID = new PublicKey("4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq");
 const TREASURY_PROGRAM_ID = new PublicKey("8ZMaZDAxDPsCnMGRkhwLmFhoG43WUJcGC8xqVKo2PN7s");
-const AMOS_MINT = new PublicKey("Cm2RGfE3EpYm6s2cfbMYYikjS2CD9vUd6ECxX4pWi2HQ");
-const BOUNTY_TREASURY = new PublicKey("3gVaEePh9kT8yzaKvVJ5MHEJjHrmtiJwEiiZGosaa3tP");
+const AMOS_MINT = new PublicKey("5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ");
+const BOUNTY_TREASURY = new PublicKey("9xDVHuW4kiUYH5NPDLFfKhpxLQ31N6bqMrvj4EJ57z2B");
 
 const conn = new Connection(RPC_URL, "confirmed");
 

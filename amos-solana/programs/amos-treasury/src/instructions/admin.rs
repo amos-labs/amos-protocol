@@ -304,6 +304,61 @@ pub fn authority_withdraw(ctx: Context<AuthorityWithdraw>, amount: u64) -> Resul
     Ok(())
 }
 
+// ============================================================================
+// Update Mint (Migration)
+// ============================================================================
+
+/// Update the AMOS mint and vault references for mint migration. Authority-only.
+/// Atomically updates config.amos_mint, config.treasury_amos_vault, and config.reserve_vault.
+pub fn update_mint(ctx: Context<UpdateMint>) -> Result<()> {
+    let config = &mut ctx.accounts.treasury_config;
+
+    let old_mint = config.amos_mint;
+    config.amos_mint = ctx.accounts.new_mint.key();
+    config.treasury_amos_vault = ctx.accounts.new_treasury_vault.key();
+    config.reserve_vault = ctx.accounts.new_reserve_vault.key();
+
+    msg!("Treasury mint migrated: {} -> {}", old_mint, config.amos_mint);
+    msg!("Treasury vault: {}", config.treasury_amos_vault);
+    msg!("Reserve vault: {}", config.reserve_vault);
+
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct UpdateMint<'info> {
+    /// Treasury authority
+    pub authority: Signer<'info>,
+
+    /// Treasury configuration
+    #[account(
+        mut,
+        seeds = [seeds::TREASURY_CONFIG],
+        bump = treasury_config.bump,
+        has_one = authority @ TreasuryError::Unauthorized,
+    )]
+    pub treasury_config: Box<Account<'info, TreasuryConfig>>,
+
+    /// The new AMOS token mint
+    pub new_mint: Box<Account<'info, Mint>>,
+
+    /// New treasury vault token account (must hold new mint tokens, owned by config PDA)
+    #[account(
+        constraint = new_treasury_vault.mint == new_mint.key() @ TreasuryError::TokenMintMismatch,
+    )]
+    pub new_treasury_vault: Box<Account<'info, TokenAccount>>,
+
+    /// New reserve vault token account (must hold new mint tokens, owned by config PDA)
+    #[account(
+        constraint = new_reserve_vault.mint == new_mint.key() @ TreasuryError::TokenMintMismatch,
+    )]
+    pub new_reserve_vault: Box<Account<'info, TokenAccount>>,
+}
+
+// ============================================================================
+// Authority Withdraw (Token Rebalancing)
+// ============================================================================
+
 #[derive(Accounts)]
 pub struct AuthorityWithdraw<'info> {
     /// Treasury authority (must be the original deployer)

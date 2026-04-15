@@ -13,11 +13,12 @@ import { createHash } from "crypto";
 // ── Config ──────────────────────────────────────────────────────────
 const RPC_URL = "https://api.devnet.solana.com";
 const BOUNTY_PROGRAM_ID = new PublicKey("4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq");
-const MINT = new PublicKey("Cm2RGfE3EpYm6s2cfbMYYikjS2CD9vUd6ECxX4pWi2HQ");
+const MINT = new PublicKey("5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ");
 
-// Fee recipient token accounts (both are AMOS token accounts)
-const HOLDER_POOL = new PublicKey("6fh9KrCT7Jv9WFMhyYQSMXwr8wu59bS2fUuv7nmJuhZX");
-const LABS_WALLET = new PublicKey("Es4SCAKj6ncLTkrCkF3RnGQjvtGJFBFrfpLTQdhtHjET");
+// Fee recipient token accounts (both must be AMOS token accounts for the new mint)
+// TODO: Create new holder_pool and labs_wallet token accounts for the new mint
+const HOLDER_POOL = new PublicKey("6fh9KrCT7Jv9WFMhyYQSMXwr8wu59bS2fUuv7nmJuhZX"); // needs new-mint account
+const LABS_WALLET = new PublicKey("Es4SCAKj6ncLTkrCkF3RnGQjvtGJFBFrfpLTQdhtHjET"); // needs new-mint account
 
 // Load oracle keypair
 const keypairPath = process.env.HOME + "/amos-founder.json";

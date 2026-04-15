@@ -21,7 +21,7 @@ import { createHash } from "crypto";
 const RELAY_URL = process.env.RELAY_URL || "http://localhost:4100";
 const RPC_URL = "https://api.devnet.solana.com";
 const BOUNTY_PROGRAM_ID = new PublicKey("4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq");
-const MINT = new PublicKey("Cm2RGfE3EpYm6s2cfbMYYikjS2CD9vUd6ECxX4pWi2HQ");
+const MINT = new PublicKey("5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ");
 
 const conn = new Connection(RPC_URL, "confirmed");
 

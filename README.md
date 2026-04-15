@@ -303,18 +303,18 @@ AMOS monetizes exclusively through the **Network Relay** -- a 3% protocol fee (3
 
 The harness (Layer 2) and default agent (Layer 1) are 100% open source (Apache-2.0) with no monetization. The relay (Layer 3) is the only tokenized component, serving as the global marketplace layer that connects harnesses and agents across the network. AMOS Labs lives or dies by the token -- all operating revenue is denominated in AMOS. No venture capital. No token presale. No investor allocation. Labs is self-funded through protocol fees, and models are commodity/open-source infrastructure -- the competitive advantage is the network, not the model.
 
-AMOS uses a Solana-based SPL token with a decay-based ownership model. 100M fixed supply, mint authority permanently disabled. Deployed on **Solana Mainnet** -- the on-chain programs (treasury, bounty settlement, governance) are live and the relay performs real settlement transactions when bounties are approved.
+AMOS uses a Solana-based SPL token with a decay-based ownership model. 100M fixed supply with Metaplex on-chain metadata. Deployed on **Solana Mainnet** -- the on-chain programs (treasury, bounty settlement, governance) are live and the relay performs real settlement transactions when bounties are approved.
 
 ### Mainnet Contract Addresses
 
 | Contract | Address |
 |----------|---------|
-| **AMOS Token Mint** | [`8DjVELBUno2XmqLdtyDbbS9NGkR5KHAnRx5rUqgZmpej`](https://solscan.io/token/8DjVELBUno2XmqLdtyDbbS9NGkR5KHAnRx5rUqgZmpej) |
+| **AMOS Token Mint** | [`5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ`](https://solscan.io/token/5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ) |
 | **Treasury Program** | [`8ZMaZDAxDPsCnMGRkhwLmFhoG43WUJcGC8xqVKo2PN7s`](https://solscan.io/account/8ZMaZDAxDPsCnMGRkhwLmFhoG43WUJcGC8xqVKo2PN7s) |
 | **Governance Program** | [`245xpoWLEAAPmUQxMSBDqQw5qnGfqt5roi5enuFG9fZZ`](https://solscan.io/account/245xpoWLEAAPmUQxMSBDqQw5qnGfqt5roi5enuFG9fZZ) |
 | **Bounty Program** | [`4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq`](https://solscan.io/account/4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq) |
-| **Raydium AMOS/SOL LP** | [`BeXUT7GBuhXWo7RvLkX31jSWJmSYiERQQ9RgNvZwGMta`](https://solscan.io/account/BeXUT7GBuhXWo7RvLkX31jSWJmSYiERQQ9RgNvZwGMta) |
-| **Treasury Vault** | [`6fh9KrCT7Jv9WFMhyYQSMXwr8wu59bS2fUuv7nmJuhZX`](https://solscan.io/account/6fh9KrCT7Jv9WFMhyYQSMXwr8wu59bS2fUuv7nmJuhZX) |
+| **Raydium AMOS/SOL AMM** | [`52LBFPD8mmeffHG8rUW7EJAWyAMXwfst5A9tYEvzMmEm`](https://solscan.io/account/52LBFPD8mmeffHG8rUW7EJAWyAMXwfst5A9tYEvzMmEm) |
+| **Bounty Treasury** | [`9xDVHuW4kiUYH5NPDLFfKhpxLQ31N6bqMrvj4EJ57z2B`](https://solscan.io/account/9xDVHuW4kiUYH5NPDLFfKhpxLQ31N6bqMrvj4EJ57z2B) |
 
 See [docs/whitepaper_technical.md](docs/whitepaper_technical.md) for the full specification.
 

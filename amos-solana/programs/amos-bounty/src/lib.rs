@@ -112,6 +112,13 @@ pub mod amos_bounty {
         instructions::admin::handler_set_fee_recipients(ctx)
     }
 
+    /// Migrate the token mint and treasury. Oracle-only.
+    /// Atomically updates config.mint and config.treasury for mint migration.
+    /// Resets fee recipients (must call set_fee_recipients again with new mint accounts).
+    pub fn update_mint(ctx: Context<UpdateMint>) -> Result<()> {
+        instructions::admin::handler_update_mint(ctx)
+    }
+
     // ========================================================================
     // Preparation Instructions
     // ========================================================================

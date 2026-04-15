@@ -33,12 +33,12 @@ const RPC_URL = NETWORK === "mainnet"
 const TREASURY_PROGRAM_ID = new PublicKey("8ZMaZDAxDPsCnMGRkhwLmFhoG43WUJcGC8xqVKo2PN7s");
 const AMOS_MINT = new PublicKey(
     NETWORK === "mainnet"
-        ? "8DjVELBUno2XmqLdtyDbbS9NGkR5KHAnRx5rUqgZmpej"
-        : process.env.AMOS_MINT || "Cm2RGfE3EpYm6s2cfbMYYikjS2CD9vUd6ECxX4pWi2HQ"
+        ? "5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ"
+        : process.env.AMOS_MINT || "5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ"
 );
 
 // Bounty program's treasury token account (owned by BountyConfig PDA)
-const BOUNTY_TREASURY = new PublicKey("37D62Smc8tgmCHYrZr6SRVgzywZLdpdLPCwiNPp2b36s");
+const BOUNTY_TREASURY = new PublicKey("9xDVHuW4kiUYH5NPDLFfKhpxLQ31N6bqMrvj4EJ57z2B");
 
 const DECIMALS = 9;
 const BOUNTY_AMOUNT = BigInt(90_000_000) * BigInt(10 ** DECIMALS);   // 90M AMOS

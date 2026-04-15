@@ -229,6 +229,65 @@ pub fn handler_set_fee_recipients(ctx: Context<SetFeeRecipients>) -> Result<()> 
 }
 
 // ============================================================================
+// Update Mint (Migration)
+// ============================================================================
+
+/// Update the token mint and treasury for mint migration. Oracle-only.
+/// The new treasury must hold tokens of the new mint.
+///
+/// # Safety
+/// This is a privileged migration operation. It atomically updates both
+/// config.mint and config.treasury so the program references the new token.
+#[derive(Accounts)]
+pub struct UpdateMint<'info> {
+    #[account(
+        mut,
+        seeds = [BOUNTY_CONFIG_SEED],
+        bump = config.bump,
+        has_one = oracle_authority @ BountyError::Unauthorized,
+    )]
+    pub config: Account<'info, BountyConfig>,
+
+    /// The new AMOS token mint
+    pub new_mint: Account<'info, Mint>,
+
+    /// New treasury token account (must hold new mint tokens)
+    #[account(
+        constraint = new_treasury.mint == new_mint.key() @ BountyError::InvalidMint,
+    )]
+    pub new_treasury: Account<'info, TokenAccount>,
+
+    pub oracle_authority: Signer<'info>,
+}
+
+pub fn handler_update_mint(ctx: Context<UpdateMint>) -> Result<()> {
+    let config = &mut ctx.accounts.config;
+
+    let old_mint = config.mint;
+    let old_treasury = config.treasury;
+
+    config.mint = ctx.accounts.new_mint.key();
+    config.treasury = ctx.accounts.new_treasury.key();
+
+    // Reset fee recipients since they reference the old mint's token accounts
+    config.holder_pool = Pubkey::default();
+    config.labs_wallet = Pubkey::default();
+
+    msg!(
+        "Mint migrated: {} -> {}",
+        old_mint,
+        ctx.accounts.new_mint.key()
+    );
+    msg!(
+        "Treasury migrated: {} -> {}",
+        old_treasury,
+        ctx.accounts.new_treasury.key()
+    );
+
+    Ok(())
+}
+
+// ============================================================================
 // Events
 // ============================================================================
 

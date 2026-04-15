@@ -543,10 +543,10 @@ fn default_bounty_program() -> String {
     "4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq".into()
 }
 fn default_mint_address() -> Option<String> {
-    Some("8DjVELBUno2XmqLdtyDbbS9NGkR5KHAnRx5rUqgZmpej".into())
+    Some("5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ".into())
 }
 fn default_treasury_token_account() -> Option<String> {
-    Some("37D62Smc8tgmCHYrZr6SRVgzywZLdpdLPCwiNPp2b36s".into())
+    Some("9xDVHuW4kiUYH5NPDLFfKhpxLQ31N6bqMrvj4EJ57z2B".into())
 }
 fn default_aws_region() -> String {
     "us-west-2".into()

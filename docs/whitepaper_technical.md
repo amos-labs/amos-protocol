@@ -127,7 +127,7 @@ This provides:
 
 ### 2.3 Immutability
 
-- Mint authority disabled at genesis
+- Mint authority permanently disabled (revoked April 15, 2026)
 - No additional tokens can ever be created
 - Only mechanism to increase supply: None
 - Only mechanism to decrease supply: Burn
@@ -1362,7 +1362,7 @@ This design protects against governance capture while allowing the community to 
 - SPL Token standard (battle-tested)
 - No custom contract logic (reduces attack surface)
 - Treasury protected by multisig (2-of-3)
-- Mint authority permanently disabled
+- Mint authority permanently disabled (revoked April 15, 2026)
 
 ### 9.2 Platform Security
 
@@ -1886,19 +1886,18 @@ Fast revenue growth creates a significant price premium, similar to high-growth 
 
 | Network | Type | Address |
 |---------|------|---------|
-| Mainnet | Token Mint | `8DjVELBUno2XmqLdtyDbbS9NGkR5KHAnRx5rUqgZmpej` |
+| Mainnet | Token Mint | `5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ` |
 | Mainnet | Treasury Program | `8ZMaZDAxDPsCnMGRkhwLmFhoG43WUJcGC8xqVKo2PN7s` |
 | Mainnet | Governance Program | `245xpoWLEAAPmUQxMSBDqQw5qnGfqt5roi5enuFG9fZZ` |
 | Mainnet | Bounty Program | `4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq` |
-| Mainnet | Treasury Token Account | `6fh9KrCT7Jv9WFMhyYQSMXwr8wu59bS2fUuv7nmJuhZX` |
-| Mainnet | Reserve Vault | `7y5GvW3nk4x8AAGkokQMBhXWG2B6vLXw9j6tiR7w7K2v` |
-| Mainnet | Raydium AMOS/SOL LP | `BeXUT7GBuhXWo7RvLkX31jSWJmSYiERQQ9RgNvZwGMta` |
+| Mainnet | Bounty Treasury | `9xDVHuW4kiUYH5NPDLFfKhpxLQ31N6bqMrvj4EJ57z2B` |
+| Mainnet | Raydium AMOS/SOL AMM | `52LBFPD8mmeffHG8rUW7EJAWyAMXwfst5A9tYEvzMmEm` |
 
 **Explorer Links:**
-- Mainnet Token: [View on Solscan](https://solscan.io/token/8DjVELBUno2XmqLdtyDbbS9NGkR5KHAnRx5rUqgZmpej)
+- Mainnet Token: [View on Solscan](https://solscan.io/token/5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ)
 - Treasury Program: [View on Solscan](https://solscan.io/account/8ZMaZDAxDPsCnMGRkhwLmFhoG43WUJcGC8xqVKo2PN7s)
 - Bounty Program: [View on Solscan](https://solscan.io/account/4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq)
-- Raydium LP: [View on Solscan](https://solscan.io/account/BeXUT7GBuhXWo7RvLkX31jSWJmSYiERQQ9RgNvZwGMta)
+- Raydium AMM: [View on Solscan](https://solscan.io/account/52LBFPD8mmeffHG8rUW7EJAWyAMXwfst5A9tYEvzMmEm)
 
 ---
 

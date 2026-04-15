@@ -60,8 +60,8 @@ Platform ──gRPC──▶ Harness containers (provisioning, lifecycle)
 |---------|---------|------|
 | Bounty Program | `4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq` | Immutable after deploy |
 | BountyConfig PDA | `HAgXjWCGR7ry9LnPLA3B3BZeKKR2RNFkJyvAcozQDJQN` | Oracle-only writes |
-| Treasury (config-owned) | `37D62Smc8tgmCHYrZr6SRVgzywZLdpdLPCwiNPp2b36s` | Config PDA signs transfers |
-| AMOS Mint | `8DjVELBUno2XmqLdtyDbbS9NGkR5KHAnRx5rUqgZmpej` | Mint authority revoked |
+| Treasury (config-owned) | `9xDVHuW4kiUYH5NPDLFfKhpxLQ31N6bqMrvj4EJ57z2B` | Config PDA signs transfers |
+| AMOS Mint | `5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ` | Metaplex metadata on-chain |
 
 ---
 

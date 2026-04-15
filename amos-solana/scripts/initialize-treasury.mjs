@@ -22,7 +22,7 @@ const RPC_URL = NETWORK === "mainnet"
     ? "https://api.mainnet-beta.solana.com"
     : "https://api.devnet.solana.com";
 const TREASURY_PROGRAM_ID = new PublicKey("8ZMaZDAxDPsCnMGRkhwLmFhoG43WUJcGC8xqVKo2PN7s");
-const AMOS_MINT = new PublicKey(process.env.AMOS_MINT || "Cm2RGfE3EpYm6s2cfbMYYikjS2CD9vUd6ECxX4pWi2HQ");
+const AMOS_MINT = new PublicKey(process.env.AMOS_MINT || "5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ");
 
 // Load oracle keypair (authority)
 const keypairPath = process.env.HOME + "/amos-founder.json";

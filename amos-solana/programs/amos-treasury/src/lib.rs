@@ -65,6 +65,12 @@ pub mod amos_treasury {
         instructions::admin::update_labs_wallet(ctx, new_labs_wallet)
     }
 
+    /// Migrate the token mint and vault references. Authority-only.
+    /// Atomically updates amos_mint, treasury_amos_vault, and reserve_vault.
+    pub fn update_mint(ctx: Context<UpdateMint>) -> Result<()> {
+        instructions::admin::update_mint(ctx)
+    }
+
     /// Transfer tokens from treasury vault to a destination account.
     /// Authority-only. Used to rebalance tokens between program-controlled
     /// accounts (e.g., moving emission pool to bounty program treasury).

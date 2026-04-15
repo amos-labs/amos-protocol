@@ -17,8 +17,8 @@ const RPC_URL = NETWORK === "mainnet"
     ? "https://api.mainnet-beta.solana.com"
     : "https://api.devnet.solana.com";
 const BOUNTY_PROGRAM_ID = new PublicKey("4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq");
-const MINT = new PublicKey(process.env.AMOS_MINT || "Cm2RGfE3EpYm6s2cfbMYYikjS2CD9vUd6ECxX4pWi2HQ");
-const TREASURY = new PublicKey(process.env.AMOS_TREASURY || "3gVaEePh9kT8yzaKvVJ5MHEJjHrmtiJwEiiZGosaa3tP");
+const MINT = new PublicKey(process.env.AMOS_MINT || "5g9vvce3YLsqZPBGAuKmGFfNKb5sp7v3Wiga5de8d5bQ");
+const TREASURY = new PublicKey(process.env.AMOS_TREASURY || "9xDVHuW4kiUYH5NPDLFfKhpxLQ31N6bqMrvj4EJ57z2B");
 const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
 // Load oracle keypair (founder wallet)
