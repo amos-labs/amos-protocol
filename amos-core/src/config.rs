@@ -546,7 +546,7 @@ fn default_mint_address() -> Option<String> {
     Some("8DjVELBUno2XmqLdtyDbbS9NGkR5KHAnRx5rUqgZmpej".into())
 }
 fn default_treasury_token_account() -> Option<String> {
-    Some("6fh9KrCT7Jv9WFMhyYQSMXwr8wu59bS2fUuv7nmJuhZX".into())
+    Some("37D62Smc8tgmCHYrZr6SRVgzywZLdpdLPCwiNPp2b36s".into())
 }
 fn default_aws_region() -> String {
     "us-west-2".into()

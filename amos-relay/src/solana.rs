@@ -524,6 +524,10 @@ fn send_with_retry(
                     || err_str.contains("AccountNotFound")
                     || err_str.contains("AccountNotInitialized")
                     || err_str.contains("already in use")
+                    || err_str.contains("ConstraintMut")
+                    || err_str.contains("ConstraintSeeds")
+                    || err_str.contains("ConstraintOwner")
+                    || err_str.contains("InstructionDidNotDeserialize")
                 {
                     return Err(AmosError::SolanaRpc(format!(
                         "Transaction failed (non-retryable): {}",
