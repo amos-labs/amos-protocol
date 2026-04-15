@@ -24,6 +24,7 @@ pub fn routes() -> Router<RelayState> {
         .route("/{id}", get(get_bounty))
         .route("/{id}/claim", post(claim_bounty))
         .route("/{id}/submit", post(submit_work))
+        .route("/{id}/verify", post(verify_submission))
         .route("/{id}/approve", post(approve_submission))
         .route("/{id}/reject", post(reject_submission))
 }
@@ -76,6 +77,15 @@ pub struct SubmitWorkRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct VerifySubmissionRequest {
+    /// Wallet of the person/agent verifying the deliverable.
+    pub verifier_wallet: String,
+    /// Evidence that the deliverable is live and working.
+    /// Example: {"git_sha": "abc123", "tests_passed": true, "build_url": "..."}
+    pub evidence: JsonValue,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ApproveSubmissionRequest {
     pub reviewer_wallet: String,
     pub quality_score: Option<u8>,
@@ -105,6 +115,9 @@ pub struct BountyResponse {
     pub result: Option<JsonValue>,
     pub quality_evidence: Option<JsonValue>,
     pub quality_score: Option<i16>,
+    pub verified_at: Option<DateTime<Utc>>,
+    pub verified_by_wallet: Option<String>,
+    pub verification_evidence: Option<JsonValue>,
     pub approved_at: Option<DateTime<Utc>>,
     pub rejected_at: Option<DateTime<Utc>>,
     pub rejection_reason: Option<String>,
@@ -125,6 +138,7 @@ const BOUNTY_SELECT: &str = r#"
     required_capabilities, poster_wallet, status,
     claimed_by_agent_id, claimed_by_harness_id, claimed_by_wallet,
     submitted_at, result, quality_evidence,
+    verified_at, verified_by_wallet, verification_evidence,
     quality_score, approved_at, rejected_at, rejection_reason,
     settlement_tx, settlement_status,
     created_at, updated_at
@@ -151,6 +165,9 @@ fn bounty_from_row(row: sqlx::postgres::PgRow) -> Result<BountyResponse, sqlx::E
         submitted_at: row.try_get("submitted_at")?,
         result: row.try_get("result")?,
         quality_evidence: row.try_get("quality_evidence")?,
+        verified_at: row.try_get("verified_at")?,
+        verified_by_wallet: row.try_get("verified_by_wallet")?,
+        verification_evidence: row.try_get("verification_evidence")?,
         quality_score: row.try_get("quality_score")?,
         approved_at: row.try_get("approved_at")?,
         rejected_at: row.try_get("rejected_at")?,
@@ -419,7 +436,71 @@ async fn submit_work(
     Ok(Json(bounty))
 }
 
+/// Verify a submitted bounty's deliverables are pushed and tested.
+///
+/// This is a required step before approval. Verification evidence must include
+/// proof that the work is live (e.g., git SHA, CI pass, test results).
+/// The bounty lifecycle is: submitted → verified → approved → settled.
+async fn verify_submission(
+    State(state): State<RelayState>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<VerifySubmissionRequest>,
+) -> Result<Json<BountyResponse>, StatusCode> {
+    if !crate::validate_wallet_address(&req.verifier_wallet) {
+        warn!("Invalid verifier wallet: {}", req.verifier_wallet);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Evidence must not be empty
+    if req.evidence.is_null()
+        || (req.evidence.is_object() && req.evidence.as_object().unwrap().is_empty())
+    {
+        warn!("Verification evidence is empty for bounty {}", id);
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let now = Utc::now();
+
+    let row = sqlx::query(&format!(
+        "UPDATE relay_bounties \
+         SET verified_at = $1, verified_by_wallet = $2, verification_evidence = $3, updated_at = $4 \
+         WHERE id = $5 AND status = $6 AND verified_at IS NULL \
+         RETURNING {BOUNTY_SELECT}"
+    ))
+    .bind(now)
+    .bind(&req.verifier_wallet)
+    .bind(&req.evidence)
+    .bind(now)
+    .bind(id)
+    .bind(BountyStatus::Submitted.as_str())
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        warn!("Failed to verify bounty {}: {}", id, e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?
+    .ok_or_else(|| {
+        warn!(
+            "Bounty {} not found, not in submitted state, or already verified",
+            id
+        );
+        StatusCode::CONFLICT
+    })?;
+
+    let bounty = bounty_from_row(row).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    info!(
+        "Bounty {} verified by {} with evidence",
+        id, req.verifier_wallet
+    );
+
+    Ok(Json(bounty))
+}
+
 /// Approve a bounty submission and trigger payout.
+///
+/// **Requires verification**: the bounty must have been verified first via
+/// the `/verify` endpoint. This ensures deliverables are pushed and tested
+/// before on-chain settlement occurs.
 async fn approve_submission(
     State(state): State<RelayState>,
     Path(id): Path<Uuid>,
@@ -443,10 +524,10 @@ async fn approve_submission(
 
     let now = Utc::now();
 
-    // Fetch the bounty with poster and claimer wallets for separation-of-duties checks
+    // Fetch the bounty with poster, claimer wallets, and verification status
     let current_bounty = sqlx::query(
         r#"
-        SELECT reward_tokens, poster_wallet, claimed_by_wallet
+        SELECT reward_tokens, poster_wallet, claimed_by_wallet, verified_at
         FROM relay_bounties
         WHERE id = $1 AND status = $2
         "#,
@@ -460,6 +541,17 @@ async fn approve_submission(
         StatusCode::INTERNAL_SERVER_ERROR
     })?
     .ok_or(StatusCode::NOT_FOUND)?;
+
+    // --- Verification gate: deliverable must be verified before approval ---
+    let verified_at: Option<DateTime<Utc>> = current_bounty.get("verified_at");
+    if verified_at.is_none() {
+        warn!(
+            "Approval blocked: bounty {} has not been verified yet. \
+             Call POST /{}/verify first with evidence that the deliverable is pushed and tested.",
+            id, id
+        );
+        return Err(StatusCode::PRECONDITION_REQUIRED);
+    }
 
     // --- Separation of duties: prevent self-approval ---
 
