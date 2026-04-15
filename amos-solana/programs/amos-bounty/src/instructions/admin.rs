@@ -73,7 +73,11 @@ pub fn handler_initialize(ctx: Context<Initialize>, oracle_authority: Pubkey) ->
 
     msg!("AMOS Bounty Program initialized");
     msg!("Oracle Authority: {}", oracle_authority);
-    msg!("Emission: sigmoid curve, {} → {} AMOS/day", EMISSION_CEILING, EMISSION_FLOOR);
+    msg!(
+        "Emission: sigmoid curve, {} → {} AMOS/day",
+        EMISSION_CEILING,
+        EMISSION_FLOOR
+    );
     msg!("Default Decay Rate: {}%", DEFAULT_DECAY_RATE_BPS / 100);
 
     Ok(())
@@ -235,7 +239,8 @@ mod tests {
     #[test]
     fn test_sigmoid_emission_initial_value() {
         // handler_initialize sets daily_emission = EMISSION_CEILING
-        assert_eq!(EMISSION_CEILING, 16_000);
+        // 16,000 whole AMOS tokens × 10^9 decimals
+        assert_eq!(EMISSION_CEILING, 16_000 * ONE_TOKEN);
         assert!(EMISSION_CEILING > EMISSION_FLOOR);
     }
 

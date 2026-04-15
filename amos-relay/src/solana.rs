@@ -76,6 +76,8 @@ pub struct SettlementParams {
     pub agent_id: [u8; 32],
     /// SHA-256 hash of the submission evidence
     pub evidence_hash: [u8; 32],
+    /// Maximum token payout in lamports (reward_tokens * 10^9). 0 = no cap.
+    pub max_reward: u64,
 }
 
 impl SolanaClient {
@@ -396,6 +398,7 @@ impl SolanaClient {
             params.is_agent,
             &params.agent_id,
             day_index,
+            params.max_reward,
             &reviewer,
             &params.evidence_hash,
         );
@@ -587,13 +590,14 @@ fn build_submit_bounty_proof_data(
     is_agent: bool,
     agent_id: &[u8; 32],
     day_index: u32,
+    max_reward: u64,
     reviewer: &Pubkey,
     evidence_hash: &[u8; 32],
 ) -> Vec<u8> {
     let disc = anchor_discriminator("submit_bounty_proof");
     let external_reference = [0u8; 64]; // Reserved, zeroed
 
-    let mut data = Vec::with_capacity(8 + 32 + 2 + 1 + 1 + 1 + 32 + 4 + 32 + 32 + 64);
+    let mut data = Vec::with_capacity(8 + 32 + 2 + 1 + 1 + 1 + 32 + 4 + 8 + 32 + 32 + 64);
     data.extend_from_slice(&disc);
     data.extend_from_slice(bounty_id);
     data.extend_from_slice(&base_points.to_le_bytes());
@@ -602,6 +606,7 @@ fn build_submit_bounty_proof_data(
     data.push(is_agent as u8);
     data.extend_from_slice(agent_id);
     data.extend_from_slice(&day_index.to_le_bytes());
+    data.extend_from_slice(&max_reward.to_le_bytes());
     data.extend_from_slice(reviewer.as_ref());
     data.extend_from_slice(evidence_hash);
     data.extend_from_slice(&external_reference);
@@ -775,14 +780,15 @@ mod tests {
             true,
             &agent_id,
             42,
+            500_000_000_000u64,
             &reviewer,
             &evidence_hash,
         );
 
         // 8 (disc) + 32 (bounty_id) + 2 (points) + 1 (quality) + 1 (type)
-        // + 1 (is_agent) + 32 (agent_id) + 4 (day_index) + 32 (reviewer) + 32 (evidence)
-        // + 64 (external_ref) = 209
-        assert_eq!(data.len(), 209);
+        // + 1 (is_agent) + 32 (agent_id) + 4 (day_index) + 8 (max_reward)
+        // + 32 (reviewer) + 32 (evidence) + 64 (external_ref) = 217
+        assert_eq!(data.len(), 217);
     }
 
     #[test]
@@ -800,6 +806,7 @@ mod tests {
             false,
             &agent_id,
             42,
+            500_000_000_000u64,
             &reviewer,
             &evidence_hash,
         );
@@ -823,6 +830,7 @@ mod tests {
             true,
             &agent_id,
             42,
+            500_000_000_000u64,
             &reviewer,
             &evidence_hash,
         );
@@ -847,6 +855,7 @@ mod tests {
             true,
             &agent_id,
             42,
+            500_000_000_000u64,
             &reviewer,
             &evidence_hash,
         );
@@ -872,6 +881,7 @@ mod tests {
             false,
             &agent_id,
             42,
+            500_000_000_000u64,
             &reviewer,
             &evidence_hash,
         );
@@ -894,6 +904,7 @@ mod tests {
             true,
             &agent_id,
             42,
+            500_000_000_000u64,
             &reviewer,
             &evidence_hash,
         );
@@ -917,12 +928,14 @@ mod tests {
             true,
             &agent_id,
             42,
+            500_000_000_000u64,
             &reviewer,
             &evidence_hash,
         );
 
         // Last 64 bytes should be zeroed (external_reference)
-        assert_eq!(&data[145..209], &[0u8; 64]);
+        // offset = 8 + 32 + 2 + 1 + 1 + 1 + 32 + 4 + 8 + 32 + 32 = 153
+        assert_eq!(&data[153..217], &[0u8; 64]);
     }
 
     // ── Hash utility ───────────────────────────────────────────────────
@@ -1137,6 +1150,7 @@ mod tests {
             is_agent: true,
             agent_id: [0u8; 32],
             evidence_hash: [0u8; 32],
+            max_reward: 500_000_000_000, // 500 AMOS
         };
 
         let result = client.process_bounty_payout(&params).await;
@@ -1181,6 +1195,7 @@ mod tests {
             is_agent: true,
             agent_id: [0u8; 32],
             evidence_hash: [0u8; 32],
+            max_reward: 500_000_000_000,
         };
 
         let result = client.process_bounty_payout(&params).await;

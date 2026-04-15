@@ -156,6 +156,8 @@ pub mod amos_bounty {
     /// * `contribution_type` - Type of work (0-7)
     /// * `is_agent` - Whether this is an AI agent submission
     /// * `agent_id` - Agent identifier if applicable
+    /// * `day_index` - Current day index since program start
+    /// * `max_reward` - Maximum token payout in lamports (0 = no cap)
     /// * `reviewer` - Validator who approved this work
     /// * `evidence_hash` - Hash of the work product
     /// * `external_reference` - External ID (issue #, PR #, etc.)
@@ -169,6 +171,7 @@ pub mod amos_bounty {
         is_agent: bool,
         agent_id: [u8; 32],
         day_index: u32,
+        max_reward: u64,
         reviewer: Pubkey,
         evidence_hash: [u8; 32],
         external_reference: [u8; 64],
@@ -182,6 +185,7 @@ pub mod amos_bounty {
             is_agent,
             agent_id,
             day_index,
+            max_reward,
             reviewer,
             evidence_hash,
             external_reference,

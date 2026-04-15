@@ -31,11 +31,13 @@ use crate::state::*;
 /// * `contribution_type` - Type of work (0-7)
 /// * `is_agent` - Whether this is an AI agent submission
 /// * `agent_id` - Agent identifier if applicable
+/// * `day_index` - Current day index since program start
+/// * `max_reward` - Maximum token payout for this bounty (in lamports, 0 = no cap)
 /// * `reviewer` - Address of the reviewer who validated this work
 /// * `evidence_hash` - Hash of the work product/evidence
 /// * `external_reference` - External ID (issue number, PR number, etc.)
 #[derive(Accounts)]
-#[instruction(bounty_id: [u8; 32], base_points: u16, quality_score: u8, contribution_type: u8, is_agent: bool, agent_id: [u8; 32], day_index: u32)]
+#[instruction(bounty_id: [u8; 32], base_points: u16, quality_score: u8, contribution_type: u8, is_agent: bool, agent_id: [u8; 32], day_index: u32, max_reward: u64)]
 pub struct SubmitBountyProof<'info> {
     #[account(
         mut,
@@ -120,6 +122,7 @@ pub fn handler_submit_proof(
     is_agent: bool,
     agent_id: [u8; 32],
     day_index: u32,
+    max_reward: u64,
     reviewer: Pubkey,
     evidence_hash: [u8; 32],
     external_reference: [u8; 64],
@@ -192,16 +195,10 @@ pub fn handler_submit_proof(
         let max_points = get_max_points_for_trust_level(trust_level)?;
         require!(base_points <= max_points, BountyError::InvalidBountyPoints);
 
-        let daily_limit = get_daily_limit_for_trust_level(trust_level)?;
-        require!(
-            operator_stats.daily_bounty_count < daily_limit,
-            BountyError::DailyLimitExceeded
-        );
+        // No daily bounty count limit — the finite daily emission pool is the
+        // natural throttle. More bounties just means smaller per-bounty shares.
     } else {
-        require!(
-            operator_stats.daily_bounty_count < MAX_DAILY_BOUNTIES_PER_OPERATOR,
-            BountyError::DailyLimitExceeded
-        );
+        // Non-agent submissions: no daily limit either
     }
 
     // ========================================================================
@@ -289,6 +286,15 @@ pub fn handler_submit_proof(
             .checked_div(new_technical_points)
             .ok_or(BountyError::ArithmeticOverflow)?;
         tokens.max(1)
+    };
+
+    // Cap payout at the bounty's stated reward (max_reward, in lamports).
+    // The pool share can exceed the bounty value when few contributors are active.
+    // Unclaimed tokens stay in the pool for later bounties that day.
+    let tokens_before_split = if max_reward > 0 {
+        tokens_before_split.min(max_reward)
+    } else {
+        tokens_before_split
     };
 
     let new_total_points = daily_pool
@@ -589,15 +595,27 @@ mod tests {
 
         // At launch: near ceiling (20%)
         let cap_launch = current_growth_cap_bps(launch + 1, launch);
-        assert!(cap_launch >= 1950, "Launch cap {} should be near 2000", cap_launch);
+        assert!(
+            cap_launch >= 1950,
+            "Launch cap {} should be near 2000",
+            cap_launch
+        );
 
         // At midpoint (~18 months = 540 days = 46656000 seconds): ~1150 bps
         let cap_mid = current_growth_cap_bps(launch + 540 * 86400, launch);
-        assert!(cap_mid >= 1000 && cap_mid <= 1300, "Midpoint cap {} should be ~1150", cap_mid);
+        assert!(
+            cap_mid >= 1000 && cap_mid <= 1300,
+            "Midpoint cap {} should be ~1150",
+            cap_mid
+        );
 
         // At maturity (5 years): near floor (3%)
         let cap_mature = current_growth_cap_bps(launch + 1800 * 86400, launch);
-        assert!(cap_mature <= 350, "Mature cap {} should be near 300", cap_mature);
+        assert!(
+            cap_mature <= 350,
+            "Mature cap {} should be near 300",
+            cap_mature
+        );
 
         // Monotonically decreasing
         assert!(cap_launch > cap_mid);
@@ -606,14 +624,14 @@ mod tests {
 
     #[test]
     fn test_growth_pool_cap_enforcement() {
-        // With 16000 daily emission and ~10% sigmoid growth cap (near midpoint):
-        let daily_emission = 16000u64;
+        // With 16000 whole AMOS daily emission and ~10% sigmoid growth cap (near midpoint):
+        let daily_emission = 16_000 * ONE_TOKEN;
         let growth_cap_bps = 1000u64; // 10%
         let growth_pool_max = daily_emission * growth_cap_bps / BPS_DENOMINATOR as u64;
-        assert_eq!(growth_pool_max, 1600);
+        assert_eq!(growth_pool_max, 1_600 * ONE_TOKEN);
 
         // Technical pool gets the rest
         let technical_pool = daily_emission - growth_pool_max;
-        assert_eq!(technical_pool, 14400);
+        assert_eq!(technical_pool, 14_400 * ONE_TOKEN);
     }
 }

@@ -15,6 +15,13 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load relay-specific .env before the shared AppConfig reads the workspace root .env.
+    // This ensures AMOS__DATABASE__URL points at amos_relay_dev, not amos_harness_development.
+    let relay_env = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".env");
+    if relay_env.exists() {
+        dotenvy::from_path(&relay_env).ok();
+    }
+
     // Initialize tracing
     init_tracing()?;
 

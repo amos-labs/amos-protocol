@@ -627,6 +627,9 @@ async fn approve_submission(
                 };
                 let base_points = (reward_tokens.min(max_for_trust)) as u16;
 
+                // max_reward = reward_tokens in whole AMOS × 10^9 decimals
+                let max_reward = reward_tokens.saturating_mul(1_000_000_000);
+
                 let params = SettlementParams {
                     bounty_id: bounty_id_str,
                     agent_wallet: wallet,
@@ -637,6 +640,7 @@ async fn approve_submission(
                     is_agent: true,
                     agent_id: agent_id_bytes,
                     evidence_hash,
+                    max_reward,
                 };
 
                 match solana.process_bounty_payout(&params).await {

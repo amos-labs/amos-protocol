@@ -57,7 +57,10 @@ pub fn handler_prepare(
     // Validate day_index matches current day (belt-and-suspenders; PDA derivation also validates)
     let current_day = calculate_day_index(config.start_time)?;
     require!(day_index == current_day, BountyError::InvalidDayIndex);
-    if daily_pool.day_index == 0 {
+    // Use daily_emission == 0 as the "uninitialized" sentinel instead of day_index == 0,
+    // because day_index IS 0 on the program's first day, which caused the pool to
+    // re-initialize on every prepare call during day 0.
+    if daily_pool.daily_emission == 0 {
         daily_pool.day_index = current_day;
         // Compute emission from sigmoid curve — stateless, no halving epochs needed
         daily_pool.daily_emission = sigmoid_daily_emission(current_day as u64);

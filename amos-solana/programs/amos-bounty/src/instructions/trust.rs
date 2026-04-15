@@ -368,17 +368,17 @@ mod tests {
 
     #[test]
     fn test_trust_level_capabilities() {
-        // Level 1: 100 points, 3 daily
+        // Level 1: 100 points, 10 daily
         assert_eq!(TRUST_LEVEL_MAX_POINTS[0], 100);
-        assert_eq!(TRUST_LEVEL_DAILY_LIMITS[0], 3);
+        assert_eq!(TRUST_LEVEL_DAILY_LIMITS[0], 10);
 
-        // Level 2: 200 points, 5 daily
+        // Level 2: 200 points, 20 daily
         assert_eq!(TRUST_LEVEL_MAX_POINTS[1], 200);
-        assert_eq!(TRUST_LEVEL_DAILY_LIMITS[1], 5);
+        assert_eq!(TRUST_LEVEL_DAILY_LIMITS[1], 20);
 
-        // Level 5: 2000 points (max), 25 daily
+        // Level 5: 2000 points (max), 100 daily
         assert_eq!(TRUST_LEVEL_MAX_POINTS[4], 2000);
-        assert_eq!(TRUST_LEVEL_DAILY_LIMITS[4], 25);
+        assert_eq!(TRUST_LEVEL_DAILY_LIMITS[4], 100);
     }
 
     #[test]

@@ -27,12 +27,18 @@ pub const TREASURY_ALLOCATION: u64 = 95_000_000;
 // (EXP_LOOKUP table) used for pool separation.
 // ============================================================================
 
-/// Maximum daily emission at launch (tokens per day)
-pub const EMISSION_CEILING: u64 = 16_000;
+/// Token decimal places (must match SPL mint)
+pub const TOKEN_DECIMALS: u32 = 9;
 
-/// Minimum daily emission floor (tokens per day)
+/// One whole AMOS token in lamports (10^9)
+pub const ONE_TOKEN: u64 = 10u64.pow(TOKEN_DECIMALS);
+
+/// Maximum daily emission at launch (16,000 whole AMOS tokens per day)
+pub const EMISSION_CEILING: u64 = 16_000 * ONE_TOKEN;
+
+/// Minimum daily emission floor (100 whole AMOS tokens per day)
 /// Emission never drops below this, ensuring perpetual rewards
-pub const EMISSION_FLOOR: u64 = 100;
+pub const EMISSION_FLOOR: u64 = 100 * ONE_TOKEN;
 
 /// Sigmoid midpoint in days (~4 years)
 /// At this point, daily emission is halfway between ceiling and floor (~8,050/day)
@@ -191,7 +197,7 @@ pub const TRUST_LEVEL_5_MIN_REPUTATION: u32 = 8500;
 pub const TRUST_LEVEL_MAX_POINTS: [u16; 5] = [100, 200, 500, 1000, 2000];
 
 /// Daily bounty limits for each trust level
-pub const TRUST_LEVEL_DAILY_LIMITS: [u16; 5] = [3, 5, 10, 15, 25];
+pub const TRUST_LEVEL_DAILY_LIMITS: [u16; 5] = [10, 20, 40, 75, 100];
 
 // ============================================================================
 // Contribution Type Multipliers
@@ -429,9 +435,12 @@ const EXP_LOOKUP: [u64; 61] = [
     10000, 11052, 12214, 13499, 14918, 16487, 18221, 20138, 22255, 24596, // 0.0 - 0.9
     27183, 30042, 33201, 36693, 40552, 44817, 49530, 54739, 60496, 66859, // 1.0 - 1.9
     73891, 81662, 90250, 99741, 110232, 121825, 134637, 148797, 164446, 181741, // 2.0 - 2.9
-    200855, 221979, 245325, 271126, 299641, 331155, 365982, 404473, 447012, 494024, // 3.0 - 3.9
-    545982, 603403, 666863, 737095, 814509, 900171, 995303, 1100317, 1215810, 1343600, // 4.0 - 4.9
-    1484132, 1640029, 1812118, 2002581, 2213643, 2447647, 2707083, 2995545, 3316723, 3674497, // 5.0 - 5.9
+    200855, 221979, 245325, 271126, 299641, 331155, 365982, 404473, 447012,
+    494024, // 3.0 - 3.9
+    545982, 603403, 666863, 737095, 814509, 900171, 995303, 1100317, 1215810,
+    1343600, // 4.0 - 4.9
+    1484132, 1640029, 1812118, 2002581, 2213643, 2447647, 2707083, 2995545, 3316723,
+    3674497, // 5.0 - 5.9
     4034288, // 6.0
 ];
 
@@ -568,10 +577,7 @@ pub fn sigmoid_daily_emission_params(
         -((midpoint_days - elapsed_days) as i64)
     };
 
-    let x_hundredths = (k_scaled as i64)
-        .checked_mul(diff)
-        .unwrap_or(i64::MAX)
-        / 100;
+    let x_hundredths = (k_scaled as i64).checked_mul(diff).unwrap_or(i64::MAX) / 100;
 
     // e^(k × (t - midpoint)), scaled by 10000
     let exp_val = exp_scaled(x_hundredths);
@@ -581,10 +587,7 @@ pub fn sigmoid_daily_emission_params(
 
     // range / (1 + e^(...))
     // = range * 10000 / denominator
-    let sigmoid_value = range
-        .checked_mul(10_000)
-        .unwrap_or(u64::MAX)
-        / denominator;
+    let sigmoid_value = range.checked_mul(10_000).unwrap_or(u64::MAX) / denominator;
 
     floor.saturating_add(sigmoid_value)
 }
@@ -728,7 +731,9 @@ mod tests {
         let tolerance = 100; // Within 1%
         assert!(
             (cap as i32 - expected_mid as i32).unsigned_abs() <= tolerance,
-            "Midpoint cap {} should be near {}", cap, expected_mid
+            "Midpoint cap {} should be near {}",
+            cap,
+            expected_mid
         );
     }
 
@@ -736,7 +741,11 @@ mod tests {
     fn test_sigmoid_growth_cap_at_maturity() {
         // At day 1800 (5 years), cap should be near floor (3%)
         let cap = sigmoid_growth_cap_bps(1800);
-        assert!(cap <= SIGMOID_GROWTH_FLOOR_BPS + 50, "Mature cap {} should be near floor", cap);
+        assert!(
+            cap <= SIGMOID_GROWTH_FLOOR_BPS + 50,
+            "Mature cap {} should be near floor",
+            cap
+        );
         assert!(cap >= SIGMOID_GROWTH_FLOOR_BPS);
     }
 
@@ -745,7 +754,14 @@ mod tests {
         let mut prev = sigmoid_growth_cap_bps(0);
         for day in (30..=1800).step_by(30) {
             let cap = sigmoid_growth_cap_bps(day);
-            assert!(cap <= prev, "Cap at day {} ({}) > cap at day {} ({})", day, cap, day - 30, prev);
+            assert!(
+                cap <= prev,
+                "Cap at day {} ({}) > cap at day {} ({})",
+                day,
+                cap,
+                day - 30,
+                prev
+            );
             prev = cap;
         }
     }
@@ -754,7 +770,12 @@ mod tests {
     fn test_sigmoid_never_below_floor() {
         for day in [0, 100, 540, 1000, 3650, 10000] {
             let cap = sigmoid_growth_cap_bps(day);
-            assert!(cap >= SIGMOID_GROWTH_FLOOR_BPS, "Day {}: cap {} below floor", day, cap);
+            assert!(
+                cap >= SIGMOID_GROWTH_FLOOR_BPS,
+                "Day {}: cap {} below floor",
+                day,
+                cap
+            );
         }
     }
 
@@ -762,7 +783,12 @@ mod tests {
     fn test_sigmoid_never_above_ceiling() {
         for day in [0, 1, 10, 100] {
             let cap = sigmoid_growth_cap_bps(day);
-            assert!(cap <= SIGMOID_GROWTH_CEILING_BPS, "Day {}: cap {} above ceiling", day, cap);
+            assert!(
+                cap <= SIGMOID_GROWTH_CEILING_BPS,
+                "Day {}: cap {} above ceiling",
+                day,
+                cap
+            );
         }
     }
 
@@ -781,8 +807,15 @@ mod tests {
     fn test_sigmoid_sample_values() {
         // Print a sample curve for visual verification
         println!("Day → Growth Cap BPS:");
-        for &day in &[0, 90, 180, 270, 360, 450, 540, 630, 720, 810, 900, 1080, 1260, 1800] {
-            println!("  Day {:>5}: {:>4} bps ({:.1}%)", day, sigmoid_growth_cap_bps(day), sigmoid_growth_cap_bps(day) as f64 / 100.0);
+        for &day in &[
+            0, 90, 180, 270, 360, 450, 540, 630, 720, 810, 900, 1080, 1260, 1800,
+        ] {
+            println!(
+                "  Day {:>5}: {:>4} bps ({:.1}%)",
+                day,
+                sigmoid_growth_cap_bps(day),
+                sigmoid_growth_cap_bps(day) as f64 / 100.0
+            );
         }
     }
 
@@ -855,8 +888,12 @@ mod tests {
     #[test]
     fn test_sigmoid_emission_at_launch() {
         let emission = sigmoid_daily_emission(0);
-        assert!(emission >= 15_800, "Launch emission too low: {}", emission);
-        assert!(emission <= EMISSION_CEILING, "Launch emission above ceiling: {}", emission);
+        assert!(emission >= 15_800 * ONE_TOKEN, "Launch emission too low: {}", emission);
+        assert!(
+            emission <= EMISSION_CEILING,
+            "Launch emission above ceiling: {}",
+            emission
+        );
     }
 
     #[test]
@@ -864,15 +901,27 @@ mod tests {
         let emission = sigmoid_daily_emission(EMISSION_MIDPOINT_DAYS);
         let expected_mid = (EMISSION_CEILING + EMISSION_FLOOR) / 2; // ~8,050
         let tolerance = expected_mid / 20; // 5%
-        assert!(emission >= expected_mid - tolerance, "Midpoint emission too low: {}", emission);
-        assert!(emission <= expected_mid + tolerance, "Midpoint emission too high: {}", emission);
+        assert!(
+            emission >= expected_mid - tolerance,
+            "Midpoint emission too low: {}",
+            emission
+        );
+        assert!(
+            emission <= expected_mid + tolerance,
+            "Midpoint emission too high: {}",
+            emission
+        );
     }
 
     #[test]
     fn test_sigmoid_emission_at_maturity() {
         let emission = sigmoid_daily_emission(5000); // ~13.7 years
         assert!(emission >= EMISSION_FLOOR, "Below floor: {}", emission);
-        assert!(emission <= EMISSION_FLOOR + 200, "Too far above floor at maturity: {}", emission);
+        assert!(
+            emission <= EMISSION_FLOOR + 200 * ONE_TOKEN,
+            "Too far above floor at maturity: {}",
+            emission
+        );
     }
 
     #[test]
@@ -880,7 +929,13 @@ mod tests {
         let mut prev = sigmoid_daily_emission(0);
         for day in (1..5000).step_by(10) {
             let current = sigmoid_daily_emission(day);
-            assert!(current <= prev, "Emission increased at day {}: {} > {}", day, current, prev);
+            assert!(
+                current <= prev,
+                "Emission increased at day {}: {} > {}",
+                day,
+                current,
+                prev
+            );
             prev = current;
         }
     }
@@ -889,7 +944,12 @@ mod tests {
     fn test_sigmoid_emission_never_below_floor() {
         for day in (0..10000).step_by(100) {
             let emission = sigmoid_daily_emission(day);
-            assert!(emission >= EMISSION_FLOOR, "Below floor at day {}: {}", day, emission);
+            assert!(
+                emission >= EMISSION_FLOOR,
+                "Below floor at day {}: {}",
+                day,
+                emission
+            );
         }
     }
 
@@ -897,7 +957,12 @@ mod tests {
     fn test_sigmoid_emission_never_above_ceiling() {
         for day in 0..10000 {
             let emission = sigmoid_daily_emission(day);
-            assert!(emission <= EMISSION_CEILING, "Above ceiling at day {}: {}", day, emission);
+            assert!(
+                emission <= EMISSION_CEILING,
+                "Above ceiling at day {}: {}",
+                day,
+                emission
+            );
         }
     }
 
@@ -910,12 +975,24 @@ mod tests {
         let year8 = sigmoid_daily_emission(2920);
         let year10 = sigmoid_daily_emission(3650);
 
-        assert!(year1 > 13_000, "Year 1 too low: {}", year1);
-        assert!(year2 > 10_000, "Year 2 too low: {}", year2);
-        assert!(year4 > 7_000 && year4 < 9_000, "Year 4 unexpected: {}", year4);
-        assert!(year6 > 2_000 && year6 < 5_000, "Year 6 unexpected: {}", year6);
-        assert!(year8 > 500 && year8 < 2_000, "Year 8 unexpected: {}", year8);
-        assert!(year10 > 100 && year10 < 500, "Year 10 unexpected: {}", year10);
+        assert!(year1 > 13_000 * ONE_TOKEN, "Year 1 too low: {}", year1);
+        assert!(year2 > 10_000 * ONE_TOKEN, "Year 2 too low: {}", year2);
+        assert!(
+            year4 > 7_000 * ONE_TOKEN && year4 < 9_000 * ONE_TOKEN,
+            "Year 4 unexpected: {}",
+            year4
+        );
+        assert!(
+            year6 > 200 * ONE_TOKEN && year6 < 2_000 * ONE_TOKEN,
+            "Year 6 unexpected: {}",
+            year6
+        );
+        assert!(year8 > 100 * ONE_TOKEN && year8 < 500 * ONE_TOKEN, "Year 8 unexpected: {}", year8);
+        assert!(
+            year10 >= EMISSION_FLOOR && year10 < 200 * ONE_TOKEN,
+            "Year 10 unexpected: {}",
+            year10
+        );
     }
 
     #[test]

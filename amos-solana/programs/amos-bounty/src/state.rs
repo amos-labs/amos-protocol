@@ -714,7 +714,6 @@ pub struct ContributionTypeRegistry {
 
     // ── Sigmoid Growth Cap Parameters ──────────────────────────────
     // growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
-
     /// Sigmoid ceiling: max growth share at launch (BPS)
     pub sigmoid_ceiling_bps: u16, // 2
 
@@ -730,7 +729,6 @@ pub struct ContributionTypeRegistry {
     // ── Sigmoid Emission Parameters ──────────────────────────────
     // emission(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
     // Governance-tunable within bounds defined in constants.rs
-
     /// Emission ceiling: max daily emission at launch (tokens/day)
     pub emission_ceiling: u64, // 8
 
@@ -771,7 +769,7 @@ impl ContributionTypeRegistry {
         + 8                      // emission_floor
         + 8                      // emission_midpoint_days
         + 8                      // emission_k_scaled
-        + 96;                    // reserved (was 128, 32 bytes moved to emission params)
+        + 96; // reserved (was 128, 32 bytes moved to emission params)
 }
 
 #[cfg(test)]
