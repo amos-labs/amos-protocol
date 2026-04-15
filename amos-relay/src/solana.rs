@@ -205,11 +205,9 @@ impl SolanaClient {
             if data.len() < 8 + 32 + 32 + 32 + 8 {
                 return Err(AmosError::Internal("Config account too small".into()));
             }
-            let ts = i64::from_le_bytes(
-                data[104..112]
-                    .try_into()
-                    .map_err(|_| AmosError::Internal("Config account data slice conversion failed".into()))?,
-            );
+            let ts = i64::from_le_bytes(data[104..112].try_into().map_err(|_| {
+                AmosError::Internal("Config account data slice conversion failed".into())
+            })?);
             Ok::<i64, AmosError>(ts)
         })
         .await
@@ -479,10 +477,10 @@ fn hash_to_32_bytes(input: &str) -> [u8; 32] {
 /// Derive an Associated Token Account (ATA) address.
 fn derive_associated_token_account(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
     // These are well-known constant program IDs — parsing cannot fail.
-    let ata_program = Pubkey::from_str(SPL_ASSOCIATED_TOKEN_PROGRAM_ID)
-        .expect("constant SPL ATA program ID");
-    let token_program = Pubkey::from_str(SPL_TOKEN_PROGRAM_ID)
-        .expect("constant SPL token program ID");
+    let ata_program =
+        Pubkey::from_str(SPL_ASSOCIATED_TOKEN_PROGRAM_ID).expect("constant SPL ATA program ID");
+    let token_program =
+        Pubkey::from_str(SPL_TOKEN_PROGRAM_ID).expect("constant SPL token program ID");
 
     let (ata, _) = Pubkey::find_program_address(
         &[wallet.as_ref(), token_program.as_ref(), mint.as_ref()],
