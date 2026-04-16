@@ -572,7 +572,7 @@ mod tests {
 
     #[test]
     fn test_initial_types_count() {
-        assert_eq!(CONTRIBUTION_TYPE_COUNT, 11); // 8 technical + 3 growth
+        assert_eq!(CONTRIBUTION_TYPE_COUNT, 12); // 8 technical + 3 growth + 1 discovery
         assert_eq!(MAX_CONTRIBUTION_TYPES, 16);
     }
 

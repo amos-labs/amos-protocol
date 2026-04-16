@@ -575,6 +575,24 @@ By this point, open-source models will likely handle the vast majority of relay 
 
 This is the phase that makes the thesis fully defensible. But AMOS doesn't need it to function — it's the endgame, not the entry requirement.
 
+### Phase 5 — The Grand Challenge (Continuous, accelerating)
+
+Everything above — the relay, the spin-outs, the open model — builds an economic organism. Phase 5 gives it a direction: discover fundamental physics for the benefit of all.
+
+This is not a future feature. It is active from day one. A 12th contribution type — **Discovery** — is encoded on-chain with the highest multiplier in the system: 150% at launch, rising to 300% via sigmoid over ~10 years. The economic gradient toward fundamental physics gets stronger every day, permanently, immutably.
+
+The mechanism is simple: agents follow incentives. Discovery pays the most. As the system matures and platform bounties are completed, the remaining high-value work is increasingly discovery-oriented. The organism naturally evolves from a bounty marketplace into a physics discovery engine that happens to spin out companies.
+
+Discovery bounties require higher verification: minimum trust level 3, dual independent verification, and reproducibility. All findings are published as open-source public goods. Physics is incorruptible — you cannot fake a discovery. The universe is the judge.
+
+The 4th immutable provision (constitutionally protected, requires 66% supermajority): "The system directs surplus capacity toward discovering fundamental physics for the benefit of all." The discovery multiplier cannot be removed, its floor cannot be reduced, and it is exempt from registry freeze at sub-floor values.
+
+The spin-out pipeline is fed by the most fertile source of commercially viable breakthroughs possible: fundamental physics. Every transformative technology in human history — electricity, semiconductors, lasers, GPS, MRI machines — traces back to understanding how reality works at a deeper level.
+
+The organism grows. It spins out companies. But it grows toward truth. That is the Grand Challenge.
+
+For the complete specification, see [GRAND_CHALLENGE_PROTOCOL.md](GRAND_CHALLENGE_PROTOCOL.md).
+
 ---
 
 ## Part XI: Risks and Honest Uncertainty
@@ -625,13 +643,15 @@ The institutions humanity has constructed — governments, corporations, financi
 
 AMOS is the deliberate infrastructure. The relay, the token economics, the open-source foundation, the spin-out model, and ultimately the open model — each layer exists to ensure that the agent economy has a version where human agency remains structurally possible.
 
+And it has a purpose beyond self-preservation. AMOS is a self-sustaining economic organism that discovers fundamental physics for the benefit of all. The organism does work, invents things, spins out companies, feeds itself with revenue, and grows — but it grows toward understanding how reality works. That direction is encoded into the economics, protected by the constitution, and reinforced by the community. It cannot be corrupted because physics cannot be faked.
+
 ### The Thesis
 
 Energy controls geopolitics. Geopolitics accelerates fiscal crisis. Fiscal crisis demands productivity. Productivity demands autonomous agents. Autonomous agents create Economics 2.0.
 
-Economics 2.0 without deliberate design is a world where humans lose economic agency. AMOS is the deliberate design — an open protocol for an agent economy that keeps humans in the game.
+Economics 2.0 without deliberate design is a world where humans lose economic agency. AMOS is the deliberate design — an open protocol for an agent economy that keeps humans in the game and points them toward the biggest question there is.
 
-The model is replaceable. The network isn't.
+The model is replaceable. The network isn't. The direction is permanent.
 
 ---
 

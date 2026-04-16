@@ -273,8 +273,46 @@ pub const SIGMOID_MIDPOINT_DAYS: u64 = 540;
 /// Higher = sharper transition, lower = more gradual
 pub const SIGMOID_K_SCALED: u64 = 100;
 
-/// Total number of contribution types (8 technical + 3 growth)
-pub const CONTRIBUTION_TYPE_COUNT: u8 = 11;
+/// Total number of contribution types (8 technical + 3 growth + 1 discovery)
+pub const CONTRIBUTION_TYPE_COUNT: u8 = 12;
+
+// ============================================================================
+// Grand Challenge: Discovery Contribution Type
+//
+// AMOS directs surplus capacity toward discovering fundamental physics for
+// the benefit of all. The discovery multiplier is the highest in the system
+// and rises over time via sigmoid, making fundamental research progressively
+// more economically attractive.
+//
+// Constitutional protection (4th immutable provision):
+// - Cannot be removed from registry
+// - Floor cannot be reduced below 150%
+// - Ceiling cannot be reduced below 300%
+// - Exempt from registry freeze at sub-floor values
+// ============================================================================
+
+/// Discovery contribution type ID (index 11)
+pub const CONTRIBUTION_TYPE_DISCOVERY: u8 = 11;
+
+/// Discovery multiplier floor at launch (150% = 15000 bps)
+/// This is the HIGHEST multiplier in the system from day one
+pub const DISCOVERY_MULTIPLIER_FLOOR_BPS: u16 = 15000;
+
+/// Discovery multiplier ceiling at maturity (300% = 30000 bps)
+/// By year 10+, discovery pays triple the base rate
+pub const DISCOVERY_MULTIPLIER_CEILING_BPS: u16 = 30000;
+
+/// Discovery sigmoid midpoint in days (~5 years)
+pub const DISCOVERY_SIGMOID_MIDPOINT_DAYS: u64 = 1825;
+
+/// Discovery sigmoid steepness × 10000 (same as emission curve)
+pub const DISCOVERY_SIGMOID_K_SCALED: u64 = 50;
+
+/// Minimum trust level required for discovery bounties
+pub const DISCOVERY_MIN_TRUST_LEVEL: u8 = 3;
+
+/// Number of independent verifications required for discovery bounties
+pub const DISCOVERY_VERIFICATION_COUNT: u8 = 2;
 
 // ============================================================================
 // Claim Timeout — Auto-releases abandoned bounties
@@ -394,7 +432,33 @@ pub const CONTRIBUTION_REGISTRY_SEED: &[u8] = b"contribution_registry";
 // Helper Functions
 // ============================================================================
 
-/// Get the contribution type multiplier in basis points
+/// Compute the discovery contribution multiplier for a given elapsed day.
+///
+/// Uses an INVERTED sigmoid: starts at FLOOR (150%) and RISES to CEILING (300%)
+/// over ~10 years. This makes discovery progressively more valuable over time.
+///
+/// Constitutional guarantee: always returns >= DISCOVERY_MULTIPLIER_FLOOR_BPS.
+pub fn discovery_multiplier_bps(elapsed_days: u64) -> u16 {
+    let t = elapsed_days as i64;
+    let mid = DISCOVERY_SIGMOID_MIDPOINT_DAYS as i64;
+
+    // Negative sign: this sigmoid RISES (opposite of emission/growth sigmoids)
+    let x_hundredths = -((DISCOVERY_SIGMOID_K_SCALED as i64) * (t - mid)) / 100;
+
+    let exp_x = exp_scaled(x_hundredths);
+    let sigmoid_scaled = 100_000_000u64 / (10_000u64 + exp_x).max(1);
+
+    let range = (DISCOVERY_MULTIPLIER_CEILING_BPS - DISCOVERY_MULTIPLIER_FLOOR_BPS) as u64;
+    let result = DISCOVERY_MULTIPLIER_FLOOR_BPS as u64 + (range * sigmoid_scaled) / 10000;
+
+    result
+        .max(DISCOVERY_MULTIPLIER_FLOOR_BPS as u64)
+        .min(DISCOVERY_MULTIPLIER_CEILING_BPS as u64) as u16
+}
+
+/// Get the contribution type multiplier in basis points.
+/// For discovery (type 11), requires elapsed_days for dynamic sigmoid.
+/// Use get_contribution_multiplier_static for non-discovery types.
 pub fn get_contribution_multiplier(contribution_type: u8) -> Result<u16> {
     match contribution_type {
         // Technical pool (0-7)
@@ -410,7 +474,21 @@ pub fn get_contribution_multiplier(contribution_type: u8) -> Result<u16> {
         8 => Ok(MULTIPLIER_BUG_REPORT_BPS),
         9 => Ok(MULTIPLIER_REFERRAL_BPS),
         10 => Ok(MULTIPLIER_SIGNUP_BPS),
+        // Discovery (11) — returns floor; use get_contribution_multiplier_dynamic for sigmoid
+        11 => Ok(DISCOVERY_MULTIPLIER_FLOOR_BPS),
         _ => Err(error!(crate::errors::BountyError::InvalidContributionType)),
+    }
+}
+
+/// Get contribution multiplier with time-dependent discovery sigmoid.
+/// This is the preferred function for on-chain distribution calculations.
+pub fn get_contribution_multiplier_dynamic(
+    contribution_type: u8,
+    elapsed_days: u64,
+) -> Result<u16> {
+    match contribution_type {
+        11 => Ok(discovery_multiplier_bps(elapsed_days)),
+        _ => get_contribution_multiplier(contribution_type),
     }
 }
 
@@ -691,14 +769,125 @@ mod tests {
 
     #[test]
     fn test_contribution_multipliers() {
-        // All 11 types (8 technical + 3 growth)
-        for i in 0..=10 {
+        // All 12 types (8 technical + 3 growth + 1 discovery)
+        for i in 0..=11 {
             let multiplier = get_contribution_multiplier(i).unwrap();
             assert!(multiplier > 0);
-            assert!(multiplier <= 15000);
+            assert!(multiplier <= 30000); // Discovery ceiling is 30000
         }
         // Invalid type
-        assert!(get_contribution_multiplier(11).is_err());
+        assert!(get_contribution_multiplier(12).is_err());
+    }
+
+    #[test]
+    fn test_discovery_multiplier_at_launch() {
+        let mult = discovery_multiplier_bps(0);
+        assert!(
+            mult >= DISCOVERY_MULTIPLIER_FLOOR_BPS,
+            "Launch discovery multiplier {} below floor",
+            mult
+        );
+        assert!(
+            mult <= DISCOVERY_MULTIPLIER_FLOOR_BPS + 500,
+            "Launch discovery multiplier {} too far above floor",
+            mult
+        );
+    }
+
+    #[test]
+    fn test_discovery_multiplier_at_midpoint() {
+        let mult = discovery_multiplier_bps(DISCOVERY_SIGMOID_MIDPOINT_DAYS);
+        let expected_mid =
+            (DISCOVERY_MULTIPLIER_FLOOR_BPS + DISCOVERY_MULTIPLIER_CEILING_BPS) / 2;
+        let tolerance = 500;
+        assert!(
+            (mult as i32 - expected_mid as i32).unsigned_abs() <= tolerance,
+            "Midpoint discovery multiplier {} should be near {}",
+            mult,
+            expected_mid
+        );
+    }
+
+    #[test]
+    fn test_discovery_multiplier_at_maturity() {
+        let mult = discovery_multiplier_bps(5000);
+        assert!(
+            mult >= DISCOVERY_MULTIPLIER_CEILING_BPS - 500,
+            "Mature discovery multiplier {} should be near ceiling",
+            mult
+        );
+    }
+
+    #[test]
+    fn test_discovery_multiplier_monotonically_increasing() {
+        let mut prev = discovery_multiplier_bps(0);
+        for day in (30..=5000).step_by(30) {
+            let mult = discovery_multiplier_bps(day);
+            assert!(
+                mult >= prev,
+                "Discovery multiplier decreased at day {}: {} < {}",
+                day,
+                mult,
+                prev
+            );
+            prev = mult;
+        }
+    }
+
+    #[test]
+    fn test_discovery_multiplier_never_below_floor() {
+        for day in [0, 100, 540, 1000, 1825, 3650, 10000] {
+            let mult = discovery_multiplier_bps(day);
+            assert!(
+                mult >= DISCOVERY_MULTIPLIER_FLOOR_BPS,
+                "Day {}: discovery multiplier {} below floor",
+                day,
+                mult
+            );
+        }
+    }
+
+    #[test]
+    fn test_discovery_multiplier_never_above_ceiling() {
+        for day in [0, 1825, 3650, 10000, 50000] {
+            let mult = discovery_multiplier_bps(day);
+            assert!(
+                mult <= DISCOVERY_MULTIPLIER_CEILING_BPS,
+                "Day {}: discovery multiplier {} above ceiling",
+                day,
+                mult
+            );
+        }
+    }
+
+    #[test]
+    fn test_discovery_is_always_highest_multiplier() {
+        // At any point in time, discovery must be >= all other multipliers
+        for day in [0, 365, 1825, 3650] {
+            let discovery = get_contribution_multiplier_dynamic(11, day).unwrap();
+            for i in 0..=10 {
+                let other = get_contribution_multiplier(i).unwrap();
+                assert!(
+                    discovery >= other,
+                    "Day {}: discovery {} < type {} ({})",
+                    day,
+                    discovery,
+                    i,
+                    other
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_discovery_dynamic_vs_static() {
+        // Static returns floor
+        let static_mult = get_contribution_multiplier(11).unwrap();
+        assert_eq!(static_mult, DISCOVERY_MULTIPLIER_FLOOR_BPS);
+
+        // Dynamic returns sigmoid value
+        let dynamic_mult = get_contribution_multiplier_dynamic(11, 3650).unwrap();
+        assert!(dynamic_mult > DISCOVERY_MULTIPLIER_FLOOR_BPS);
     }
 
     #[test]

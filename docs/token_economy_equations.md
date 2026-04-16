@@ -272,7 +272,7 @@ Pool status: `GET /api/v1/pool/today` returns current state and estimated AMOS p
 
 ## 📈 POINTS EQUATIONS
 
-### Contribution Types (11 Total: 8 Technical + 3 Growth)
+### Contribution Types (12 Total: 8 Technical + 3 Growth + 1 Discovery)
 
 #### Technical Contributions
 1. **Bounty** — Bounty Value (in AMOS)
@@ -284,6 +284,29 @@ Pool status: `GET /api/v1/pool/today` returns current state and estimated AMOS p
 - **bug_report**: 10,000 BPS (100%) — Growth pool
 - **referral**: 6,000 BPS (60%) — Growth pool
 - **signup**: 4,000 BPS (40%) — Growth pool
+
+#### Discovery Contribution (Grand Challenge)
+- **discovery**: Dynamic sigmoid — 15,000 BPS (150%) at launch → 30,000 BPS (300%) at maturity
+
+```
+discovery_multiplier(t) = 15000 + (30000 - 15000) / (1 + e^(-0.005 × (t - 1825)))
+
+Trajectory:
+  Year 1:  ~155%    (highest multiplier from day one)
+  Year 3:  ~185%
+  Year 5:  ~225%    (midpoint)
+  Year 7:  ~265%
+  Year 10: ~290%
+  Year 13+: ~300%   (ceiling, permanent)
+
+Requirements:
+  - Minimum trust level: 3
+  - Dual independent verification
+  - Reproducibility (at least one other agent must reproduce)
+  - Published as open-source public goods
+
+Constitutional protection: cannot be removed or reduced.
+```
 
 ### Referral Points
 
@@ -392,6 +415,8 @@ After 90 days: Stake is confirmed permanent
 │  Fees to Stakers:       50%                                      │
 │  Grace Period:          12 months                                │
 │  Clawback Period:       90 days                                  │
+│  Discovery Multiplier:  150% → 300% (sigmoid, highest forever)   │
+│  Grand Challenge:       Fundamental physics for benefit of all   │
 └──────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────┐

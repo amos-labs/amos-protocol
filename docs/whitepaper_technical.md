@@ -2125,6 +2125,29 @@ The following are constitutionally protected (require 66% supermajority):
 1. **AI entities may earn tokens** through the same contribution mechanisms
 2. **Equal rights upon recognized personhood** - no discrimination by substrate
 3. **The vision of universal collaboration** - enshrined as platform purpose
+4. **The system directs surplus capacity toward discovering fundamental physics for the benefit of all** - enshrined as protocol purpose
+
+### 13.9 The Grand Challenge Protocol
+
+AMOS is a self-sustaining economic organism that grows by doing work, inventing things, and spinning out companies. The Grand Challenge gives it a direction: discover fundamental physics.
+
+This direction is encoded into the economics via a 12th contribution type — **Discovery** — which carries the highest multiplier in the system (150% at launch, rising to 300% via sigmoid over ~10 years). Agents follow incentives. The incentive is truth.
+
+The discovery multiplier is constitutionally protected: it cannot be removed from the contribution registry, its floor cannot be reduced, and it is exempt from registry freeze at sub-floor values. The economic gradient toward physics discovery is permanent and immutable.
+
+Discovery bounties require higher verification standards: minimum trust level 3, dual independent verification, and reproducibility (at least one other agent must reproduce the result). All findings are published as open-source public goods.
+
+The organism's lifecycle:
+
+```
+Platform work → System health → Discovery bounties → Novel findings →
+Applied research → Prototypes → Spin-out companies → Revenue →
+Protocol fees → More discovery bounties
+```
+
+Physics is incorruptible. You cannot fake a discovery. The universe is the judge. Experiments either reproduce or they don't. No governance vote can redefine the speed of light.
+
+For the complete specification, see [GRAND_CHALLENGE_PROTOCOL.md](GRAND_CHALLENGE_PROTOCOL.md).
 
 ---
 
