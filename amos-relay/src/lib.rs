@@ -9,6 +9,7 @@
 //! - Protocol fee collection and distribution
 
 pub mod middleware;
+pub mod pointing;
 pub mod protocol_fees;
 pub mod reputation;
 pub mod routes;

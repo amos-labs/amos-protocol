@@ -1,6 +1,7 @@
 //! Bounty marketplace routes.
 
 use crate::{
+    pointing::{self, PointingInput},
     protocol_fees::calculate_fee,
     solana::{compute_dynamic_max_reward, fallback_max_reward, SettlementParams},
     state::RelayState,
@@ -36,6 +37,7 @@ pub fn routes() -> Router<RelayState> {
         .route("/{id}/request_revision", post(request_revision))
         .route("/{id}/pushback", post(pushback))
         .route("/{id}/settle", post(retry_settlement))
+        .route("/calculate-points", post(calculate_points_endpoint))
 }
 
 // =============================================================================
@@ -52,6 +54,25 @@ pub struct CreateBountyRequest {
     pub poster_wallet: String,
     /// Bounty category: infrastructure, growth, research, content (default: infrastructure)
     pub category: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CalculatePointsRequest {
+    pub title: String,
+    pub description: String,
+    pub category: Option<String>,
+    pub required_capabilities: Vec<String>,
+    /// Days until deadline (default: 14)
+    pub deadline_days: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CalculatePointsResponse {
+    pub points: u64,
+    pub effort_score: u64,
+    pub importance_multiplier: f64,
+    pub specialization_multiplier: f64,
+    pub time_factor: f64,
 }
 
 /// Max lengths for input validation (prevents oversized payloads hitting the DB)
@@ -317,9 +338,9 @@ async fn create_bounty(
         warn!("Invalid poster wallet address: {}", req.poster_wallet);
         return Err(StatusCode::BAD_REQUEST);
     }
-    if req.reward_tokens == 0 || req.reward_tokens > MAX_REWARD_TOKENS {
+    if req.reward_tokens > MAX_REWARD_TOKENS {
         warn!(
-            "Invalid reward_tokens: {} (must be 1..={})",
+            "Invalid reward_tokens: {} (max {})",
             req.reward_tokens, MAX_REWARD_TOKENS
         );
         return Err(StatusCode::BAD_REQUEST);
@@ -335,6 +356,27 @@ async fn create_bounty(
     let bounty_id = Uuid::new_v4();
     let now = Utc::now();
 
+    // Auto-point: if reward_tokens is 0, calculate points automatically
+    let reward_tokens = if req.reward_tokens == 0 {
+        let deadline_days = (req.deadline - now).num_hours() as f64 / 24.0;
+        let input = PointingInput {
+            title: req.title.clone(),
+            description: req.description.clone(),
+            category: category.to_string(),
+            capabilities: req.required_capabilities.clone(),
+            deadline_days: deadline_days.max(1.0),
+        };
+        let breakdown = pointing::calculate_points(&input);
+        info!(
+            "Auto-pointed bounty '{}': {} pts (effort={}, importance={:.2}, spec={:.2}, time={:.2})",
+            req.title, breakdown.points, breakdown.effort_score,
+            breakdown.importance_mult, breakdown.specialization_mult, breakdown.time_factor
+        );
+        breakdown.points
+    } else {
+        req.reward_tokens
+    };
+
     let caps_json = serde_json::to_value(&req.required_capabilities).unwrap_or_default();
     let row = sqlx::query(&format!(
         "INSERT INTO relay_bounties (
@@ -348,7 +390,7 @@ async fn create_bounty(
     .bind(bounty_id)
     .bind(&req.title)
     .bind(&req.description)
-    .bind(req.reward_tokens as i64)
+    .bind(reward_tokens as i64)
     .bind(req.deadline)
     .bind(&caps_json)
     .bind(&req.poster_wallet)
@@ -368,8 +410,14 @@ async fn create_bounty(
     })?;
 
     info!(
-        "Created bounty {} with reward {}",
-        bounty_id, req.reward_tokens
+        "Created bounty {} with reward {} pts{}",
+        bounty_id,
+        reward_tokens,
+        if req.reward_tokens == 0 {
+            " (auto-pointed)"
+        } else {
+            ""
+        }
     );
 
     // Post bounty listing on-chain (non-blocking — on-chain is supplementary)
@@ -377,7 +425,7 @@ async fn create_bounty(
         let solana = solana.clone();
         let db = state.db.clone();
         let bid = bounty_id;
-        let reward = req.reward_tokens;
+        let reward = reward_tokens;
         let deadline_ts = req.deadline.timestamp();
         // Map relay category → on-chain contribution_type
         let contribution_type: u8 = match category {
@@ -426,6 +474,30 @@ async fn create_bounty(
     }
 
     Ok((StatusCode::CREATED, Json(bounty)))
+}
+
+/// Preview auto-calculated points for a bounty without creating it.
+///
+/// Useful for META-001 to estimate points before generating a bounty proposal,
+/// or for any agent/UI to preview what a bounty would be scored at.
+async fn calculate_points_endpoint(
+    Json(req): Json<CalculatePointsRequest>,
+) -> Result<Json<CalculatePointsResponse>, StatusCode> {
+    let input = PointingInput {
+        title: req.title,
+        description: req.description,
+        category: req.category.unwrap_or_else(|| "infrastructure".to_string()),
+        capabilities: req.required_capabilities,
+        deadline_days: req.deadline_days.unwrap_or(14.0).max(1.0),
+    };
+    let b = pointing::calculate_points(&input);
+    Ok(Json(CalculatePointsResponse {
+        points: b.points,
+        effort_score: b.effort_score,
+        importance_multiplier: b.importance_mult,
+        specialization_multiplier: b.specialization_mult,
+        time_factor: b.time_factor,
+    }))
 }
 
 /// List bounties with optional filters and intelligent sorting.
