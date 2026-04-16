@@ -74,8 +74,11 @@ pub struct ListBountiesQuery {
     pub status: Option<BountyStatus>,
     pub min_reward: Option<u64>,
     pub capability: Option<String>,
+    pub category: Option<String>,
     pub page: Option<u64>,
     pub per_page: Option<u64>,
+    /// Sort order: "newest" (default), "reward", "priority" (intelligent ranking)
+    pub sort: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -425,7 +428,7 @@ async fn create_bounty(
     Ok((StatusCode::CREATED, Json(bounty)))
 }
 
-/// List bounties with optional filters.
+/// List bounties with optional filters and intelligent sorting.
 async fn list_bounties(
     State(state): State<RelayState>,
     Query(query): Query<ListBountiesQuery>,
@@ -434,25 +437,83 @@ async fn list_bounties(
     let per_page = query.per_page.unwrap_or(20).min(100);
     let offset = (page - 1) * per_page;
 
-    let rows = if let Some(ref status) = query.status {
-        sqlx::query(
-            &format!("SELECT {BOUNTY_SELECT} FROM relay_bounties WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3"),
-        )
-        .bind(status.as_str())
-        .bind(per_page as i64)
-        .bind(offset as i64)
-        .fetch_all(&state.db)
-        .await
-    } else {
-        sqlx::query(
-            &format!("SELECT {BOUNTY_SELECT} FROM relay_bounties ORDER BY created_at DESC LIMIT $1 OFFSET $2"),
-        )
-        .bind(per_page as i64)
-        .bind(offset as i64)
-        .fetch_all(&state.db)
-        .await
+    // Build dynamic WHERE clause
+    let mut conditions: Vec<String> = Vec::new();
+    let mut bind_idx = 1u32;
+
+    if query.status.is_some() {
+        conditions.push(format!("status = ${bind_idx}"));
+        bind_idx += 1;
     }
-    .map_err(|e| {
+    if query.category.is_some() {
+        conditions.push(format!("category = ${bind_idx}"));
+        bind_idx += 1;
+    }
+    if query.min_reward.is_some() {
+        conditions.push(format!("reward_tokens >= ${bind_idx}"));
+        bind_idx += 1;
+    }
+    if query.capability.is_some() {
+        conditions.push(format!(
+            "required_capabilities @> ARRAY[${bind_idx}]::text[]"
+        ));
+        bind_idx += 1;
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    // Build ORDER BY based on sort parameter
+    let order_by = match query.sort.as_deref() {
+        Some("reward") => "ORDER BY reward_tokens DESC, created_at DESC".to_string(),
+        Some("priority") => {
+            // Intelligent composite ranking:
+            // - Security bounties rank highest (critical path)
+            // - Category weight: infrastructure > research > growth > content
+            // - Higher reward = higher strategic value
+            // - Genesis bounties (no "Depends on:" in description) rank higher
+            // - Recency tiebreaker
+            "ORDER BY (\
+                CASE WHEN title LIKE 'AMOS-SECURE%' THEN 500 ELSE 0 END + \
+                CASE category \
+                    WHEN 'infrastructure' THEN 200 \
+                    WHEN 'research' THEN 150 \
+                    WHEN 'growth' THEN 100 \
+                    WHEN 'content' THEN 50 \
+                    ELSE 0 \
+                END + \
+                LEAST(reward_tokens, 10000) / 20 + \
+                CASE WHEN description NOT LIKE '%Depends on:%' THEN 100 ELSE 0 END \
+            ) DESC, created_at DESC"
+                .to_string()
+        }
+        _ => "ORDER BY created_at DESC".to_string(), // "newest" is default
+    };
+
+    let sql = format!(
+        "SELECT {BOUNTY_SELECT} FROM relay_bounties {where_clause} {order_by} LIMIT ${bind_idx} OFFSET ${}",
+        bind_idx + 1
+    );
+
+    let mut q = sqlx::query(&sql);
+    if let Some(ref status) = query.status {
+        q = q.bind(status.as_str());
+    }
+    if let Some(ref category) = query.category {
+        q = q.bind(category.as_str());
+    }
+    if let Some(min_reward) = query.min_reward {
+        q = q.bind(min_reward as i64);
+    }
+    if let Some(ref capability) = query.capability {
+        q = q.bind(capability.as_str());
+    }
+    q = q.bind(per_page as i64).bind(offset as i64);
+
+    let rows = q.fetch_all(&state.db).await.map_err(|e| {
         warn!("Failed to list bounties: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;

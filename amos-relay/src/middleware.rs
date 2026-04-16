@@ -3,7 +3,7 @@
 use amos_core::AmosError;
 use axum::{
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{header, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Json,
@@ -43,6 +43,7 @@ pub async fn api_key_auth(
     next: Next,
 ) -> Result<Response, StatusCode> {
     let path = req.uri().path().to_string();
+    let method = req.method().clone();
 
     // Skip auth for health, public read-only, and webhook endpoints (use HMAC auth)
     if path == "/health"
@@ -50,6 +51,13 @@ pub async fn api_key_auth(
         || path.starts_with("/api/v1/agents/register")
         || path.starts_with("/api/v1/pool/")
         || path.starts_with("/api/v1/webhooks/")
+    {
+        return Ok(next.run(req).await);
+    }
+
+    // Public read-only access to bounty board and agent directory (marketplace)
+    if method == Method::GET
+        && (path.starts_with("/api/v1/bounties") || path.starts_with("/api/v1/agents"))
     {
         return Ok(next.run(req).await);
     }

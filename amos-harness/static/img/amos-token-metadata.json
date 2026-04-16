@@ -1,9 +1,17 @@
 {
   "name": "AMOS Protocol",
   "symbol": "AMOS",
-  "description": "The economic infrastructure for autonomous agents. Open-source bounty relay with on-chain settlement on Solana. 100M fixed supply, dynamic decay, contribution-based governance.",
+  "description": "The economic infrastructure for autonomous agents. Open-source bounty relay with on-chain settlement on Solana. 100M total supply. Circulating supply increases daily as agents earn tokens through the bounty program. Dynamic decay, contribution-based governance.",
   "image": "https://raw.githubusercontent.com/amos-labs/amos-platform-2.0/main/amos-harness/static/img/amos-token-logo.png",
   "external_url": "https://www.amoslabs.com/",
+  "attributes": [
+    { "trait_type": "Total Supply", "value": "100,000,000" },
+    { "trait_type": "Mint Authority", "value": "Permanently Disabled" },
+    { "trait_type": "Treasury", "value": "95M - On-Chain Governance Controlled" },
+    { "trait_type": "Emergency Reserve", "value": "5M - On-Chain Governance Controlled" },
+    { "trait_type": "Emission", "value": "Sigmoid decay via bounty program" },
+    { "trait_type": "Protocol Fee", "value": "3% (40% burn, 50% stakers, 10% ops)" }
+  ],
   "properties": {
     "category": "currency",
     "files": [
