@@ -315,6 +315,9 @@ impl ToolRegistry {
         registry.register(Arc::new(canvas_tools::UpdateCanvasTool::new(
             db_pool.clone(),
         )));
+        registry.register(Arc::new(canvas_tools::PatchCanvasTool::new(
+            db_pool.clone(),
+        )));
         registry.register(Arc::new(canvas_tools::PublishCanvasTool::new(
             db_pool.clone(),
         )));
@@ -425,6 +428,7 @@ impl ToolRegistry {
         registry.register(Arc::new(site_tools::CreateSiteTool::new(db_pool.clone())));
         registry.register(Arc::new(site_tools::CreatePageTool::new(db_pool.clone())));
         registry.register(Arc::new(site_tools::UpdatePageTool::new(db_pool.clone())));
+        registry.register(Arc::new(site_tools::PatchPageTool::new(db_pool.clone())));
         registry.register(Arc::new(site_tools::PublishSiteTool::new(db_pool.clone())));
         registry.register(Arc::new(site_tools::ListSitesTool::new(db_pool.clone())));
 

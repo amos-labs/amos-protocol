@@ -353,6 +353,196 @@ impl Tool for UpdatePageTool {
     }
 }
 
+// ── PatchPage ───────────────────────────────────────────────────────────
+
+/// Surgically update a specific section of a page using search-and-replace.
+/// Avoids full-page rewrites that introduce unintended changes.
+pub struct PatchPageTool {
+    db_pool: PgPool,
+}
+
+impl PatchPageTool {
+    pub fn new(db_pool: PgPool) -> Self {
+        Self { db_pool }
+    }
+}
+
+#[async_trait]
+impl Tool for PatchPageTool {
+    fn name(&self) -> &str {
+        "patch_page"
+    }
+
+    fn description(&self) -> &str {
+        "Surgically update a specific section of a page without rewriting the entire content. Use this instead of update_page when you only need to change a button, heading, section, or style. Provide the exact existing content to find and the new content to replace it with. Supports patching HTML, CSS, and/or JS independently."
+    }
+
+    fn parameters_schema(&self) -> JsonValue {
+        json!({
+            "type": "object",
+            "properties": {
+                "site_slug": {
+                    "type": "string",
+                    "description": "Site slug"
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Page path (e.g. '/', '/about')"
+                },
+                "patches": {
+                    "type": "array",
+                    "description": "Array of patches to apply. Each patch targets html, css, or js content.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "target": {
+                                "type": "string",
+                                "enum": ["html", "css", "js"],
+                                "description": "Which content to patch: html, css, or js"
+                            },
+                            "old": {
+                                "type": "string",
+                                "description": "The exact existing content to find (must match exactly)"
+                            },
+                            "new": {
+                                "type": "string",
+                                "description": "The replacement content"
+                            }
+                        },
+                        "required": ["target", "old", "new"]
+                    }
+                }
+            },
+            "required": ["site_slug", "path", "patches"]
+        })
+    }
+
+    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+        let site_slug = params["site_slug"]
+            .as_str()
+            .ok_or_else(|| amos_core::AmosError::Validation("site_slug is required".to_string()))?;
+
+        let path = params["path"]
+            .as_str()
+            .ok_or_else(|| amos_core::AmosError::Validation("path is required".to_string()))?;
+
+        let patches = params["patches"]
+            .as_array()
+            .ok_or_else(|| amos_core::AmosError::Validation("patches must be an array".to_string()))?;
+
+        if patches.is_empty() {
+            return Err(amos_core::AmosError::Validation(
+                "patches array is empty".to_string(),
+            ));
+        }
+
+        let engine = SiteEngine::new(self.db_pool.clone());
+
+        // Fetch the current page
+        let (_site, page) = engine.get_page(site_slug, path).await?;
+
+        let mut html = page.html_content.clone();
+        let mut css = page.css_content.clone().unwrap_or_default();
+        let mut js = page.js_content.clone().unwrap_or_default();
+        let mut applied = Vec::new();
+        let mut errors = Vec::new();
+
+        for (i, patch) in patches.iter().enumerate() {
+            let target = patch["target"].as_str().unwrap_or("html");
+            let old = match patch["old"].as_str() {
+                Some(s) => s,
+                None => {
+                    errors.push(format!("patch[{}]: 'old' is required", i));
+                    continue;
+                }
+            };
+            let new = match patch["new"].as_str() {
+                Some(s) => s,
+                None => {
+                    errors.push(format!("patch[{}]: 'new' is required", i));
+                    continue;
+                }
+            };
+
+            let content = match target {
+                "html" => &mut html,
+                "css" => &mut css,
+                "js" => &mut js,
+                _ => {
+                    errors.push(format!("patch[{}]: invalid target '{}'", i, target));
+                    continue;
+                }
+            };
+
+            if content.contains(old) {
+                *content = content.replacen(old, new, 1);
+                applied.push(format!("patch[{}]: {} updated", i, target));
+            } else {
+                errors.push(format!(
+                    "patch[{}]: '{}' not found in {} content (no match)",
+                    i,
+                    if old.len() > 60 {
+                        format!("{}...", &old[..60])
+                    } else {
+                        old.to_string()
+                    },
+                    target
+                ));
+            }
+        }
+
+        if applied.is_empty() {
+            return Ok(ToolResult::error(format!(
+                "No patches applied — none of the old content fragments were found: {}",
+                errors.join("; ")
+            )));
+        }
+
+        // Save the patched content
+        let _page = engine
+            .upsert_page(
+                site_slug,
+                path,
+                &page.title,
+                page.description.as_deref(),
+                &html,
+                if css.is_empty() { None } else { Some(css.as_str()) },
+                if js.is_empty() { None } else { Some(js.as_str()) },
+                page.meta_title.as_deref(),
+                page.meta_description.as_deref(),
+                page.form_collection.as_deref(),
+            )
+            .await?;
+
+        let page_url = format!(
+            "/s/{}{}",
+            site_slug,
+            if path == "/" {
+                "".to_string()
+            } else {
+                path.to_string()
+            }
+        );
+        Ok(ToolResult::success_with_metadata(
+            json!({
+                "applied": applied,
+                "errors": errors,
+                "url": page_url,
+                "message": format!("{} patch(es) applied, {} error(s)", applied.len(), errors.len())
+            }),
+            json!({
+                "__canvas_action": "preview_site",
+                "site_slug": site_slug,
+                "url": page_url
+            }),
+        ))
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Schema
+    }
+}
+
 // ── PublishSite ──────────────────────────────────────────────────────────
 
 /// Publish a site to make it publicly accessible.

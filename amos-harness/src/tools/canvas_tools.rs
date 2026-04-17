@@ -381,6 +381,166 @@ impl Tool for UpdateCanvasTool {
     }
 }
 
+/// Surgically update a specific section of a canvas using search-and-replace.
+pub struct PatchCanvasTool {
+    db_pool: PgPool,
+}
+
+impl PatchCanvasTool {
+    pub fn new(db_pool: PgPool) -> Self {
+        Self { db_pool }
+    }
+}
+
+#[async_trait]
+impl Tool for PatchCanvasTool {
+    fn name(&self) -> &str {
+        "patch_canvas"
+    }
+
+    fn description(&self) -> &str {
+        "Surgically update a specific section of a canvas without rewriting the entire content. Use this instead of update_canvas when you only need to change a button, heading, section, or style. Provide the exact existing content to find and the new content to replace it with. Supports patching HTML, CSS, and/or JS independently."
+    }
+
+    fn parameters_schema(&self) -> JsonValue {
+        json!({
+            "type": "object",
+            "properties": {
+                "canvas_id": {
+                    "type": "string",
+                    "description": "Canvas UUID to patch"
+                },
+                "patches": {
+                    "type": "array",
+                    "description": "Array of patches to apply. Each patch targets html, css, or js content.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "target": {
+                                "type": "string",
+                                "enum": ["html", "css", "js"],
+                                "description": "Which content to patch: html, css, or js"
+                            },
+                            "old": {
+                                "type": "string",
+                                "description": "The exact existing content to find (must match exactly)"
+                            },
+                            "new": {
+                                "type": "string",
+                                "description": "The replacement content"
+                            }
+                        },
+                        "required": ["target", "old", "new"]
+                    }
+                }
+            },
+            "required": ["canvas_id", "patches"]
+        })
+    }
+
+    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+        let canvas_id_str = params["canvas_id"]
+            .as_str()
+            .ok_or_else(|| AmosError::Validation("canvas_id is required".to_string()))?;
+        let canvas_id = Uuid::parse_str(canvas_id_str)
+            .map_err(|e| AmosError::Validation(format!("Invalid canvas_id UUID: {}", e)))?;
+
+        let patches = params["patches"]
+            .as_array()
+            .ok_or_else(|| AmosError::Validation("patches must be an array".to_string()))?;
+
+        if patches.is_empty() {
+            return Err(AmosError::Validation("patches array is empty".to_string()));
+        }
+
+        let config = Arc::new(AppConfig::load()?);
+        let engine = CanvasEngine::new(self.db_pool.clone(), config);
+
+        // Fetch current canvas
+        let canvas = engine.get_canvas(canvas_id).await?;
+
+        let mut html = canvas.html_content.clone().unwrap_or_default();
+        let mut css = canvas.css_content.clone().unwrap_or_default();
+        let mut js = canvas.js_content.clone().unwrap_or_default();
+        let mut applied = Vec::new();
+        let mut errors = Vec::new();
+
+        for (i, patch) in patches.iter().enumerate() {
+            let target = patch["target"].as_str().unwrap_or("html");
+            let old = match patch["old"].as_str() {
+                Some(s) => s,
+                None => {
+                    errors.push(format!("patch[{}]: 'old' is required", i));
+                    continue;
+                }
+            };
+            let new = match patch["new"].as_str() {
+                Some(s) => s,
+                None => {
+                    errors.push(format!("patch[{}]: 'new' is required", i));
+                    continue;
+                }
+            };
+
+            let content = match target {
+                "html" => &mut html,
+                "css" => &mut css,
+                "js" => &mut js,
+                _ => {
+                    errors.push(format!("patch[{}]: invalid target '{}'", i, target));
+                    continue;
+                }
+            };
+
+            if content.contains(old) {
+                *content = content.replacen(old, new, 1);
+                applied.push(format!("patch[{}]: {} updated", i, target));
+            } else {
+                errors.push(format!(
+                    "patch[{}]: '{}' not found in {} content (no match)",
+                    i,
+                    if old.len() > 60 {
+                        format!("{}...", &old[..60])
+                    } else {
+                        old.to_string()
+                    },
+                    target
+                ));
+            }
+        }
+
+        if applied.is_empty() {
+            return Ok(ToolResult::error(format!(
+                "No patches applied — none of the old content fragments were found: {}",
+                errors.join("; ")
+            )));
+        }
+
+        // Save the patched content
+        let updates = crate::canvas::CanvasUpdate {
+            html_content: Some(html),
+            css_content: Some(css),
+            js_content: Some(js),
+            ..Default::default()
+        };
+
+        let canvas = engine.update_canvas(canvas_id, updates).await?;
+
+        Ok(ToolResult::success(json!({
+            "canvas_id": canvas.id.to_string(),
+            "slug": canvas.slug,
+            "version": canvas.version,
+            "applied": applied,
+            "errors": errors,
+            "message": format!("{} patch(es) applied, {} error(s)", applied.len(), errors.len())
+        })))
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Canvas
+    }
+}
+
 /// Publish a canvas (make it publicly accessible)
 pub struct PublishCanvasTool {
     db_pool: PgPool,
