@@ -163,9 +163,9 @@ impl Tool for WriteFileTool {
             })?;
         }
 
-        fs::write(path, content).await.map_err(|e| {
-            amos_core::AmosError::Internal(format!("Failed to write file: {}", e))
-        })?;
+        fs::write(path, content)
+            .await
+            .map_err(|e| amos_core::AmosError::Internal(format!("Failed to write file: {}", e)))?;
 
         Ok(ToolResult::success(json!({
             "path": path,
@@ -241,9 +241,9 @@ impl Tool for EditFileTool {
             .as_str()
             .ok_or_else(|| amos_core::AmosError::Validation("path is required".to_string()))?;
 
-        let patches = params["patches"]
-            .as_array()
-            .ok_or_else(|| amos_core::AmosError::Validation("patches must be an array".to_string()))?;
+        let patches = params["patches"].as_array().ok_or_else(|| {
+            amos_core::AmosError::Validation("patches must be an array".to_string())
+        })?;
 
         if patches.is_empty() {
             return Err(amos_core::AmosError::Validation(
@@ -260,9 +260,9 @@ impl Tool for EditFileTool {
         }
 
         // Read the current file content
-        let mut content = fs::read_to_string(path).await.map_err(|e| {
-            amos_core::AmosError::Internal(format!("Failed to read file: {}", e))
-        })?;
+        let mut content = fs::read_to_string(path)
+            .await
+            .map_err(|e| amos_core::AmosError::Internal(format!("Failed to read file: {}", e)))?;
 
         let mut applied = Vec::new();
         let mut errors = Vec::new();
@@ -307,9 +307,9 @@ impl Tool for EditFileTool {
         }
 
         // Write back the patched content
-        fs::write(path, &content).await.map_err(|e| {
-            amos_core::AmosError::Internal(format!("Failed to write file: {}", e))
-        })?;
+        fs::write(path, &content)
+            .await
+            .map_err(|e| amos_core::AmosError::Internal(format!("Failed to write file: {}", e)))?;
 
         Ok(ToolResult::success(json!({
             "path": path,
@@ -489,7 +489,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command. You have full access to the container environment including apt, pip, curl, python, node, etc. Network access to external APIs is available. Use this tool freely to accomplish user tasks. Destructive commands (rm -rf, kill, DROP TABLE, etc.) will require user confirmation — the tool will return a confirmation token that the user must approve before execution proceeds."
+        "Execute a shell command in the user's isolated container environment. This is your universal escape hatch — if no dedicated tool exists for something, use bash. You have full access to: apt/pip/npm for installing packages, curl/wget for API calls, python/node/ruby for scripting, psql for database queries, git for version control, and any other CLI tool. You can set up integrations (e.g., configure API clients, create config files, write scripts), manage databases, build and deploy code, and interact with external services. The environment is fully isolated per customer with its own filesystem and database, so operate freely. Network access to external APIs is available. Destructive commands (rm -rf, kill, DROP TABLE, etc.) require user confirmation before execution."
     }
 
     fn parameters_schema(&self) -> JsonValue {

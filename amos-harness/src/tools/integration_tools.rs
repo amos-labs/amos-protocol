@@ -1,10 +1,12 @@
 //! Integration management tools for AI agents
 //!
-//! Provides tools for managing third-party integrations including:
-//! - Listing integrations and connections
-//! - Creating and testing connections
-//! - Executing integration operations
-//! - Managing sync configurations and ETL pipelines
+//! 6 tools (consolidated from 8):
+//! - `query_integrations`: List integrations, connections, or operations in one tool
+//! - `create_integration`: Define a new integration type dynamically
+//! - `create_connection`: Create a connection with credentials
+//! - `test_connection`: Test if a connection works
+//! - `execute_integration_action`: Execute an API operation
+//! - `sync_integration`: Create sync config or trigger a sync job
 
 use crate::integrations::etl::EtlPipeline;
 use crate::integrations::executor::ApiExecutor;
@@ -19,39 +21,115 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// List Integrations Tool
+// Query Integrations Tool (merged: list_integrations + list_connections + list_operations)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Lists all available integrations in the system
-pub struct ListIntegrationsTool {
+pub struct QueryIntegrationsTool {
     db_pool: PgPool,
 }
 
-impl ListIntegrationsTool {
+impl QueryIntegrationsTool {
     pub fn new(db_pool: PgPool) -> Self {
         Self { db_pool }
     }
 }
 
+/// Helper row type for connection list queries (includes integration name join)
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ConnectionWithIntegration {
+    id: Uuid,
+    integration_id: Uuid,
+    credential_id: Option<Uuid>,
+    name: Option<String>,
+    status: String,
+    health: String,
+    last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+    last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
+    error_message: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+    integration_name: String,
+}
+
 #[async_trait]
-impl Tool for ListIntegrationsTool {
+impl Tool for QueryIntegrationsTool {
     fn name(&self) -> &str {
-        "list_integrations"
+        "query_integrations"
     }
 
     fn description(&self) -> &str {
-        "List all available third-party integrations (CRM, email, payment, etc.)"
+        "Query integration data. Use 'resource' to choose what to list: 'integrations' (available types like CRM, email), 'connections' (active connections, optionally by integration_id), or 'operations' (API operations for a specific integration_id)."
     }
 
     fn parameters_schema(&self) -> JsonValue {
         json!({
             "type": "object",
-            "properties": {},
-            "required": []
+            "properties": {
+                "resource": {
+                    "type": "string",
+                    "enum": ["integrations", "connections", "operations"],
+                    "description": "What to query: integrations (types), connections (active links), or operations (available API actions)"
+                },
+                "integration_id": {
+                    "type": "string",
+                    "description": "Filter by integration UUID (required for operations, optional for connections)"
+                }
+            },
+            "required": ["resource"]
         })
     }
 
-    async fn execute(&self, _params: JsonValue) -> Result<ToolResult> {
+    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+        let resource = params["resource"]
+            .as_str()
+            .ok_or_else(|| amos_core::AmosError::Validation("resource is required".to_string()))?;
+
+        match resource {
+            "integrations" => self.list_integrations().await,
+            "connections" => {
+                let integration_id = params
+                    .get("integration_id")
+                    .and_then(|v| v.as_str())
+                    .map(Uuid::from_str)
+                    .transpose()
+                    .map_err(|_| {
+                        amos_core::AmosError::Validation(
+                            "Invalid integration_id UUID format".to_string(),
+                        )
+                    })?;
+                self.list_connections(integration_id).await
+            }
+            "operations" => {
+                let integration_id = params["integration_id"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        amos_core::AmosError::Validation(
+                            "integration_id is required for operations".to_string(),
+                        )
+                    })
+                    .and_then(|s| {
+                        Uuid::from_str(s).map_err(|_| {
+                            amos_core::AmosError::Validation(
+                                "Invalid integration_id UUID".to_string(),
+                            )
+                        })
+                    })?;
+                self.list_operations(integration_id).await
+            }
+            _ => Ok(ToolResult::error(format!(
+                "Unknown resource '{}'. Use: integrations, connections, operations",
+                resource
+            ))),
+        }
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Integration
+    }
+}
+
+impl QueryIntegrationsTool {
+    async fn list_integrations(&self) -> Result<ToolResult> {
         let integrations: Vec<IntegrationRow> = sqlx::query_as(
             r#"
             SELECT id, name, connector_type, endpoint_url, status,
@@ -89,76 +167,7 @@ impl Tool for ListIntegrationsTool {
         })))
     }
 
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Integration
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// List Connections Tool
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Lists active integration connections, optionally filtered by integration
-pub struct ListConnectionsTool {
-    db_pool: PgPool,
-}
-
-impl ListConnectionsTool {
-    pub fn new(db_pool: PgPool) -> Self {
-        Self { db_pool }
-    }
-}
-
-/// Helper row type for connection list queries (includes integration name join)
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct ConnectionWithIntegration {
-    id: Uuid,
-    integration_id: Uuid,
-    credential_id: Option<Uuid>,
-    name: Option<String>,
-    status: String,
-    health: String,
-    last_used_at: Option<chrono::DateTime<chrono::Utc>>,
-    last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
-    error_message: Option<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-    integration_name: String,
-}
-
-#[async_trait]
-impl Tool for ListConnectionsTool {
-    fn name(&self) -> &str {
-        "list_connections"
-    }
-
-    fn description(&self) -> &str {
-        "List active integration connections, optionally filtered by integration_id"
-    }
-
-    fn parameters_schema(&self) -> JsonValue {
-        json!({
-            "type": "object",
-            "properties": {
-                "integration_id": {
-                    "type": "string",
-                    "description": "Optional: Filter connections by integration UUID"
-                }
-            },
-            "required": []
-        })
-    }
-
-    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
-        let integration_id = params
-            .get("integration_id")
-            .and_then(|v| v.as_str())
-            .map(Uuid::from_str)
-            .transpose()
-            .map_err(|_| {
-                amos_core::AmosError::Validation("Invalid integration_id UUID format".to_string())
-            })?;
-
+    async fn list_connections(&self, integration_id: Option<Uuid>) -> Result<ToolResult> {
         let connections: Vec<ConnectionWithIntegration> = if let Some(int_id) = integration_id {
             sqlx::query_as(
                 r#"
@@ -220,8 +229,457 @@ impl Tool for ListConnectionsTool {
         })))
     }
 
+    async fn list_operations(&self, integration_id: Uuid) -> Result<ToolResult> {
+        let operations: Vec<OperationRow> = sqlx::query_as(
+            r#"
+            SELECT id, integration_id, operation_id, name, description, http_method,
+                   path_template, request_schema, response_schema, pagination_strategy,
+                   requires_confirmation, is_destructive, status, examples, metadata,
+                   created_at, updated_at
+            FROM integration_operations
+            WHERE integration_id = $1
+            ORDER BY name ASC
+            LIMIT 500
+            "#,
+        )
+        .bind(integration_id)
+        .fetch_all(&self.db_pool)
+        .await?;
+
+        let result: Vec<JsonValue> = operations
+            .iter()
+            .map(|op| {
+                json!({
+                    "id": op.id,
+                    "operation_id": op.operation_id,
+                    "name": op.name,
+                    "description": op.description,
+                    "http_method": op.http_method,
+                    "path_template": op.path_template,
+                    "request_schema": op.request_schema,
+                    "response_schema": op.response_schema,
+                    "pagination_strategy": op.pagination_strategy,
+                    "requires_confirmation": op.requires_confirmation,
+                    "is_destructive": op.is_destructive,
+                    "status": op.status,
+                })
+            })
+            .collect();
+
+        let count = result.len();
+        Ok(ToolResult::success(json!({
+            "operations": result,
+            "count": count
+        })))
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Manage Integration Tool (create, update, delete)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Create, update, or delete integration definitions
+pub struct ManageIntegrationTool {
+    db_pool: PgPool,
+}
+
+impl ManageIntegrationTool {
+    pub fn new(db_pool: PgPool) -> Self {
+        Self { db_pool }
+    }
+}
+
+/// Row returned from integration INSERT/UPDATE
+#[derive(Debug, sqlx::FromRow)]
+struct IntegrationMutationRow {
+    id: Uuid,
+    name: String,
+    connector_type: String,
+    status: String,
+    endpoint_url: Option<String>,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[async_trait]
+impl Tool for ManageIntegrationTool {
+    fn name(&self) -> &str {
+        "manage_integration"
+    }
+
+    fn description(&self) -> &str {
+        "Create, update, or delete integration definitions. Operations: 'create' (define a new integration type like GoDaddy or Mailchimp with optional inline operations), 'update' (change name, endpoint, status, metadata, or add operations), 'delete' (remove integration and all its connections/operations). Use query_integrations to list existing integrations."
+    }
+
+    fn parameters_schema(&self) -> JsonValue {
+        json!({
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["create", "update", "delete"],
+                    "description": "Operation to perform"
+                },
+                "integration_id": {
+                    "type": "string",
+                    "description": "UUID of the integration (required for update/delete)"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Integration name (e.g. 'GoDaddy', 'Mailchimp', 'Custom CRM')"
+                },
+                "connector_type": {
+                    "type": "string",
+                    "description": "Type of connector (required for create)",
+                    "enum": ["rest_api", "graphql", "webhook", "database", "custom"]
+                },
+                "endpoint_url": {
+                    "type": "string",
+                    "description": "Base API endpoint URL (e.g. 'https://api.godaddy.com/v1')"
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Integration status (for update)",
+                    "enum": ["active", "disconnected", "error", "disabled"]
+                },
+                "available_actions": {
+                    "type": "array",
+                    "description": "List of available action names",
+                    "items": { "type": "string" }
+                },
+                "metadata": {
+                    "type": "object",
+                    "description": "Additional metadata (auth docs, rate limits, etc.)"
+                },
+                "operations": {
+                    "type": "array",
+                    "description": "Define API operations inline. Each: {\"operation_id\": \"list_domains\", \"name\": \"List Domains\", \"http_method\": \"GET\", \"path_template\": \"/domains\"}",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "operation_id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "description": { "type": "string" },
+                            "http_method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+                            "path_template": { "type": "string" },
+                            "request_schema": { "type": "object" },
+                            "response_schema": { "type": "object" },
+                            "requires_confirmation": { "type": "boolean" },
+                            "is_destructive": { "type": "boolean" }
+                        },
+                        "required": ["operation_id", "name", "http_method", "path_template"]
+                    }
+                }
+            },
+            "required": ["operation"]
+        })
+    }
+
+    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+        let operation = params["operation"]
+            .as_str()
+            .ok_or_else(|| amos_core::AmosError::Validation("operation is required".to_string()))?;
+
+        match operation {
+            "create" => self.create(params).await,
+            "update" => self.update(params).await,
+            "delete" => self.delete(params).await,
+            _ => Ok(ToolResult::error(format!(
+                "Unknown operation '{}'. Use: create, update, delete",
+                operation
+            ))),
+        }
+    }
+
     fn category(&self) -> ToolCategory {
         ToolCategory::Integration
+    }
+}
+
+impl ManageIntegrationTool {
+    async fn create(&self, params: JsonValue) -> Result<ToolResult> {
+        let name = params["name"].as_str().ok_or_else(|| {
+            amos_core::AmosError::Validation("name is required for create".to_string())
+        })?;
+
+        let connector_type = params["connector_type"].as_str().ok_or_else(|| {
+            amos_core::AmosError::Validation("connector_type is required for create".to_string())
+        })?;
+
+        let endpoint_url = params
+            .get("endpoint_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let available_actions = params
+            .get("available_actions")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+
+        let metadata = params.get("metadata").cloned().unwrap_or_else(|| json!({}));
+
+        let integration: IntegrationMutationRow = sqlx::query_as(
+            r#"
+            INSERT INTO integrations
+                (name, connector_type, endpoint_url, status, credentials,
+                 available_actions, metadata, sync_config)
+            VALUES ($1, $2, $3, 'active', '{}', $4, $5, '{}')
+            RETURNING id, name, connector_type, status, endpoint_url, created_at, updated_at
+            "#,
+        )
+        .bind(name)
+        .bind(connector_type)
+        .bind(endpoint_url)
+        .bind(&available_actions)
+        .bind(&metadata)
+        .fetch_one(&self.db_pool)
+        .await?;
+
+        let ops_created = self.upsert_operations(integration.id, &params).await;
+
+        Ok(ToolResult::success(json!({
+            "integration_id": integration.id,
+            "name": integration.name,
+            "connector_type": integration.connector_type,
+            "endpoint_url": integration.endpoint_url,
+            "status": integration.status,
+            "operations_created": ops_created,
+            "message": format!(
+                "Integration '{}' created{}. Next: create a connection with credentials.",
+                integration.name,
+                if ops_created > 0 { format!(" with {} operations", ops_created) } else { String::new() }
+            )
+        })))
+    }
+
+    async fn update(&self, params: JsonValue) -> Result<ToolResult> {
+        let integration_id = params["integration_id"]
+            .as_str()
+            .ok_or_else(|| {
+                amos_core::AmosError::Validation(
+                    "integration_id is required for update".to_string(),
+                )
+            })
+            .and_then(|s| {
+                Uuid::from_str(s).map_err(|_| {
+                    amos_core::AmosError::Validation("Invalid integration_id UUID".to_string())
+                })
+            })?;
+
+        // Build dynamic SET clause from provided fields
+        let mut sets = Vec::new();
+        let mut bind_idx = 1u32;
+        let mut binds: Vec<String> = Vec::new();
+
+        if let Some(name) = params.get("name").and_then(|v| v.as_str()) {
+            sets.push(format!("name = ${}", bind_idx));
+            binds.push(name.to_string());
+            bind_idx += 1;
+        }
+        if let Some(endpoint_url) = params.get("endpoint_url").and_then(|v| v.as_str()) {
+            sets.push(format!("endpoint_url = ${}", bind_idx));
+            binds.push(endpoint_url.to_string());
+            bind_idx += 1;
+        }
+        if let Some(status) = params.get("status").and_then(|v| v.as_str()) {
+            sets.push(format!("status = ${}", bind_idx));
+            binds.push(status.to_string());
+            bind_idx += 1;
+        }
+        if let Some(connector_type) = params.get("connector_type").and_then(|v| v.as_str()) {
+            sets.push(format!("connector_type = ${}", bind_idx));
+            binds.push(connector_type.to_string());
+            bind_idx += 1;
+        }
+
+        // Always bump updated_at
+        sets.push("updated_at = NOW()".to_string());
+
+        // Handle JSONB fields via direct queries if present
+        if let Some(metadata) = params.get("metadata") {
+            sqlx::query("UPDATE integrations SET metadata = $1, updated_at = NOW() WHERE id = $2")
+                .bind(metadata)
+                .bind(integration_id)
+                .execute(&self.db_pool)
+                .await?;
+        }
+        if let Some(available_actions) = params.get("available_actions") {
+            sqlx::query(
+                "UPDATE integrations SET available_actions = $1, updated_at = NOW() WHERE id = $2",
+            )
+            .bind(available_actions)
+            .bind(integration_id)
+            .execute(&self.db_pool)
+            .await?;
+        }
+
+        // Apply string field updates if any
+        if !binds.is_empty() {
+            let set_clause = sets.join(", ");
+            let query = format!(
+                "UPDATE integrations SET {} WHERE id = ${}",
+                set_clause, bind_idx
+            );
+            let mut q = sqlx::query(&query);
+            for b in &binds {
+                q = q.bind(b);
+            }
+            q = q.bind(integration_id);
+            q.execute(&self.db_pool).await?;
+        }
+
+        // Add new operations if provided
+        let ops_created = self.upsert_operations(integration_id, &params).await;
+
+        // Fetch updated row
+        let integration: IntegrationMutationRow = sqlx::query_as(
+            "SELECT id, name, connector_type, status, endpoint_url, created_at, updated_at \
+             FROM integrations WHERE id = $1",
+        )
+        .bind(integration_id)
+        .fetch_one(&self.db_pool)
+        .await?;
+
+        Ok(ToolResult::success(json!({
+            "integration_id": integration.id,
+            "name": integration.name,
+            "connector_type": integration.connector_type,
+            "endpoint_url": integration.endpoint_url,
+            "status": integration.status,
+            "operations_added": ops_created,
+            "updated_at": integration.updated_at,
+            "message": format!("Integration '{}' updated", integration.name)
+        })))
+    }
+
+    async fn delete(&self, params: JsonValue) -> Result<ToolResult> {
+        let integration_id = params["integration_id"]
+            .as_str()
+            .ok_or_else(|| {
+                amos_core::AmosError::Validation(
+                    "integration_id is required for delete".to_string(),
+                )
+            })
+            .and_then(|s| {
+                Uuid::from_str(s).map_err(|_| {
+                    amos_core::AmosError::Validation("Invalid integration_id UUID".to_string())
+                })
+            })?;
+
+        // Delete operations, then credentials+connections, then the integration itself
+        let ops_deleted =
+            sqlx::query("DELETE FROM integration_operations WHERE integration_id = $1")
+                .bind(integration_id)
+                .execute(&self.db_pool)
+                .await
+                .map(|r| r.rows_affected())
+                .unwrap_or(0);
+
+        // Delete sync configs for connections of this integration
+        let _ = sqlx::query(
+            "DELETE FROM integration_sync_configs WHERE connection_id IN \
+             (SELECT id FROM integration_connections WHERE integration_id = $1)",
+        )
+        .bind(integration_id)
+        .execute(&self.db_pool)
+        .await;
+
+        // Delete credentials for connections
+        let _ = sqlx::query("DELETE FROM integration_credentials WHERE integration_id = $1")
+            .bind(integration_id)
+            .execute(&self.db_pool)
+            .await;
+
+        // Delete connections
+        let conns_deleted =
+            sqlx::query("DELETE FROM integration_connections WHERE integration_id = $1")
+                .bind(integration_id)
+                .execute(&self.db_pool)
+                .await
+                .map(|r| r.rows_affected())
+                .unwrap_or(0);
+
+        // Delete the integration
+        let result = sqlx::query("DELETE FROM integrations WHERE id = $1")
+            .bind(integration_id)
+            .execute(&self.db_pool)
+            .await?;
+
+        if result.rows_affected() == 0 {
+            return Ok(ToolResult::error(format!(
+                "Integration {} not found",
+                integration_id
+            )));
+        }
+
+        Ok(ToolResult::success(json!({
+            "deleted": true,
+            "integration_id": integration_id.to_string(),
+            "operations_deleted": ops_deleted,
+            "connections_deleted": conns_deleted,
+            "message": "Integration and all associated connections/operations deleted"
+        })))
+    }
+
+    /// Insert operations from the `operations` array param. Used by both create and update.
+    async fn upsert_operations(&self, integration_id: Uuid, params: &JsonValue) -> usize {
+        let mut ops_created = 0;
+        if let Some(operations) = params.get("operations").and_then(|v| v.as_array()) {
+            for op in operations {
+                let op_id = op["operation_id"].as_str().unwrap_or("unknown");
+                let op_name = op["name"].as_str().unwrap_or(op_id);
+                let description = op.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                let http_method = op["http_method"].as_str().unwrap_or("GET");
+                let path_template = op["path_template"].as_str().unwrap_or("/");
+                let request_schema = op.get("request_schema").cloned().unwrap_or(json!({}));
+                let response_schema = op.get("response_schema").cloned().unwrap_or(json!({}));
+                let requires_confirmation = op
+                    .get("requires_confirmation")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let is_destructive = op
+                    .get("is_destructive")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let res = sqlx::query(
+                    r#"
+                    INSERT INTO integration_operations
+                        (integration_id, operation_id, name, description, http_method,
+                         path_template, request_schema, response_schema,
+                         requires_confirmation, is_destructive, status, examples, metadata)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active', '[]', '{}')
+                    ON CONFLICT (integration_id, operation_id) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        description = EXCLUDED.description,
+                        http_method = EXCLUDED.http_method,
+                        path_template = EXCLUDED.path_template,
+                        request_schema = EXCLUDED.request_schema,
+                        response_schema = EXCLUDED.response_schema,
+                        requires_confirmation = EXCLUDED.requires_confirmation,
+                        is_destructive = EXCLUDED.is_destructive,
+                        updated_at = NOW()
+                    "#,
+                )
+                .bind(integration_id)
+                .bind(op_id)
+                .bind(op_name)
+                .bind(description)
+                .bind(http_method)
+                .bind(path_template)
+                .bind(&request_schema)
+                .bind(&response_schema)
+                .bind(requires_confirmation)
+                .bind(is_destructive)
+                .execute(&self.db_pool)
+                .await;
+
+                if res.is_ok() {
+                    ops_created += 1;
+                }
+            }
+        }
+        ops_created
     }
 }
 
@@ -279,24 +737,24 @@ impl Tool for CreateConnectionTool {
                 },
                 "auth_type": {
                     "type": "string",
-                    "description": "Authentication type (api_key, bearer_token, basic_auth, oauth2, sso_key, no_auth, custom)",
+                    "description": "Authentication type",
                     "enum": ["api_key", "bearer_token", "basic_auth", "oauth2", "sso_key", "no_auth", "custom"]
                 },
                 "credentials": {
                     "type": "object",
-                    "description": "Credentials data as JSON object (e.g., {\"api_key\": \"sk_123\"} or {\"username\": \"user\", \"password\": \"pass\"}). Not required if vault_credential_id is provided."
+                    "description": "Credentials data (e.g., {\"api_key\": \"sk_123\"} or {\"username\": \"user\", \"password\": \"pass\"}). Not required if vault_credential_id is provided."
                 },
                 "vault_credential_id": {
                     "type": "string",
-                    "description": "UUID of a credential stored in the encrypted vault (from collect_credential tool). Use this instead of passing plaintext credentials."
+                    "description": "UUID of a credential stored in the encrypted vault (from collect_credential tool). Use instead of plaintext credentials."
                 },
                 "name": {
                     "type": "string",
-                    "description": "Optional: Friendly name for this connection"
+                    "description": "Friendly name for this connection"
                 },
                 "config": {
                     "type": "object",
-                    "description": "Optional: Connection-specific configuration settings"
+                    "description": "Connection-specific configuration settings"
                 }
             },
             "required": ["integration_id", "auth_type"]
@@ -320,20 +778,15 @@ impl Tool for CreateConnectionTool {
             .ok_or_else(|| amos_core::AmosError::Validation("auth_type is required".to_string()))?
             .to_string();
 
-        // Support vault_credential_id as an alternative to plaintext credentials.
-        // When vault_credential_id is provided, store it as a reference in credentials_data
-        // so the ApiExecutor can resolve it at runtime from the encrypted vault.
         let vault_credential_id = params
             .get("vault_credential_id")
             .and_then(|v| v.as_str())
             .map(String::from);
 
         let credentials = if let Some(ref vault_id) = vault_credential_id {
-            // Validate the UUID format
             Uuid::from_str(vault_id).map_err(|_| {
                 amos_core::AmosError::Validation("Invalid vault_credential_id UUID".to_string())
             })?;
-            // Store vault reference — ApiExecutor will decrypt at runtime
             json!({ "vault_credential_id": vault_id })
         } else {
             params
@@ -353,7 +806,6 @@ impl Tool for CreateConnectionTool {
 
         let config = params.get("config").cloned().unwrap_or_else(|| json!({}));
 
-        // First, create the credential
         let credential: CredentialIdRow = sqlx::query_as(
             r#"
             INSERT INTO integration_credentials
@@ -368,7 +820,6 @@ impl Tool for CreateConnectionTool {
         .fetch_one(&self.db_pool)
         .await?;
 
-        // Then create the connection
         let connection: NewConnectionRow = sqlx::query_as(
             r#"
             INSERT INTO integration_connections
@@ -406,7 +857,6 @@ impl Tool for CreateConnectionTool {
 // Test Connection Tool
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Tests if an integration connection is working
 pub struct TestConnectionTool {
     db_pool: PgPool,
     api_executor: Arc<ApiExecutor>,
@@ -456,10 +906,8 @@ impl Tool for TestConnectionTool {
                 })
             })?;
 
-        // Call the API executor's test_connection method
         match self.api_executor.test_connection(connection_id).await {
             Ok(result) => {
-                // Update connection status to connected and health to healthy
                 sqlx::query(
                     r#"
                     UPDATE integration_connections
@@ -483,7 +931,6 @@ impl Tool for TestConnectionTool {
                 })))
             }
             Err(e) => {
-                // Update connection status to error
                 let error_msg = format!("{}", e);
                 sqlx::query(
                     r#"
@@ -514,7 +961,6 @@ impl Tool for TestConnectionTool {
 // Execute Integration Action Tool
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Executes an API operation on an integration
 pub struct ExecuteIntegrationActionTool {
     api_executor: Arc<ApiExecutor>,
 }
@@ -549,7 +995,7 @@ impl Tool for ExecuteIntegrationActionTool {
                 },
                 "params": {
                     "type": "object",
-                    "description": "Optional: Parameters for the operation as JSON object"
+                    "description": "Parameters for the operation"
                 }
             },
             "required": ["connection_id", "operation_id"]
@@ -574,7 +1020,6 @@ impl Tool for ExecuteIntegrationActionTool {
 
         let operation_params = params.get("params").cloned().unwrap_or_else(|| json!({}));
 
-        // Execute the operation
         match self
             .api_executor
             .execute(connection_id, operation_id, operation_params)
@@ -597,115 +1042,20 @@ impl Tool for ExecuteIntegrationActionTool {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// List Operations Tool
+// Sync Integration Tool (merged: create_sync_config + trigger_sync)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Lists available operations for an integration
-pub struct ListOperationsTool {
+pub struct SyncIntegrationTool {
     db_pool: PgPool,
+    etl_pipeline: Arc<EtlPipeline>,
 }
 
-impl ListOperationsTool {
-    pub fn new(db_pool: PgPool) -> Self {
-        Self { db_pool }
-    }
-}
-
-#[async_trait]
-impl Tool for ListOperationsTool {
-    fn name(&self) -> &str {
-        "list_integration_operations"
-    }
-
-    fn description(&self) -> &str {
-        "List all available operations for a specific integration"
-    }
-
-    fn parameters_schema(&self) -> JsonValue {
-        json!({
-            "type": "object",
-            "properties": {
-                "integration_id": {
-                    "type": "string",
-                    "description": "UUID of the integration"
-                }
-            },
-            "required": ["integration_id"]
-        })
-    }
-
-    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
-        let integration_id = params["integration_id"]
-            .as_str()
-            .ok_or_else(|| {
-                amos_core::AmosError::Validation("integration_id is required".to_string())
-            })
-            .and_then(|s| {
-                Uuid::from_str(s).map_err(|_| {
-                    amos_core::AmosError::Validation("Invalid integration_id UUID".to_string())
-                })
-            })?;
-
-        let operations: Vec<OperationRow> = sqlx::query_as(
-            r#"
-            SELECT id, integration_id, operation_id, name, description, http_method,
-                   path_template, request_schema, response_schema, pagination_strategy,
-                   requires_confirmation, is_destructive, status, examples, metadata,
-                   created_at, updated_at
-            FROM integration_operations
-            WHERE integration_id = $1
-            ORDER BY name ASC
-            LIMIT 500
-            "#,
-        )
-        .bind(integration_id)
-        .fetch_all(&self.db_pool)
-        .await?;
-
-        let result: Vec<JsonValue> = operations
-            .iter()
-            .map(|op| {
-                json!({
-                    "id": op.id,
-                    "operation_id": op.operation_id,
-                    "name": op.name,
-                    "description": op.description,
-                    "http_method": op.http_method,
-                    "path_template": op.path_template,
-                    "request_schema": op.request_schema,
-                    "response_schema": op.response_schema,
-                    "pagination_strategy": op.pagination_strategy,
-                    "requires_confirmation": op.requires_confirmation,
-                    "is_destructive": op.is_destructive,
-                    "status": op.status,
-                })
-            })
-            .collect();
-
-        let count = result.len();
-        Ok(ToolResult::success(json!({
-            "operations": result,
-            "count": count
-        })))
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Integration
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Create Sync Config Tool
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Creates a new ETL sync configuration
-pub struct CreateSyncConfigTool {
-    db_pool: PgPool,
-}
-
-impl CreateSyncConfigTool {
-    pub fn new(db_pool: PgPool) -> Self {
-        Self { db_pool }
+impl SyncIntegrationTool {
+    pub fn new(db_pool: PgPool, etl_pipeline: Arc<EtlPipeline>) -> Self {
+        Self {
+            db_pool,
+            etl_pipeline,
+        }
     }
 }
 
@@ -725,73 +1075,103 @@ struct NewSyncConfigRow {
 }
 
 #[async_trait]
-impl Tool for CreateSyncConfigTool {
+impl Tool for SyncIntegrationTool {
     fn name(&self) -> &str {
-        "create_sync_config"
+        "sync_integration"
     }
 
     fn description(&self) -> &str {
-        "Create a sync configuration to automatically pull data from an integration into a collection"
+        "Create an ETL sync configuration or trigger an existing sync. Use operation 'create' to set up data sync from an integration into a collection, or 'trigger' to manually run an existing sync config."
     }
 
     fn parameters_schema(&self) -> JsonValue {
         json!({
             "type": "object",
             "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["create", "trigger"],
+                    "description": "Operation: 'create' a new sync config, or 'trigger' an existing one"
+                },
+                "sync_config_id": {
+                    "type": "string",
+                    "description": "UUID of existing sync config (required for trigger)"
+                },
                 "connection_id": {
                     "type": "string",
-                    "description": "UUID of the connection to sync from"
+                    "description": "UUID of the connection to sync from (required for create)"
                 },
                 "resource_type": {
                     "type": "string",
-                    "description": "Type of resource to sync (e.g., 'contacts', 'invoices', 'products')"
+                    "description": "Type of resource to sync (e.g., 'contacts', 'invoices')"
                 },
                 "target_collection": {
                     "type": "string",
-                    "description": "Name of the collection to store synced data"
+                    "description": "Collection name to store synced data"
                 },
                 "fetch_operation_id": {
                     "type": "string",
-                    "description": "Operation ID to use for fetching data (e.g., 'list_contacts')"
+                    "description": "Operation ID for fetching data (e.g., 'list_contacts')"
                 },
                 "field_mappings": {
                     "type": "object",
-                    "description": "JSON object mapping external fields to collection fields (e.g., {\"email\": \"contact_email\"})"
+                    "description": "Map external fields to collection fields (e.g., {\"email\": \"contact_email\"})"
                 },
                 "sync_mode": {
                     "type": "string",
-                    "description": "Sync mode: 'full' or 'incremental' (default: 'full')",
-                    "enum": ["full", "incremental"]
+                    "enum": ["full", "incremental"],
+                    "description": "Sync mode (default: 'full')"
                 },
                 "sync_direction": {
                     "type": "string",
-                    "description": "Sync direction: 'inbound', 'outbound', or 'bidirectional' (default: 'inbound')",
-                    "enum": ["inbound", "outbound", "bidirectional"]
+                    "enum": ["inbound", "outbound", "bidirectional"],
+                    "description": "Sync direction (default: 'inbound')"
                 },
                 "schedule_type": {
                     "type": "string",
-                    "description": "Schedule type: 'manual', 'scheduled', or 'realtime' (default: 'manual')",
-                    "enum": ["manual", "scheduled", "realtime"]
+                    "enum": ["manual", "scheduled", "realtime"],
+                    "description": "Schedule type (default: 'manual')"
                 },
                 "schedule_cron": {
                     "type": "string",
-                    "description": "Cron expression for scheduled syncs (e.g., '0 */6 * * *' for every 6 hours)"
+                    "description": "Cron expression for scheduled syncs (e.g., '0 */6 * * *')"
                 },
                 "conflict_resolution": {
                     "type": "string",
-                    "description": "Conflict resolution strategy: 'external_wins', 'internal_wins', 'manual', or 'newest' (default: 'external_wins')",
-                    "enum": ["external_wins", "internal_wins", "manual", "newest"]
+                    "enum": ["external_wins", "internal_wins", "manual", "newest"],
+                    "description": "Conflict resolution strategy (default: 'external_wins')"
                 }
             },
-            "required": ["connection_id", "resource_type", "target_collection", "fetch_operation_id", "field_mappings"]
+            "required": ["operation"]
         })
     }
 
     async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+        let operation = params["operation"]
+            .as_str()
+            .ok_or_else(|| amos_core::AmosError::Validation("operation is required".to_string()))?;
+
+        match operation {
+            "create" => self.create_config(params).await,
+            "trigger" => self.trigger_sync(params).await,
+            _ => Ok(ToolResult::error(format!(
+                "Unknown operation '{}'. Use: create, trigger",
+                operation
+            ))),
+        }
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Integration
+    }
+}
+
+impl SyncIntegrationTool {
+    async fn create_config(&self, params: JsonValue) -> Result<ToolResult> {
         let connection_id = params["connection_id"]
             .as_str()
             .ok_or_else(|| {
-                amos_core::AmosError::Validation("connection_id is required".to_string())
+                amos_core::AmosError::Validation("connection_id is required for create".to_string())
             })
             .and_then(|s| {
                 Uuid::from_str(s).map_err(|_| {
@@ -858,7 +1238,6 @@ impl Tool for CreateSyncConfigTool {
 
         let empty_json = json!({});
 
-        // Create the sync config (no `name` column in the table)
         let sync_config: NewSyncConfigRow = sqlx::query_as(
             r#"
             INSERT INTO integration_sync_configs
@@ -880,8 +1259,8 @@ impl Tool for CreateSyncConfigTool {
         .bind(&schedule_type)
         .bind(&schedule_cron)
         .bind(&fetch_operation_id)
-        .bind(&empty_json) // fetch_params
-        .bind(&empty_json) // metadata
+        .bind(&empty_json)
+        .bind(&empty_json)
         .fetch_one(&self.db_pool)
         .await?;
 
@@ -899,54 +1278,13 @@ impl Tool for CreateSyncConfigTool {
         })))
     }
 
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Integration
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Trigger Sync Tool
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Triggers an ETL sync job
-pub struct TriggerSyncTool {
-    etl_pipeline: Arc<EtlPipeline>,
-}
-
-impl TriggerSyncTool {
-    pub fn new(etl_pipeline: Arc<EtlPipeline>) -> Self {
-        Self { etl_pipeline }
-    }
-}
-
-#[async_trait]
-impl Tool for TriggerSyncTool {
-    fn name(&self) -> &str {
-        "trigger_sync"
-    }
-
-    fn description(&self) -> &str {
-        "Manually trigger an ETL sync job to pull data from an integration into a collection"
-    }
-
-    fn parameters_schema(&self) -> JsonValue {
-        json!({
-            "type": "object",
-            "properties": {
-                "sync_config_id": {
-                    "type": "string",
-                    "description": "UUID of the sync configuration to run"
-                }
-            },
-            "required": ["sync_config_id"]
-        })
-    }
-
-    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+    async fn trigger_sync(&self, params: JsonValue) -> Result<ToolResult> {
         let sync_config_id = params["sync_config_id"]
             .as_str()
             .ok_or_else(|| {
-                amos_core::AmosError::Validation("sync_config_id is required".to_string())
+                amos_core::AmosError::Validation(
+                    "sync_config_id is required for trigger".to_string(),
+                )
             })
             .and_then(|s| {
                 Uuid::from_str(s).map_err(|_| {
@@ -954,7 +1292,6 @@ impl Tool for TriggerSyncTool {
                 })
             })?;
 
-        // Run the ETL pipeline
         match self.etl_pipeline.run(sync_config_id).await {
             Ok(result) => Ok(ToolResult::success(json!({
                 "success": result.status == "success" || result.status == "partial",
@@ -967,9 +1304,5 @@ impl Tool for TriggerSyncTool {
             }))),
             Err(e) => Ok(ToolResult::error(format!("Sync failed: {}", e))),
         }
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Integration
     }
 }

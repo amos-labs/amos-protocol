@@ -142,39 +142,56 @@ impl Tool for DefineCollectionTool {
     }
 }
 
-// ── ListCollections ──────────────────────────────────────────────────────
+// ── DescribeCollections ──────────────────────────────────────────────────
 
-/// List all data collections and their schemas.
-pub struct ListCollectionsTool {
+/// List all collections or get the detailed schema for a specific one.
+pub struct DescribeCollectionsTool {
     db_pool: PgPool,
 }
 
-impl ListCollectionsTool {
+impl DescribeCollectionsTool {
     pub fn new(db_pool: PgPool) -> Self {
         Self { db_pool }
     }
 }
 
 #[async_trait]
-impl Tool for ListCollectionsTool {
+impl Tool for DescribeCollectionsTool {
     fn name(&self) -> &str {
-        "list_collections"
+        "describe_collections"
     }
 
     fn description(&self) -> &str {
-        "List all data collections that have been defined. Returns each collection's name, description, and field definitions."
+        "List all data collections or get the full schema of a specific one. Provide 'name' to get a single collection's detailed schema with all field definitions; omit 'name' to list all collections with summaries."
     }
 
     fn parameters_schema(&self) -> JsonValue {
         json!({
             "type": "object",
-            "properties": {},
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Optional: collection slug name (e.g. 'contacts', 'deals'). If provided, returns the full schema for that collection. If omitted, lists all collections."
+                }
+            },
             "required": []
         })
     }
 
-    async fn execute(&self, _params: JsonValue) -> Result<ToolResult> {
+    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
         let engine = SchemaEngine::new(self.db_pool.clone());
+
+        // If name is provided, return detailed schema for that collection
+        if let Some(name) = params.get("name").and_then(|v| v.as_str()) {
+            let collection = engine.get_collection(name).await?;
+            return Ok(ToolResult::success(
+                serde_json::to_value(&collection).map_err(|e| {
+                    amos_core::AmosError::Internal(format!("Failed to serialize collection: {}", e))
+                })?,
+            ));
+        }
+
+        // Otherwise list all collections
         let collections = engine.list_collections().await?;
 
         let result: Vec<JsonValue> = collections
@@ -199,62 +216,6 @@ impl Tool for ListCollectionsTool {
             "collections": result,
             "count": result.len()
         })))
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Schema
-    }
-}
-
-// ── GetCollection ────────────────────────────────────────────────────────
-
-/// Get detailed schema for a single collection.
-pub struct GetCollectionTool {
-    db_pool: PgPool,
-}
-
-impl GetCollectionTool {
-    pub fn new(db_pool: PgPool) -> Self {
-        Self { db_pool }
-    }
-}
-
-#[async_trait]
-impl Tool for GetCollectionTool {
-    fn name(&self) -> &str {
-        "get_collection"
-    }
-
-    fn description(&self) -> &str {
-        "Get the full schema definition of a specific data collection, including all field definitions and settings."
-    }
-
-    fn parameters_schema(&self) -> JsonValue {
-        json!({
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Collection slug name (e.g. 'contacts', 'deals')"
-                }
-            },
-            "required": ["name"]
-        })
-    }
-
-    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
-        let name = params["name"]
-            .as_str()
-            .ok_or_else(|| amos_core::AmosError::Validation("name is required".to_string()))?;
-
-        let engine = SchemaEngine::new(self.db_pool.clone());
-        let collection = engine.get_collection(name).await?;
-
-        Ok(ToolResult::success(
-            serde_json::to_value(&collection).map_err(|e| {
-                amos_core::AmosError::Internal(format!("Failed to serialize collection: {}", e))
-            })?,
-        ))
     }
 
     fn category(&self) -> ToolCategory {

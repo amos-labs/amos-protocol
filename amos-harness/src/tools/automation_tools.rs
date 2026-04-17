@@ -1,4 +1,8 @@
 //! Automation tools — let the AI agent create, manage, and test automations.
+//!
+//! Two tools:
+//! - `manage_automation`: Create, update, delete, or list automation rules (CRUD)
+//! - `test_automation`: Manually fire an automation with sample data
 
 use super::{Tool, ToolCategory, ToolResult};
 use crate::automations::engine::AutomationEngine;
@@ -9,76 +13,112 @@ use serde_json::{json, Value as JsonValue};
 use std::sync::Arc;
 use uuid::Uuid;
 
-// ── CreateAutomation ─────────────────────────────────────────────────────
+// ── ManageAutomation ────────────────────────────────────────────────────
 
-pub struct CreateAutomationTool {
+pub struct ManageAutomationTool {
     engine: Arc<AutomationEngine>,
 }
 
-impl CreateAutomationTool {
+impl ManageAutomationTool {
     pub fn new(engine: Arc<AutomationEngine>) -> Self {
         Self { engine }
     }
 }
 
 #[async_trait]
-impl Tool for CreateAutomationTool {
+impl Tool for ManageAutomationTool {
     fn name(&self) -> &str {
-        "create_automation"
+        "manage_automation"
     }
 
     fn description(&self) -> &str {
-        "Create an automation rule that triggers actions when events occur. Trigger types: record_created, record_updated, record_deleted, schedule, webhook, manual. Action types: create_record, update_record, send_notification, call_webhook, run_agent_task."
+        "Create, update, delete, or list automation rules. Operations: 'create' (new rule), 'update' (modify existing), 'delete' (remove), 'list' (show all). Trigger types: record_created, record_updated, record_deleted, schedule, webhook, manual. Action types: create_record, update_record, send_notification, call_webhook, run_agent_task."
     }
 
     fn parameters_schema(&self) -> JsonValue {
         json!({
             "type": "object",
             "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["create", "update", "delete", "list"],
+                    "description": "Operation to perform"
+                },
+                "automation_id": {
+                    "type": "string",
+                    "description": "UUID of the automation (required for update/delete)"
+                },
                 "name": {
                     "type": "string",
-                    "description": "Human-readable name for this automation"
+                    "description": "Human-readable name (required for create)"
                 },
                 "description": {
                     "type": "string",
                     "description": "What this automation does"
                 },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Enable or disable (for update)"
+                },
                 "trigger_type": {
                     "type": "string",
                     "enum": ["record_created", "record_updated", "record_deleted", "schedule", "webhook", "manual"],
-                    "description": "When this automation fires"
+                    "description": "When this automation fires (required for create)"
                 },
                 "trigger_config": {
                     "type": "object",
-                    "description": "Trigger configuration. For record triggers: {\"collection\": \"orders\"}. For schedule: {\"cron\": \"0 9 * * MON\"}. For webhook: {\"path\": \"my-hook\"}."
+                    "description": "Trigger config. Record: {\"collection\": \"orders\"}. Schedule: {\"cron\": \"0 9 * * MON\"}. Webhook: {\"path\": \"my-hook\"}."
                 },
                 "condition": {
                     "type": "object",
-                    "description": "Optional condition — simple field match against trigger data. E.g. {\"status\": \"paid\"} only fires when the trigger data has status=paid."
+                    "description": "Optional condition — field match against trigger data. E.g. {\"status\": \"paid\"}"
                 },
                 "action_type": {
                     "type": "string",
                     "enum": ["create_record", "update_record", "send_notification", "call_webhook", "run_agent_task"],
-                    "description": "What action to take when triggered"
+                    "description": "Action to take when triggered (required for create)"
                 },
                 "action_config": {
                     "type": "object",
-                    "description": "Action configuration. For create_record: {\"collection\": \"audit_log\", \"data_template\": {\"event\": \"{{trigger.event}}\"}}. For call_webhook: {\"url\": \"https://...\", \"method\": \"POST\"}. For run_agent_task: {\"title\": \"...\", \"description\": \"...\"}. For send_notification: {\"message\": \"...\"}."
+                    "description": "Action config. create_record: {\"collection\": \"audit_log\", \"data_template\": {...}}. call_webhook: {\"url\": \"...\", \"method\": \"POST\"}. run_agent_task: {\"title\": \"...\", \"description\": \"...\"}."
                 }
             },
-            "required": ["name", "trigger_type", "trigger_config", "action_type", "action_config"]
+            "required": ["operation"]
         })
     }
 
     async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
-        let name = params["name"]
+        let operation = params["operation"]
             .as_str()
-            .ok_or_else(|| amos_core::AmosError::Validation("name is required".to_string()))?;
+            .ok_or_else(|| amos_core::AmosError::Validation("operation is required".to_string()))?;
+
+        match operation {
+            "create" => self.create(params).await,
+            "update" => self.update(params).await,
+            "delete" => self.delete(params).await,
+            "list" => self.list().await,
+            _ => Ok(ToolResult::error(format!(
+                "Unknown operation '{}'. Use: create, update, delete, list",
+                operation
+            ))),
+        }
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Automation
+    }
+}
+
+impl ManageAutomationTool {
+    async fn create(&self, params: JsonValue) -> Result<ToolResult> {
+        let name = params["name"].as_str().ok_or_else(|| {
+            amos_core::AmosError::Validation("name is required for create".to_string())
+        })?;
 
         let description = params.get("description").and_then(|v| v.as_str());
 
         let trigger_type = params["trigger_type"].as_str().ok_or_else(|| {
-            amos_core::AmosError::Validation("trigger_type is required".to_string())
+            amos_core::AmosError::Validation("trigger_type is required for create".to_string())
         })?;
 
         let trigger_config = params
@@ -89,7 +129,7 @@ impl Tool for CreateAutomationTool {
         let condition = params.get("condition").cloned();
 
         let action_type = params["action_type"].as_str().ok_or_else(|| {
-            amos_core::AmosError::Validation("action_type is required".to_string())
+            amos_core::AmosError::Validation("action_type is required for create".to_string())
         })?;
 
         let action_config = params
@@ -120,42 +160,44 @@ impl Tool for CreateAutomationTool {
         })))
     }
 
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Automation
-    }
-}
+    async fn update(&self, params: JsonValue) -> Result<ToolResult> {
+        let id_str = params["automation_id"].as_str().ok_or_else(|| {
+            amos_core::AmosError::Validation("automation_id is required for update".to_string())
+        })?;
 
-// ── ListAutomations ──────────────────────────────────────────────────────
+        let id = Uuid::parse_str(id_str)
+            .map_err(|_| amos_core::AmosError::Validation(format!("Invalid UUID: {}", id_str)))?;
 
-pub struct ListAutomationsTool {
-    engine: Arc<AutomationEngine>,
-}
+        let automation = self.engine.update_automation(id, params).await?;
 
-impl ListAutomationsTool {
-    pub fn new(engine: Arc<AutomationEngine>) -> Self {
-        Self { engine }
-    }
-}
-
-#[async_trait]
-impl Tool for ListAutomationsTool {
-    fn name(&self) -> &str {
-        "list_automations"
+        Ok(ToolResult::success(json!({
+            "automation_id": automation.id.to_string(),
+            "name": automation.name,
+            "enabled": automation.enabled,
+            "trigger_type": automation.trigger_type.as_str(),
+            "action_type": automation.action_type.as_str(),
+            "message": "Automation updated successfully"
+        })))
     }
 
-    fn description(&self) -> &str {
-        "List all automation rules with their status, trigger type, action type, and last run info."
+    async fn delete(&self, params: JsonValue) -> Result<ToolResult> {
+        let id_str = params["automation_id"].as_str().ok_or_else(|| {
+            amos_core::AmosError::Validation("automation_id is required for delete".to_string())
+        })?;
+
+        let id = Uuid::parse_str(id_str)
+            .map_err(|_| amos_core::AmosError::Validation(format!("Invalid UUID: {}", id_str)))?;
+
+        self.engine.delete_automation(id).await?;
+
+        Ok(ToolResult::success(json!({
+            "deleted": true,
+            "automation_id": id_str,
+            "message": "Automation deleted successfully"
+        })))
     }
 
-    fn parameters_schema(&self) -> JsonValue {
-        json!({
-            "type": "object",
-            "properties": {},
-            "required": []
-        })
-    }
-
-    async fn execute(&self, _params: JsonValue) -> Result<ToolResult> {
+    async fn list(&self) -> Result<ToolResult> {
         let automations = self.engine.list_automations().await?;
 
         let mut results = Vec::new();
@@ -187,159 +229,6 @@ impl Tool for ListAutomationsTool {
             "automations": results,
             "count": results.len()
         })))
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Automation
-    }
-}
-
-// ── UpdateAutomation ─────────────────────────────────────────────────────
-
-pub struct UpdateAutomationTool {
-    engine: Arc<AutomationEngine>,
-}
-
-impl UpdateAutomationTool {
-    pub fn new(engine: Arc<AutomationEngine>) -> Self {
-        Self { engine }
-    }
-}
-
-#[async_trait]
-impl Tool for UpdateAutomationTool {
-    fn name(&self) -> &str {
-        "update_automation"
-    }
-
-    fn description(&self) -> &str {
-        "Update an automation rule. Can change name, description, enabled status, trigger config, condition, action config, etc. Only provided fields are updated."
-    }
-
-    fn parameters_schema(&self) -> JsonValue {
-        json!({
-            "type": "object",
-            "properties": {
-                "automation_id": {
-                    "type": "string",
-                    "description": "UUID of the automation to update"
-                },
-                "name": {
-                    "type": "string",
-                    "description": "New name"
-                },
-                "description": {
-                    "type": "string",
-                    "description": "New description"
-                },
-                "enabled": {
-                    "type": "boolean",
-                    "description": "Enable or disable the automation"
-                },
-                "trigger_type": {
-                    "type": "string",
-                    "description": "New trigger type"
-                },
-                "trigger_config": {
-                    "type": "object",
-                    "description": "New trigger configuration"
-                },
-                "condition": {
-                    "type": "object",
-                    "description": "New condition (set to null to remove)"
-                },
-                "action_type": {
-                    "type": "string",
-                    "description": "New action type"
-                },
-                "action_config": {
-                    "type": "object",
-                    "description": "New action configuration"
-                }
-            },
-            "required": ["automation_id"]
-        })
-    }
-
-    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
-        let id_str = params["automation_id"].as_str().ok_or_else(|| {
-            amos_core::AmosError::Validation("automation_id is required".to_string())
-        })?;
-
-        let id = Uuid::parse_str(id_str)
-            .map_err(|_| amos_core::AmosError::Validation(format!("Invalid UUID: {}", id_str)))?;
-
-        let automation = self.engine.update_automation(id, params).await?;
-
-        Ok(ToolResult::success(json!({
-            "automation_id": automation.id.to_string(),
-            "name": automation.name,
-            "enabled": automation.enabled,
-            "trigger_type": automation.trigger_type.as_str(),
-            "action_type": automation.action_type.as_str(),
-            "message": "Automation updated successfully"
-        })))
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Automation
-    }
-}
-
-// ── DeleteAutomation ─────────────────────────────────────────────────────
-
-pub struct DeleteAutomationTool {
-    engine: Arc<AutomationEngine>,
-}
-
-impl DeleteAutomationTool {
-    pub fn new(engine: Arc<AutomationEngine>) -> Self {
-        Self { engine }
-    }
-}
-
-#[async_trait]
-impl Tool for DeleteAutomationTool {
-    fn name(&self) -> &str {
-        "delete_automation"
-    }
-
-    fn description(&self) -> &str {
-        "Delete an automation rule by its ID. This also deletes all associated run history."
-    }
-
-    fn parameters_schema(&self) -> JsonValue {
-        json!({
-            "type": "object",
-            "properties": {
-                "automation_id": {
-                    "type": "string",
-                    "description": "UUID of the automation to delete"
-                }
-            },
-            "required": ["automation_id"]
-        })
-    }
-
-    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
-        let id_str = params["automation_id"].as_str().ok_or_else(|| {
-            amos_core::AmosError::Validation("automation_id is required".to_string())
-        })?;
-
-        let id = Uuid::parse_str(id_str)
-            .map_err(|_| amos_core::AmosError::Validation(format!("Invalid UUID: {}", id_str)))?;
-
-        self.engine.delete_automation(id).await?;
-
-        Ok(ToolResult::success(json!({
-            "deleted": true,
-            "automation_id": id_str,
-            "message": "Automation deleted successfully"
-        })))
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Automation
     }
 }
 

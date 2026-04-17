@@ -30,7 +30,7 @@ impl Tool for CreateSiteTool {
     }
 
     fn description(&self) -> &str {
-        "Create a new website or landing page. This creates the site container — then use create_page to add pages to it. Sites are served at /s/{slug} as standalone public web pages."
+        "Create a new website or landing page. This creates the site container — then use manage_page to add pages to it. Sites are served at /s/{slug} as standalone public web pages."
     }
 
     fn parameters_schema(&self) -> JsonValue {
@@ -79,7 +79,7 @@ impl Tool for CreateSiteTool {
             "site_id": site.id.to_string(),
             "slug": site.slug,
             "url": format!("/s/{}", site.slug),
-            "message": format!("Site '{}' created. Add pages with create_page.", site.name)
+            "message": format!("Site '{}' created. Add pages with manage_page.", site.name)
         })))
     }
 
@@ -88,27 +88,27 @@ impl Tool for CreateSiteTool {
     }
 }
 
-// ── CreatePage ───────────────────────────────────────────────────────────
+// ── ManagePage ───────────────────────────────────────────────────────────
 
 /// Create or update a page on a site.
-pub struct CreatePageTool {
+pub struct ManagePageTool {
     db_pool: PgPool,
 }
 
-impl CreatePageTool {
+impl ManagePageTool {
     pub fn new(db_pool: PgPool) -> Self {
         Self { db_pool }
     }
 }
 
 #[async_trait]
-impl Tool for CreatePageTool {
+impl Tool for ManagePageTool {
     fn name(&self) -> &str {
-        "create_page"
+        "manage_page"
     }
 
     fn description(&self) -> &str {
-        "Create or update a page on a website. Provide the full HTML content for the page body, plus optional CSS and JavaScript. The page is wrapped in a complete HTML document with SEO meta tags automatically. If the page already exists at that path, it is updated. For forms, set form_collection to the collection name that receives submissions, and add data-collection attribute to your <form> tags."
+        "Create or update a page on a website. Provide the full HTML content for the page body, plus optional CSS and JavaScript. The page is wrapped in a complete HTML document with SEO meta tags automatically. If the page already exists at that path, it is updated in place. For forms, set form_collection to the collection name that receives submissions, and add data-collection attribute to your <form> tags."
     }
 
     fn parameters_schema(&self) -> JsonValue {
@@ -231,128 +231,6 @@ impl Tool for CreatePageTool {
     }
 }
 
-// ── UpdatePage ───────────────────────────────────────────────────────────
-
-/// Update specific fields of an existing page.
-pub struct UpdatePageTool {
-    db_pool: PgPool,
-}
-
-impl UpdatePageTool {
-    pub fn new(db_pool: PgPool) -> Self {
-        Self { db_pool }
-    }
-}
-
-#[async_trait]
-impl Tool for UpdatePageTool {
-    fn name(&self) -> &str {
-        "update_page"
-    }
-
-    fn description(&self) -> &str {
-        "Update an existing page's content. This is a convenience wrapper — calling create_page with the same site_slug and path also updates the page."
-    }
-
-    fn parameters_schema(&self) -> JsonValue {
-        json!({
-            "type": "object",
-            "properties": {
-                "site_slug": {
-                    "type": "string",
-                    "description": "Site slug"
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Page path (e.g. '/', '/about')"
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Updated page title"
-                },
-                "html_content": {
-                    "type": "string",
-                    "description": "Updated HTML content"
-                },
-                "css_content": {
-                    "type": "string",
-                    "description": "Updated CSS"
-                },
-                "js_content": {
-                    "type": "string",
-                    "description": "Updated JavaScript"
-                }
-            },
-            "required": ["site_slug", "path", "title", "html_content"]
-        })
-    }
-
-    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
-        // Delegate to upsert_page (same behavior as create_page)
-        let site_slug = params["site_slug"]
-            .as_str()
-            .ok_or_else(|| amos_core::AmosError::Validation("site_slug is required".to_string()))?;
-
-        let path = params["path"]
-            .as_str()
-            .ok_or_else(|| amos_core::AmosError::Validation("path is required".to_string()))?;
-
-        let title = params["title"]
-            .as_str()
-            .ok_or_else(|| amos_core::AmosError::Validation("title is required".to_string()))?;
-
-        let html_content = params["html_content"].as_str().ok_or_else(|| {
-            amos_core::AmosError::Validation("html_content is required".to_string())
-        })?;
-
-        let css_content = params.get("css_content").and_then(|v| v.as_str());
-        let js_content = params.get("js_content").and_then(|v| v.as_str());
-
-        let engine = SiteEngine::new(self.db_pool.clone());
-        let page = engine
-            .upsert_page(
-                site_slug,
-                path,
-                title,
-                None,
-                html_content,
-                css_content,
-                js_content,
-                None,
-                None,
-                None,
-            )
-            .await?;
-
-        let page_url = format!(
-            "/s/{}{}",
-            site_slug,
-            if page.path == "/" {
-                "".to_string()
-            } else {
-                page.path.clone()
-            }
-        );
-        Ok(ToolResult::success_with_metadata(
-            json!({
-                "page_id": page.id.to_string(),
-                "path": page.path,
-                "url": page_url,
-                "message": format!("Page '{}' updated", page.title)
-            }),
-            json!({
-                "__canvas_action": "preview_site",
-                "site_slug": site_slug,
-                "url": page_url
-            }),
-        ))
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Schema
-    }
-}
-
 // ── PatchPage ───────────────────────────────────────────────────────────
 
 /// Surgically update a specific section of a page using search-and-replace.
@@ -374,7 +252,7 @@ impl Tool for PatchPageTool {
     }
 
     fn description(&self) -> &str {
-        "Surgically update a specific section of a page without rewriting the entire content. Use this instead of update_page when you only need to change a button, heading, section, or style. Provide the exact existing content to find and the new content to replace it with. Supports patching HTML, CSS, and/or JS independently."
+        "Surgically update a specific section of a page without rewriting the entire content. Use this when you need to change a button, heading, section, or style — it's safer than manage_page because it only touches the targeted content. Provide the exact existing content to find and the new content to replace it with. Supports patching HTML, CSS, and/or JS independently."
     }
 
     fn parameters_schema(&self) -> JsonValue {
@@ -426,9 +304,9 @@ impl Tool for PatchPageTool {
             .as_str()
             .ok_or_else(|| amos_core::AmosError::Validation("path is required".to_string()))?;
 
-        let patches = params["patches"]
-            .as_array()
-            .ok_or_else(|| amos_core::AmosError::Validation("patches must be an array".to_string()))?;
+        let patches = params["patches"].as_array().ok_or_else(|| {
+            amos_core::AmosError::Validation("patches must be an array".to_string())
+        })?;
 
         if patches.is_empty() {
             return Err(amos_core::AmosError::Validation(
@@ -506,8 +384,16 @@ impl Tool for PatchPageTool {
                 &page.title,
                 page.description.as_deref(),
                 &html,
-                if css.is_empty() { None } else { Some(css.as_str()) },
-                if js.is_empty() { None } else { Some(js.as_str()) },
+                if css.is_empty() {
+                    None
+                } else {
+                    Some(css.as_str())
+                },
+                if js.is_empty() {
+                    None
+                } else {
+                    Some(js.as_str())
+                },
                 page.meta_title.as_deref(),
                 page.meta_description.as_deref(),
                 page.form_collection.as_deref(),

@@ -15,7 +15,8 @@ pub mod memory_tools;
 pub mod openclaw_tools;
 // orchestration_tools removed — external agent work delegation is now handled
 // by task_tools (create_bounty, get_task_result) and openclaw_tools (agent management).
-pub mod platform_tools;
+// platform_tools removed — generic CRUD stubs superseded by domain-specific tools
+// (schema_tools, integration_tools) and bash escape hatch.
 pub mod revision_tools;
 pub mod schema_tools;
 pub mod site_tools;
@@ -289,20 +290,6 @@ impl ToolRegistry {
     ) -> Self {
         let mut registry = Self::new(db_pool.clone(), config.clone());
 
-        // Register platform tools
-        registry.register(Arc::new(platform_tools::PlatformQueryTool::new(
-            db_pool.clone(),
-        )));
-        registry.register(Arc::new(platform_tools::PlatformCreateTool::new(
-            db_pool.clone(),
-        )));
-        registry.register(Arc::new(platform_tools::PlatformUpdateTool::new(
-            db_pool.clone(),
-        )));
-        registry.register(Arc::new(platform_tools::PlatformExecuteTool::new(
-            db_pool.clone(),
-        )));
-
         // Register canvas tools
         registry.register(Arc::new(canvas_tools::LoadCanvasTool::new(db_pool.clone())));
         registry.register(Arc::new(canvas_tools::CreateDynamicCanvasTool::new(
@@ -365,20 +352,11 @@ impl ToolRegistry {
             db_pool.clone(),
         )));
 
-        // Register OpenClaw agent management tools
-        registry.register(Arc::new(openclaw_tools::RegisterAgentTool::new(
-            db_pool.clone(),
-        )));
-        registry.register(Arc::new(openclaw_tools::ListAgentsTool::new(
+        // Register OpenClaw agent management tools (manage_agent = CRUD, assign_task = work)
+        registry.register(Arc::new(openclaw_tools::ManageAgentTool::new(
             db_pool.clone(),
         )));
         registry.register(Arc::new(openclaw_tools::AssignTaskTool::new(
-            db_pool.clone(),
-        )));
-        registry.register(Arc::new(openclaw_tools::GetAgentStatusTool::new(
-            db_pool.clone(),
-        )));
-        registry.register(Arc::new(openclaw_tools::StopAgentTool::new(
             db_pool.clone(),
         )));
 
@@ -386,10 +364,7 @@ impl ToolRegistry {
         registry.register(Arc::new(schema_tools::DefineCollectionTool::new(
             db_pool.clone(),
         )));
-        registry.register(Arc::new(schema_tools::ListCollectionsTool::new(
-            db_pool.clone(),
-        )));
-        registry.register(Arc::new(schema_tools::GetCollectionTool::new(
+        registry.register(Arc::new(schema_tools::DescribeCollectionsTool::new(
             db_pool.clone(),
         )));
         let event_tx = automation_engine.create_event_channel();
@@ -409,17 +384,8 @@ impl ToolRegistry {
             Some(event_tx),
         )));
 
-        // Register automation tools
-        registry.register(Arc::new(automation_tools::CreateAutomationTool::new(
-            automation_engine.clone(),
-        )));
-        registry.register(Arc::new(automation_tools::ListAutomationsTool::new(
-            automation_engine.clone(),
-        )));
-        registry.register(Arc::new(automation_tools::UpdateAutomationTool::new(
-            automation_engine.clone(),
-        )));
-        registry.register(Arc::new(automation_tools::DeleteAutomationTool::new(
+        // Register automation tools (manage_automation = CRUD, test_automation = dry-run)
+        registry.register(Arc::new(automation_tools::ManageAutomationTool::new(
             automation_engine.clone(),
         )));
         registry.register(Arc::new(automation_tools::TestAutomationTool::new(
@@ -428,8 +394,7 @@ impl ToolRegistry {
 
         // Register site tools (websites and landing pages)
         registry.register(Arc::new(site_tools::CreateSiteTool::new(db_pool.clone())));
-        registry.register(Arc::new(site_tools::CreatePageTool::new(db_pool.clone())));
-        registry.register(Arc::new(site_tools::UpdatePageTool::new(db_pool.clone())));
+        registry.register(Arc::new(site_tools::ManagePageTool::new(db_pool.clone())));
         registry.register(Arc::new(site_tools::PatchPageTool::new(db_pool.clone())));
         registry.register(Arc::new(site_tools::PublishSiteTool::new(db_pool.clone())));
         registry.register(Arc::new(site_tools::ListSitesTool::new(db_pool.clone())));
@@ -460,19 +425,13 @@ impl ToolRegistry {
         registry.register(Arc::new(image_gen_tools::GenerateImageTool::new()));
 
         // Register revision and template tools
-        registry.register(Arc::new(revision_tools::ListRevisionsTool::new(
-            db_pool.clone(),
-        )));
-        registry.register(Arc::new(revision_tools::GetRevisionTool::new(
+        registry.register(Arc::new(revision_tools::QueryRevisionsTool::new(
             db_pool.clone(),
         )));
         registry.register(Arc::new(revision_tools::RevertEntityTool::new(
             db_pool.clone(),
         )));
-        registry.register(Arc::new(revision_tools::ListTemplatesTool::new(
-            db_pool.clone(),
-        )));
-        registry.register(Arc::new(revision_tools::CheckTemplateUpdatesTool::new(
+        registry.register(Arc::new(revision_tools::ManageTemplatesTool::new(
             db_pool.clone(),
         )));
 
@@ -485,10 +444,10 @@ impl ToolRegistry {
         )));
 
         // Register integration tools
-        registry.register(Arc::new(integration_tools::ListIntegrationsTool::new(
+        registry.register(Arc::new(integration_tools::QueryIntegrationsTool::new(
             db_pool.clone(),
         )));
-        registry.register(Arc::new(integration_tools::ListConnectionsTool::new(
+        registry.register(Arc::new(integration_tools::ManageIntegrationTool::new(
             db_pool.clone(),
         )));
         registry.register(Arc::new(integration_tools::CreateConnectionTool::new(
@@ -501,13 +460,8 @@ impl ToolRegistry {
         registry.register(Arc::new(
             integration_tools::ExecuteIntegrationActionTool::new(api_executor.clone()),
         ));
-        registry.register(Arc::new(integration_tools::ListOperationsTool::new(
+        registry.register(Arc::new(integration_tools::SyncIntegrationTool::new(
             db_pool.clone(),
-        )));
-        registry.register(Arc::new(integration_tools::CreateSyncConfigTool::new(
-            db_pool.clone(),
-        )));
-        registry.register(Arc::new(integration_tools::TriggerSyncTool::new(
             etl_pipeline.clone(),
         )));
 

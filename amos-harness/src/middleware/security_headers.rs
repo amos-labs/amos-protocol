@@ -10,12 +10,7 @@
 //!
 //! AMOS-SECURE-004
 
-use axum::{
-    extract::Request,
-    http::HeaderValue,
-    middleware::Next,
-    response::Response,
-};
+use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
 
 /// Security headers middleware.
 ///
@@ -40,18 +35,14 @@ pub async fn security_headers(req: Request, next: Next) -> Response {
     );
 
     // Clickjacking protection: SAMEORIGIN for embeddable paths, DENY for everything else
-    let frame_options = if path.starts_with("/c/")
-        || path.starts_with("/api/v1/canvas")
-        || path.starts_with("/s/")
-    {
-        "SAMEORIGIN"
-    } else {
-        "DENY"
-    };
-    headers.insert(
-        "x-frame-options",
-        HeaderValue::from_static(frame_options),
-    );
+    let frame_options =
+        if path.starts_with("/c/") || path.starts_with("/api/v1/canvas") || path.starts_with("/s/")
+        {
+            "SAMEORIGIN"
+        } else {
+            "DENY"
+        };
+    headers.insert("x-frame-options", HeaderValue::from_static(frame_options));
 
     // Referrer policy: send origin on cross-origin, full URL on same-origin
     headers.insert(
@@ -93,12 +84,7 @@ mod tests {
 
     async fn get_response(uri: &str) -> axum::response::Response {
         app()
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
             .await
             .unwrap()
     }
@@ -131,19 +117,13 @@ mod tests {
     #[tokio::test]
     async fn test_frame_options_sameorigin_for_canvas() {
         let resp = get_response("/c/my-canvas").await;
-        assert_eq!(
-            resp.headers().get("x-frame-options").unwrap(),
-            "SAMEORIGIN"
-        );
+        assert_eq!(resp.headers().get("x-frame-options").unwrap(), "SAMEORIGIN");
     }
 
     #[tokio::test]
     async fn test_frame_options_sameorigin_for_sites() {
         let resp = get_response("/s/my-site").await;
-        assert_eq!(
-            resp.headers().get("x-frame-options").unwrap(),
-            "SAMEORIGIN"
-        );
+        assert_eq!(resp.headers().get("x-frame-options").unwrap(), "SAMEORIGIN");
     }
 
     #[tokio::test]
