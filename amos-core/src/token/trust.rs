@@ -75,8 +75,8 @@ impl AgentTrust {
         }
 
         let total = self.total_completions + self.total_rejections;
-        if total > 0 {
-            self.reputation_bps = self.total_completions * BPS_DENOMINATOR / total;
+        if let Some(bps) = (self.total_completions * BPS_DENOMINATOR).checked_div(total) {
+            self.reputation_bps = bps;
         }
     }
 

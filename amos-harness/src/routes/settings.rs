@@ -86,6 +86,14 @@ const AVAILABLE_MODELS: &[ModelInfo] = &[
         input_price_per_mtok: 15.45,
         output_price_per_mtok: 77.25,
     },
+    ModelInfo {
+        id: "us.anthropic.claude-opus-4-7-v1",
+        display_name: "Claude Opus 4.7",
+        tier: "powerful",
+        // Base: $5.00 / $25.00 → with markup: $5.15 / $25.75
+        input_price_per_mtok: 5.15,
+        output_price_per_mtok: 25.75,
+    },
 ];
 
 const DEFAULT_MODEL: &str = "us.anthropic.claude-sonnet-4-6";
