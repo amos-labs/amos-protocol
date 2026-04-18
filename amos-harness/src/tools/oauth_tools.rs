@@ -129,14 +129,20 @@ impl Tool for InitiateOAuthConnectionTool {
 
     fn description(&self) -> &str {
         "Set up a new OAuth2 connection. Creates an integration_credentials \
-         row and returns a start URL the user clicks to authorize. Before \
-         calling this you need (a) a connection label and (b) the user's \
-         client_id + client_secret from their OAuth app in the provider's \
-         developer console. Use `provider_slug` for known providers (fills \
-         auth_url/token_url/scopes from the directory). For custom/unknown \
-         providers, pass `auth_url`, `token_url`, and `scopes` directly. \
-         Also requires `integration_id` — create an `integrations` row \
-         first via manage_integration if you don't already have one."
+         row and returns a start path the user opens in their browser. \
+         Before calling this you need (a) a connection label and (b) the \
+         user's client_id + client_secret from their OAuth app in the \
+         provider's developer console.\n\n\
+         The redirect URI the user must register with their OAuth provider \
+         is `{harness-url}/api/v1/oauth/callback` — where {harness-url} is \
+         the URL of THIS harness (shown in the user's browser address bar). \
+         The harness auto-detects its own URL from the request Host header, \
+         so no env var setup is needed per-deployment.\n\n\
+         Use `provider_slug` for known providers (fills auth_url/token_url/\
+         scopes from the directory). For custom/unknown providers, pass \
+         `auth_url`, `token_url`, and `scopes` directly. Also requires \
+         `integration_id` — create an `integrations` row first via \
+         manage_integration if you don't already have one."
     }
 
     fn parameters_schema(&self) -> JsonValue {
@@ -298,23 +304,42 @@ impl Tool for InitiateOAuthConnectionTool {
         .await
         .map_err(|e| AmosError::Internal(format!("Failed to create credential: {}", e)))?;
 
-        let start_url = format!(
-            "{}/api/v1/oauth/start/{}",
-            self.config.oauth.redirect_base_url.trim_end_matches('/'),
-            credential_id
-        );
-        let redirect_uri = format!(
-            "{}/api/v1/oauth/callback",
-            self.config.oauth.redirect_base_url.trim_end_matches('/')
-        );
+        // Return a relative path — the harness's public URL is derived
+        // per-request from the Host header in routes/oauth.rs, so we
+        // don't need to know our own domain here. The frontend/canvas
+        // prepends the current origin when rendering the link.
+        let start_path = format!("/api/v1/oauth/start/{}", credential_id);
+        let redirect_path = "/api/v1/oauth/callback".to_string();
+
+        // If an explicit base URL is configured (non-default), include an
+        // absolute URL for convenience so the agent can paste a clickable link.
+        let base = self.config.oauth.redirect_base_url.trim_end_matches('/');
+        let absolute_start = if base.is_empty() || base == "http://localhost:3000" {
+            None
+        } else {
+            Some(format!("{}{}", base, start_path))
+        };
+
+        let message = match &absolute_start {
+            Some(url) => format!(
+                "Have the user open {} in a browser to authorize the connection.",
+                url
+            ),
+            None => format!(
+                "Have the user open `{}` (on this harness's domain) in a browser to authorize the connection. \
+                 The harness auto-detects its public URL from the request.",
+                start_path
+            ),
+        };
 
         Ok(ToolResult::success(json!({
             "credential_id": credential_id,
             "label": label,
             "status": "pending",
-            "start_url": start_url,
-            "redirect_uri": redirect_uri,
-            "message": format!("Have the user open {} in a browser to authorize the connection.", start_url),
+            "start_path": start_path,
+            "start_url": absolute_start,
+            "redirect_path": redirect_path,
+            "message": message,
         })))
     }
 }

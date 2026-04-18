@@ -17,7 +17,7 @@
 use crate::state::AppState;
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{Html, Redirect},
     routing::get,
     Router,
@@ -33,6 +33,50 @@ pub fn routes(_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .route("/start/{credential_id}", get(start))
         .route("/callback", get(callback))
+}
+
+/// Derive this harness's public base URL from the incoming request headers.
+///
+/// Each customer harness is served at its own subdomain (e.g.
+/// `jana.custom.amoslabs.com`) via the platform's ALB. The host is always
+/// present in the incoming request, so we can build the redirect URI
+/// dynamically instead of requiring every deployment to set
+/// `AMOS__OAUTH__REDIRECT_BASE_URL`. If that env var *is* set, it takes
+/// precedence (useful for non-standard proxy setups).
+///
+/// Header precedence: X-Forwarded-Host → Host. Scheme precedence:
+/// X-Forwarded-Proto → "https" (since we're always behind the ALB in prod).
+pub fn derive_base_url(headers: &HeaderMap, state: &AppState) -> String {
+    if !state.config.oauth.redirect_base_url.is_empty()
+        && state.config.oauth.redirect_base_url != "http://localhost:3000"
+    {
+        return state
+            .config
+            .oauth
+            .redirect_base_url
+            .trim_end_matches('/')
+            .to_string();
+    }
+
+    let host = headers
+        .get("x-forwarded-host")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| headers.get("host").and_then(|v| v.to_str().ok()))
+        .unwrap_or("localhost:3000");
+
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_else(|| {
+            // Local dev over plain HTTP, anywhere else assume https.
+            if host.starts_with("localhost") || host.starts_with("127.0.0.1") {
+                "http"
+            } else {
+                "https"
+            }
+        });
+
+    format!("{}://{}", scheme, host)
 }
 
 #[derive(Deserialize)]
@@ -55,6 +99,7 @@ struct CallbackQuery {
 async fn start(
     State(state): State<Arc<AppState>>,
     Path(credential_id): Path<Uuid>,
+    headers: HeaderMap,
     Query(q): Query<StartQuery>,
 ) -> Result<Redirect, (StatusCode, String)> {
     // Load the credential row to get the provider's OAuth endpoints.
@@ -108,7 +153,7 @@ async fn start(
 
     let redirect_uri = format!(
         "{}/api/v1/oauth/callback",
-        state.config.oauth.redirect_base_url.trim_end_matches('/')
+        derive_base_url(&headers, &state)
     );
 
     // Build authorize URL.
@@ -158,6 +203,7 @@ async fn start(
 /// them on the `integration_credentials` row.
 async fn callback(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(q): Query<CallbackQuery>,
 ) -> Result<Html<String>, (StatusCode, String)> {
     if let Some(err) = q.error {
@@ -230,7 +276,7 @@ async fn callback(
 
     let redirect_uri = format!(
         "{}/api/v1/oauth/callback",
-        state.config.oauth.redirect_base_url.trim_end_matches('/')
+        derive_base_url(&headers, &state)
     );
 
     // Exchange code for tokens.

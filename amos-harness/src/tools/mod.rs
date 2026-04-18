@@ -468,14 +468,9 @@ impl ToolRegistry {
             etl_pipeline.clone(),
         )));
 
-        // Register communication tools (email via SES, WhatsApp via Twilio, Discord via webhook)
-        registry.register(Arc::new(communication_tools::SendEmailTool::new(
+        // Unified communication tool — email (SES), WhatsApp (Twilio), Discord (webhook)
+        registry.register(Arc::new(communication_tools::SendMessageTool::new(
             email_client.clone(),
-        )));
-        registry.register(Arc::new(communication_tools::SendWhatsappTool::new(
-            config.clone(),
-        )));
-        registry.register(Arc::new(communication_tools::SendDiscordTool::new(
             config.clone(),
         )));
 

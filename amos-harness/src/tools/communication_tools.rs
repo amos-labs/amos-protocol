@@ -1,9 +1,12 @@
-//! Communication tools — email (SES), WhatsApp (Twilio), Discord (webhooks).
+//! Unified communication tool — `send_message` dispatches to email (SES),
+//! WhatsApp (Twilio), or Discord (webhooks) based on the `channel` param.
 //!
-//! These wrap the transport clients that the harness owns, so the agent can
-//! send messages without learning each API. All three are single-provider
-//! for now; BYOK (customer-supplied credentials) comes later via the
-//! credential vault.
+//! Single tool keeps the agent's surface area small; channel-specific fields
+//! are documented in the tool description. New transports (SMS, Telegram,
+//! Signal, etc.) can be added as new channels without registering more tools.
+//!
+//! Credential resolution is env-var based today; BYOK per-customer comes
+//! later via the credential vault.
 
 use super::{Tool, ToolCategory, ToolResult};
 use crate::ses::{EmailMessage, SesClient};
@@ -13,79 +16,107 @@ use secrecy::ExposeSecret;
 use serde_json::{json, Value as JsonValue};
 use std::sync::Arc;
 
-/// Send an email via AWS SES.
-pub struct SendEmailTool {
+/// Unified message-sending tool. The `channel` parameter selects the
+/// transport; channel-specific fields are validated per-channel.
+pub struct SendMessageTool {
     email_client: Option<Arc<SesClient>>,
+    config: Arc<AppConfig>,
+    http_client: reqwest::Client,
 }
 
-impl SendEmailTool {
-    pub fn new(email_client: Option<Arc<SesClient>>) -> Self {
-        Self { email_client }
+impl SendMessageTool {
+    pub fn new(email_client: Option<Arc<SesClient>>, config: Arc<AppConfig>) -> Self {
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self {
+            email_client,
+            config,
+            http_client,
+        }
     }
 }
 
 #[async_trait]
-impl Tool for SendEmailTool {
+impl Tool for SendMessageTool {
     fn name(&self) -> &str {
-        "send_email"
+        "send_message"
     }
 
     fn description(&self) -> &str {
-        "Send an email via AWS SES. Use this for any email-based communication: \
-         customer notifications, marketing blasts, transactional messages, receipts. \
-         Supports plain-text and HTML bodies, CC/BCC, and reply-to. For mass email, \
-         query a collection for recipients then call this tool in a loop or via an \
-         automation with channel='email'. Requires the harness to be configured with \
-         AMOS__EMAIL__FROM_ADDRESS — if email is disabled, the tool returns an error."
+        "Send a message via email (SES), WhatsApp (Twilio), or Discord (webhook). \
+         Pick the channel and supply the fields it needs.\n\n\
+         EMAIL (channel=email): requires `to` (string or array), `subject`. \
+         At least one of `text` or `html` body. Optional: `cc`, `bcc`, \
+         `reply_to`, `from` (override; must be SES-verified).\n\n\
+         WHATSAPP (channel=whatsapp): requires `to` (E.164 phone like \
+         '+15551234567'), `body`. Optional: `from` (override Twilio number). \
+         Recipient must have opted in. Sandbox works for testing; prod \
+         requires Meta WhatsApp Business approval.\n\n\
+         DISCORD (channel=discord): requires `body`. Optional: `webhook_url` \
+         (if AMOS__DISCORD__DEFAULT_WEBHOOK_URL is set, can be omitted), \
+         `username`, `avatar_url`, `embeds` (array of Discord embed objects).\n\n\
+         For mass sends, query a collection for recipients and call this \
+         tool in a loop — or wire up a SendNotification automation with \
+         channel='email'. Each channel has clear error messages if the \
+         harness isn't configured for it."
     }
 
     fn parameters_schema(&self) -> JsonValue {
         json!({
             "type": "object",
             "properties": {
+                "channel": {
+                    "type": "string",
+                    "enum": ["email", "whatsapp", "discord"],
+                    "description": "Which transport to use"
+                },
+
+                // Email + WhatsApp share 'to'; Discord ignores it (uses webhook_url).
                 "to": {
-                    "description": "Recipient email address(es). String for single, array for multiple.",
+                    "description": "Recipient(s). Email: address or array of addresses. WhatsApp: E.164 phone (e.g. '+15551234567'). Discord: ignored.",
                     "oneOf": [
                         { "type": "string" },
                         { "type": "array", "items": { "type": "string" } }
                     ]
                 },
-                "subject": {
-                    "type": "string",
-                    "description": "Email subject line"
-                },
-                "text": {
-                    "type": "string",
-                    "description": "Plain-text body. At least one of `text` or `html` required."
-                },
-                "html": {
-                    "type": "string",
-                    "description": "HTML body. At least one of `text` or `html` required."
-                },
+
+                // Email-specific
+                "subject": { "type": "string", "description": "Email subject line (required for email)" },
+                "text": { "type": "string", "description": "Plain-text body. Email: at least one of text/html required." },
+                "html": { "type": "string", "description": "HTML body (email only)" },
                 "cc": {
-                    "description": "Optional CC recipient(s)",
-                    "oneOf": [
-                        { "type": "string" },
-                        { "type": "array", "items": { "type": "string" } }
-                    ]
+                    "description": "CC recipients (email only)",
+                    "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
                 },
                 "bcc": {
-                    "description": "Optional BCC recipient(s)",
-                    "oneOf": [
-                        { "type": "string" },
-                        { "type": "array", "items": { "type": "string" } }
-                    ]
+                    "description": "BCC recipients (email only)",
+                    "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
                 },
+                "reply_to": { "type": "string", "description": "Reply-To address (email only)" },
                 "from": {
                     "type": "string",
-                    "description": "Optional override of the default From address. Must be SES-verified."
+                    "description": "Override the default sender. Email: must be SES-verified. WhatsApp: 'whatsapp:+E.164' format."
                 },
-                "reply_to": {
+
+                // WhatsApp + Discord use 'body' for the message text.
+                "body": {
                     "type": "string",
-                    "description": "Optional Reply-To address"
+                    "description": "Message body. Required for WhatsApp and Discord."
+                },
+
+                // Discord-specific
+                "webhook_url": { "type": "string", "description": "Discord webhook URL. Optional if AMOS__DISCORD__DEFAULT_WEBHOOK_URL is set." },
+                "username": { "type": "string", "description": "Discord display-name override" },
+                "avatar_url": { "type": "string", "description": "Discord avatar override" },
+                "embeds": {
+                    "type": "array",
+                    "description": "Discord embed objects (see Discord API)",
+                    "items": { "type": "object" }
                 }
             },
-            "required": ["to", "subject"]
+            "required": ["channel"]
         })
     }
 
@@ -94,6 +125,25 @@ impl Tool for SendEmailTool {
     }
 
     async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+        let channel = match params.get("channel").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => return Ok(ToolResult::error("`channel` is required".to_string())),
+        };
+
+        match channel {
+            "email" => self.send_email(&params).await,
+            "whatsapp" => self.send_whatsapp(&params).await,
+            "discord" => self.send_discord(&params).await,
+            other => Ok(ToolResult::error(format!(
+                "Unknown channel '{}'. Supported: email, whatsapp, discord.",
+                other
+            ))),
+        }
+    }
+}
+
+impl SendMessageTool {
+    async fn send_email(&self, params: &JsonValue) -> Result<ToolResult> {
         let client = match &self.email_client {
             Some(c) => c,
             None => {
@@ -108,7 +158,7 @@ impl Tool for SendEmailTool {
         let to = parse_address_list(params.get("to"));
         if to.is_empty() {
             return Ok(ToolResult::error(
-                "`to` is required and must be a non-empty string or array of strings".to_string(),
+                "`to` is required for email (string or non-empty array)".to_string(),
             ));
         }
         let cc = parse_address_list(params.get("cc"));
@@ -116,7 +166,11 @@ impl Tool for SendEmailTool {
 
         let subject = match params.get("subject").and_then(|v| v.as_str()) {
             Some(s) if !s.trim().is_empty() => s.to_string(),
-            _ => return Ok(ToolResult::error("`subject` is required".to_string())),
+            _ => {
+                return Ok(ToolResult::error(
+                    "`subject` is required for email".to_string(),
+                ))
+            }
         };
 
         let text = params
@@ -127,10 +181,9 @@ impl Tool for SendEmailTool {
             .get("html")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-
         if text.is_none() && html.is_none() {
             return Ok(ToolResult::error(
-                "At least one of `text` or `html` body is required".to_string(),
+                "Email requires at least one of `text` or `html`".to_string(),
             ));
         }
 
@@ -157,6 +210,7 @@ impl Tool for SendEmailTool {
         match client.send(msg).await {
             Ok(result) => Ok(ToolResult::success(json!({
                 "sent": true,
+                "channel": "email",
                 "message_id": result.message_id,
                 "to": to,
                 "subject": subject,
@@ -164,80 +218,14 @@ impl Tool for SendEmailTool {
             Err(e) => Ok(ToolResult::error(format!("Email send failed: {}", e))),
         }
     }
-}
 
-// ─── WhatsApp (Twilio) ──────────────────────────────────────────────────
-
-/// Send a WhatsApp message via the Twilio Messaging API.
-///
-/// Requires `AMOS__TWILIO__ACCOUNT_SID`, `AMOS__TWILIO__AUTH_TOKEN`, and
-/// `AMOS__TWILIO__FROM_NUMBER` to be configured.
-pub struct SendWhatsappTool {
-    config: Arc<AppConfig>,
-    http_client: reqwest::Client,
-}
-
-impl SendWhatsappTool {
-    pub fn new(config: Arc<AppConfig>) -> Self {
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-        Self {
-            config,
-            http_client,
-        }
-    }
-}
-
-#[async_trait]
-impl Tool for SendWhatsappTool {
-    fn name(&self) -> &str {
-        "send_whatsapp"
-    }
-
-    fn description(&self) -> &str {
-        "Send a WhatsApp message via Twilio. Requires the harness to be configured \
-         with Twilio credentials (AMOS__TWILIO__ACCOUNT_SID, AUTH_TOKEN, FROM_NUMBER). \
-         Use this to reach customers or yourself on WhatsApp from an automation or \
-         interactively from chat. The recipient must have opted in to receive messages \
-         from your Twilio WhatsApp number."
-    }
-
-    fn parameters_schema(&self) -> JsonValue {
-        json!({
-            "type": "object",
-            "properties": {
-                "to": {
-                    "type": "string",
-                    "description": "Recipient phone number in E.164 format (e.g. '+15551234567'). \
-                                    The 'whatsapp:' prefix is added automatically."
-                },
-                "body": {
-                    "type": "string",
-                    "description": "Message body (UTF-8, up to 1600 characters)"
-                },
-                "from": {
-                    "type": "string",
-                    "description": "Optional override of the default From number. \
-                                    Use 'whatsapp:+E.164' format."
-                }
-            },
-            "required": ["to", "body"]
-        })
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Integration
-    }
-
-    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+    async fn send_whatsapp(&self, params: &JsonValue) -> Result<ToolResult> {
         let cfg = &self.config.twilio;
         let account_sid = match &cfg.account_sid {
             Some(s) if !s.trim().is_empty() => s,
             _ => {
                 return Ok(ToolResult::error(
-                    "Twilio not configured: set AMOS__TWILIO__ACCOUNT_SID".to_string(),
+                    "WhatsApp not configured: set AMOS__TWILIO__ACCOUNT_SID".to_string(),
                 ))
             }
         };
@@ -245,7 +233,7 @@ impl Tool for SendWhatsappTool {
             Some(t) if !t.expose_secret().trim().is_empty() => t.expose_secret().to_string(),
             _ => {
                 return Ok(ToolResult::error(
-                    "Twilio not configured: set AMOS__TWILIO__AUTH_TOKEN".to_string(),
+                    "WhatsApp not configured: set AMOS__TWILIO__AUTH_TOKEN".to_string(),
                 ))
             }
         };
@@ -257,7 +245,7 @@ impl Tool for SendWhatsappTool {
             .or_else(|| cfg.from_number.clone())
             .ok_or_else(|| {
                 amos_core::AmosError::Config(
-                    "Twilio not configured: set AMOS__TWILIO__FROM_NUMBER or pass 'from'"
+                    "WhatsApp not configured: set AMOS__TWILIO__FROM_NUMBER or pass `from`"
                         .to_string(),
                 )
             })?;
@@ -267,9 +255,15 @@ impl Tool for SendWhatsappTool {
             format!("whatsapp:{}", from)
         };
 
-        let to_raw = match params.get("to").and_then(|v| v.as_str()) {
-            Some(s) if !s.trim().is_empty() => s.trim().to_string(),
-            _ => return Ok(ToolResult::error("`to` is required".to_string())),
+        // WhatsApp uses a single recipient; if an array is passed, take the first.
+        let to_list = parse_address_list(params.get("to"));
+        let to_raw = match to_list.first() {
+            Some(s) if !s.is_empty() => s.clone(),
+            _ => {
+                return Ok(ToolResult::error(
+                    "`to` is required for whatsapp (phone in E.164)".to_string(),
+                ))
+            }
         };
         let to = if to_raw.starts_with("whatsapp:") {
             to_raw
@@ -279,14 +273,17 @@ impl Tool for SendWhatsappTool {
 
         let body = match params.get("body").and_then(|v| v.as_str()) {
             Some(s) if !s.trim().is_empty() => s.to_string(),
-            _ => return Ok(ToolResult::error("`body` is required".to_string())),
+            _ => {
+                return Ok(ToolResult::error(
+                    "`body` is required for whatsapp".to_string(),
+                ))
+            }
         };
 
         let url = format!(
             "https://api.twilio.com/2010-04-01/Accounts/{}/Messages.json",
             account_sid
         );
-
         let form = [
             ("From", from.as_str()),
             ("To", to.as_str()),
@@ -312,7 +309,7 @@ impl Tool for SendWhatsappTool {
                     )));
                 }
                 let parsed: serde_json::Value = serde_json::from_str(&body_text)
-                    .unwrap_or_else(|_| serde_json::json!({ "raw": body_text }));
+                    .unwrap_or_else(|_| json!({ "raw": body_text }));
                 let sid = parsed
                     .get("sid")
                     .and_then(|v| v.as_str())
@@ -320,6 +317,7 @@ impl Tool for SendWhatsappTool {
                     .to_string();
                 Ok(ToolResult::success(json!({
                     "sent": true,
+                    "channel": "whatsapp",
                     "sid": sid,
                     "to": to,
                     "from": from,
@@ -328,80 +326,8 @@ impl Tool for SendWhatsappTool {
             Err(e) => Ok(ToolResult::error(format!("Twilio request failed: {}", e))),
         }
     }
-}
 
-// ─── Discord (Webhook) ──────────────────────────────────────────────────
-
-/// Post a message to a Discord channel via webhook URL.
-///
-/// The webhook URL can come from `AMOS__DISCORD__DEFAULT_WEBHOOK_URL` or be
-/// passed per call. No authentication beyond the URL secret.
-pub struct SendDiscordTool {
-    config: Arc<AppConfig>,
-    http_client: reqwest::Client,
-}
-
-impl SendDiscordTool {
-    pub fn new(config: Arc<AppConfig>) -> Self {
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-        Self {
-            config,
-            http_client,
-        }
-    }
-}
-
-#[async_trait]
-impl Tool for SendDiscordTool {
-    fn name(&self) -> &str {
-        "send_discord"
-    }
-
-    fn description(&self) -> &str {
-        "Post a message to a Discord channel via webhook URL. Get a webhook URL from \
-         Discord channel settings → Integrations → Webhooks → New Webhook. Either set \
-         AMOS__DISCORD__DEFAULT_WEBHOOK_URL or pass `webhook_url` per call. Supports \
-         plain text plus optional username/avatar override and embeds."
-    }
-
-    fn parameters_schema(&self) -> JsonValue {
-        json!({
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string",
-                    "description": "Message text (up to 2000 characters)"
-                },
-                "webhook_url": {
-                    "type": "string",
-                    "description": "Discord webhook URL. Optional if AMOS__DISCORD__DEFAULT_WEBHOOK_URL is set."
-                },
-                "username": {
-                    "type": "string",
-                    "description": "Optional display name override"
-                },
-                "avatar_url": {
-                    "type": "string",
-                    "description": "Optional avatar URL override"
-                },
-                "embeds": {
-                    "type": "array",
-                    "description": "Optional Discord embed objects (see Discord API docs)",
-                    "items": { "type": "object" }
-                }
-            },
-            "required": ["content"]
-        })
-    }
-
-    fn category(&self) -> ToolCategory {
-        ToolCategory::Integration
-    }
-
-    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+    async fn send_discord(&self, params: &JsonValue) -> Result<ToolResult> {
         let url = params
             .get("webhook_url")
             .and_then(|v| v.as_str())
@@ -413,34 +339,38 @@ impl Tool for SendDiscordTool {
             _ => {
                 return Ok(ToolResult::error(
                     "No Discord webhook URL available. Set AMOS__DISCORD__DEFAULT_WEBHOOK_URL \
-                     or pass `webhook_url` in the tool params."
+                     or pass `webhook_url`."
                         .to_string(),
-                ));
+                ))
             }
         };
 
-        let content = match params.get("content").and_then(|v| v.as_str()) {
+        let content = match params.get("body").and_then(|v| v.as_str()) {
             Some(s) if !s.trim().is_empty() => s.to_string(),
-            _ => return Ok(ToolResult::error("`content` is required".to_string())),
+            _ => {
+                return Ok(ToolResult::error(
+                    "`body` is required for discord".to_string(),
+                ))
+            }
         };
 
-        let mut body = serde_json::Map::new();
-        body.insert("content".to_string(), json!(content));
+        let mut body_obj = serde_json::Map::new();
+        body_obj.insert("content".to_string(), json!(content));
         if let Some(u) = params.get("username").and_then(|v| v.as_str()) {
-            body.insert("username".to_string(), json!(u));
+            body_obj.insert("username".to_string(), json!(u));
         }
         if let Some(a) = params.get("avatar_url").and_then(|v| v.as_str()) {
-            body.insert("avatar_url".to_string(), json!(a));
+            body_obj.insert("avatar_url".to_string(), json!(a));
         }
         if let Some(e) = params.get("embeds").cloned() {
-            body.insert("embeds".to_string(), e);
+            body_obj.insert("embeds".to_string(), e);
         }
 
         let resp = self
             .http_client
             .post(&url)
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body_obj)
             .send()
             .await;
 
@@ -456,6 +386,7 @@ impl Tool for SendDiscordTool {
                 }
                 Ok(ToolResult::success(json!({
                     "sent": true,
+                    "channel": "discord",
                     "status": status.as_u16(),
                 })))
             }
@@ -464,7 +395,7 @@ impl Tool for SendDiscordTool {
     }
 }
 
-/// Parse a JSON value into a list of email addresses.
+/// Parse a JSON value into a list of recipient addresses.
 /// Accepts either a single string or an array of strings.
 fn parse_address_list(value: Option<&JsonValue>) -> Vec<String> {
     match value {
@@ -482,23 +413,33 @@ fn parse_address_list(value: Option<&JsonValue>) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn mock_config() -> Arc<AppConfig> {
+        Arc::new(
+            serde_json::from_value(json!({
+                "database": { "url": "postgres://x" }
+            }))
+            .unwrap(),
+        )
+    }
+
     #[test]
     fn tool_metadata() {
-        let tool = SendEmailTool::new(None);
-        assert_eq!(tool.name(), "send_email");
+        let tool = SendMessageTool::new(None, mock_config());
+        assert_eq!(tool.name(), "send_message");
         assert_eq!(tool.category(), ToolCategory::Integration);
         let schema = tool.parameters_schema();
-        assert!(schema["properties"]["to"].is_object());
-        assert!(schema["properties"]["subject"].is_object());
+        assert!(schema["properties"]["channel"].is_object());
         let required = schema["required"].as_array().unwrap();
-        assert_eq!(required.len(), 2);
+        assert_eq!(required.len(), 1);
+        assert_eq!(required[0], "channel");
     }
 
     #[tokio::test]
-    async fn returns_error_when_email_disabled() {
-        let tool = SendEmailTool::new(None);
+    async fn email_channel_returns_error_when_disabled() {
+        let tool = SendMessageTool::new(None, mock_config());
         let result = tool
             .execute(json!({
+                "channel": "email",
                 "to": "a@b.com",
                 "subject": "hi",
                 "text": "body"
@@ -509,32 +450,84 @@ mod tests {
         assert!(result.error.unwrap().contains("not configured"));
     }
 
+    #[tokio::test]
+    async fn whatsapp_channel_returns_error_when_twilio_missing() {
+        let tool = SendMessageTool::new(None, mock_config());
+        let result = tool
+            .execute(json!({
+                "channel": "whatsapp",
+                "to": "+15551234567",
+                "body": "hi"
+            }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("ACCOUNT_SID"));
+    }
+
+    #[tokio::test]
+    async fn discord_channel_returns_error_without_webhook() {
+        let tool = SendMessageTool::new(None, mock_config());
+        let result = tool
+            .execute(json!({
+                "channel": "discord",
+                "body": "hi"
+            }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("webhook"));
+    }
+
+    #[tokio::test]
+    async fn unknown_channel_rejected() {
+        let tool = SendMessageTool::new(None, mock_config());
+        let result = tool
+            .execute(json!({
+                "channel": "telegram",
+                "body": "hi"
+            }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Unknown channel"));
+    }
+
+    #[tokio::test]
+    async fn missing_channel_rejected() {
+        let tool = SendMessageTool::new(None, mock_config());
+        let result = tool.execute(json!({ "body": "hi" })).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("channel"));
+    }
+
     #[test]
     fn parse_address_list_single_string() {
-        let v = json!("a@b.com");
-        assert_eq!(parse_address_list(Some(&v)), vec!["a@b.com".to_string()]);
+        assert_eq!(
+            parse_address_list(Some(&json!("a@b.com"))),
+            vec!["a@b.com".to_string()]
+        );
     }
 
     #[test]
     fn parse_address_list_array() {
-        let v = json!(["a@b.com", "c@d.com"]);
-        assert_eq!(parse_address_list(Some(&v)).len(), 2);
+        assert_eq!(
+            parse_address_list(Some(&json!(["a@b.com", "c@d.com"]))).len(),
+            2
+        );
     }
 
     #[test]
-    fn parse_address_list_empty_string_returns_empty() {
-        let v = json!("");
-        assert!(parse_address_list(Some(&v)).is_empty());
-    }
-
-    #[test]
-    fn parse_address_list_missing_returns_empty() {
+    fn parse_address_list_empty() {
+        assert!(parse_address_list(Some(&json!(""))).is_empty());
         assert!(parse_address_list(None).is_empty());
     }
 
     #[test]
     fn parse_address_list_filters_empty_strings_in_array() {
-        let v = json!(["a@b.com", "", "  ", "c@d.com"]);
-        assert_eq!(parse_address_list(Some(&v)).len(), 2);
+        assert_eq!(
+            parse_address_list(Some(&json!(["a@b.com", "", "  ", "c@d.com"]))).len(),
+            2
+        );
     }
 }
