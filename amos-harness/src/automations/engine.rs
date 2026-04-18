@@ -20,6 +20,10 @@ pub struct AutomationEngine {
     http_client: reqwest::Client,
     /// Optional SES client for email-channel notifications.
     email_client: Option<Arc<SesClient>>,
+    /// Sender for self-emitted events (used by action chaining). Populated
+    /// by `create_event_channel()`. `try_send` is non-async to avoid an
+    /// async self-reference cycle with `execute_action`.
+    event_tx: Arc<parking_lot::RwLock<Option<mpsc::Sender<TriggerEvent>>>>,
 }
 
 impl AutomationEngine {
@@ -29,6 +33,7 @@ impl AutomationEngine {
             task_queue,
             http_client,
             email_client: None,
+            event_tx: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -39,11 +44,30 @@ impl AutomationEngine {
         self
     }
 
+    /// Share the parent engine's self-emit event sender so cloned sub-engines
+    /// can fire chain events back through the same channel.
+    pub fn with_event_tx(
+        mut self,
+        event_tx: Arc<parking_lot::RwLock<Option<mpsc::Sender<TriggerEvent>>>>,
+    ) -> Self {
+        self.event_tx = event_tx;
+        self
+    }
+
+    /// Accessor for the shared self-emit sender holder.
+    pub fn event_tx_handle(&self) -> Arc<parking_lot::RwLock<Option<mpsc::Sender<TriggerEvent>>>> {
+        self.event_tx.clone()
+    }
+
     /// Create an event channel and spawn a background task that drains it.
     /// Returns the sender that `SchemaEngine` can use to fire events without
-    /// creating an async type cycle.
+    /// creating an async type cycle. Also stores a clone of the sender
+    /// internally so `execute_action` can emit chain events back into the
+    /// same loop.
     pub fn create_event_channel(self: &Arc<Self>) -> mpsc::Sender<TriggerEvent> {
         let (tx, mut rx) = mpsc::channel::<TriggerEvent>(1024);
+        *self.event_tx.write() = Some(tx.clone());
+
         let engine = self.clone();
         tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
@@ -75,10 +99,12 @@ impl AutomationEngine {
             let task_queue = self.task_queue.clone();
             let http_client = self.http_client.clone();
             let email_client = self.email_client.clone();
+            let event_tx = self.event_tx.clone();
 
             tokio::spawn(async move {
                 let engine = AutomationEngine::new(db_pool, task_queue, http_client)
-                    .with_email_client(email_client);
+                    .with_email_client(email_client)
+                    .with_event_tx(event_tx);
                 engine.execute_action(&automation, trigger_data).await;
             });
         }
@@ -122,6 +148,26 @@ impl AutomationEngine {
                 }
             }
 
+            // For automation_completed chaining: match on the source
+            // automation_id in trigger_config. If not specified, match any
+            // completed automation (useful for a catch-all "audit every run").
+            if matches!(event.event_type, TriggerType::AutomationCompleted) {
+                if let Some(required) = automation
+                    .trigger_config
+                    .get("automation_id")
+                    .and_then(|v| v.as_str())
+                {
+                    let source = event
+                        .data
+                        .get("source_automation_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    if required != source {
+                        continue;
+                    }
+                }
+            }
+
             // Evaluate optional condition (simple JSONB field match)
             if let Some(condition) = &automation.condition {
                 if !evaluate_condition(condition, &event.data) {
@@ -138,6 +184,14 @@ impl AutomationEngine {
     /// Execute the action for a matched automation.
     async fn execute_action(&self, automation: &Automation, trigger_data: JsonValue) {
         let start = Instant::now();
+
+        // Apply {{trigger.field}} substitution to the whole action_config up
+        // front so every action type gets dynamic data bindings without
+        // each handler needing to remember to call substitute_template.
+        let resolved_config = substitute_template(&automation.action_config, &trigger_data);
+        let mut resolved = automation.clone();
+        resolved.action_config = resolved_config;
+        let automation = &resolved;
 
         let result = match automation.action_type {
             ActionType::CreateRecord => self.action_create_record(automation, &trigger_data).await,
@@ -166,11 +220,53 @@ impl AutomationEngine {
                         automation.id,
                         &trigger_data,
                         "success",
-                        Some(result_data),
+                        Some(result_data.clone()),
                         None,
                         duration_ms,
                     )
                     .await;
+
+                // Fire automation_completed event so any chained automations
+                // can run. Cap chain depth at 5 to prevent infinite loops.
+                let depth = trigger_data
+                    .get("_chain_depth")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                if depth < 5 {
+                    // Emit chain event via the shared sender. try_send is
+                    // non-async, breaking the self-reference cycle that a
+                    // direct call to fire_event would create.
+                    if let Some(tx) = self.event_tx.read().clone() {
+                        let chain_event = TriggerEvent {
+                            event_type: TriggerType::AutomationCompleted,
+                            collection: None,
+                            record_id: None,
+                            data: json!({
+                                "source_automation_id": automation.id.to_string(),
+                                "source_automation_name": automation.name,
+                                "result": result_data,
+                                "trigger_data": trigger_data,
+                                "_chain_depth": depth + 1,
+                            }),
+                        };
+                        if let Err(e) = tx.try_send(chain_event) {
+                            tracing::warn!(
+                                automation_id = %automation.id,
+                                error = %e,
+                                "Failed to emit automation_completed chain event"
+                            );
+                        }
+                    } else {
+                        tracing::debug!(
+                            "Skipping chain event emit: engine was not started via create_event_channel"
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        automation_id = %automation.id,
+                        "Chain depth limit (5) reached — not firing automation_completed event"
+                    );
+                }
             }
             Err(e) => {
                 tracing::error!(
@@ -216,7 +312,7 @@ impl AutomationEngine {
     async fn action_create_record(
         &self,
         automation: &Automation,
-        trigger_data: &JsonValue,
+        _trigger_data: &JsonValue,
     ) -> Result<JsonValue> {
         let collection = automation
             .action_config
@@ -228,13 +324,12 @@ impl AutomationEngine {
                 )
             })?;
 
-        let data_template = automation
+        // action_config is already template-substituted by execute_action's top-level call.
+        let data = automation
             .action_config
             .get("data_template")
             .cloned()
             .unwrap_or_else(|| json!({}));
-
-        let data = substitute_template(&data_template, trigger_data);
 
         let engine = SchemaEngine::new(self.db_pool.clone());
         let record = engine.create_record(collection, data).await?;
@@ -267,13 +362,12 @@ impl AutomationEngine {
         let record_id = Uuid::parse_str(record_id_str)
             .map_err(|_| AmosError::Validation(format!("Invalid UUID: {}", record_id_str)))?;
 
-        let data_template = automation
+        // action_config is already template-substituted by execute_action's top-level call.
+        let data = automation
             .action_config
             .get("data_template")
             .cloned()
             .unwrap_or_else(|| json!({}));
-
-        let data = substitute_template(&data_template, trigger_data);
 
         let engine = SchemaEngine::new(self.db_pool.clone());
         let record = engine.update_record(record_id, data).await?;
@@ -946,11 +1040,13 @@ impl AutomationEngine {
                 let task_queue = self.task_queue.clone();
                 let http_client = self.http_client.clone();
                 let email_client = self.email_client.clone();
+                let event_tx = self.event_tx.clone();
                 let auto = automation.clone();
 
                 tokio::spawn(async move {
                     let engine = AutomationEngine::new(db_pool, task_queue, http_client)
-                        .with_email_client(email_client);
+                        .with_email_client(email_client)
+                        .with_event_tx(event_tx);
                     engine.execute_action(&auto, trigger_data).await;
                 });
             }

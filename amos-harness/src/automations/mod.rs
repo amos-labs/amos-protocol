@@ -29,6 +29,11 @@ pub enum TriggerType {
     Schedule,
     Webhook,
     Manual,
+    /// Fired after another automation completes successfully. Use the
+    /// `automation_id` field in `trigger_config` to chain a specific upstream
+    /// automation. Enables multi-step flows (e.g., "when onboarding emails
+    /// automation finishes, run the welcome-task automation").
+    AutomationCompleted,
 }
 
 impl TriggerType {
@@ -40,6 +45,7 @@ impl TriggerType {
             TriggerType::Schedule => "schedule",
             TriggerType::Webhook => "webhook",
             TriggerType::Manual => "manual",
+            TriggerType::AutomationCompleted => "automation_completed",
         }
     }
 
@@ -51,6 +57,7 @@ impl TriggerType {
             "schedule" => Some(TriggerType::Schedule),
             "webhook" => Some(TriggerType::Webhook),
             "manual" => Some(TriggerType::Manual),
+            "automation_completed" => Some(TriggerType::AutomationCompleted),
             _ => None,
         }
     }
@@ -147,10 +154,19 @@ mod tests {
             TriggerType::Schedule,
             TriggerType::Webhook,
             TriggerType::Manual,
+            TriggerType::AutomationCompleted,
         ];
         for tt in types {
             assert_eq!(TriggerType::from_str(tt.as_str()), Some(tt));
         }
+    }
+
+    #[test]
+    fn automation_completed_serializes_as_snake_case() {
+        assert_eq!(
+            TriggerType::AutomationCompleted.as_str(),
+            "automation_completed"
+        );
     }
 
     #[test]
