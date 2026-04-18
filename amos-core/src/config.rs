@@ -61,6 +61,9 @@ pub struct AppConfig {
     /// Discord default webhook URL.
     #[serde(default)]
     pub discord: DiscordConfig,
+    /// OAuth2 flow settings.
+    #[serde(default)]
+    pub oauth: OAuthConfig,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -445,6 +448,31 @@ pub struct DiscordConfig {
     /// Env: `AMOS__DISCORD__DEFAULT_WEBHOOK_URL`
     #[serde(default)]
     pub default_webhook_url: Option<String>,
+}
+
+/// OAuth2 flow configuration.
+///
+/// `redirect_base_url` is the public URL of this harness that upstream
+/// providers redirect back to after consent. Example:
+/// `https://harness.amoslabs.com` → callback will be
+/// `https://harness.amoslabs.com/api/v1/oauth/callback`.
+#[derive(Debug, Deserialize, Clone)]
+pub struct OAuthConfig {
+    /// Env: `AMOS__OAUTH__REDIRECT_BASE_URL`
+    #[serde(default = "default_oauth_redirect_base")]
+    pub redirect_base_url: String,
+}
+
+fn default_oauth_redirect_base() -> String {
+    "http://localhost:3000".to_string()
+}
+
+impl Default for OAuthConfig {
+    fn default() -> Self {
+        Self {
+            redirect_base_url: default_oauth_redirect_base(),
+        }
+    }
 }
 
 /// Fleet configuration for autonomous bounty agent management.

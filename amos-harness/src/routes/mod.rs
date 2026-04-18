@@ -14,6 +14,7 @@ pub mod health;
 pub mod hooks;
 pub mod integrations;
 pub mod llm_providers;
+pub mod oauth;
 pub mod packages;
 pub mod revisions;
 pub mod settings;
@@ -68,6 +69,10 @@ pub fn build_routes(state: Arc<AppState>) -> Router {
         .nest("/api/v1/config", wallet::public_routes(state.clone()))
         // Webhook ingress routes (external triggers, auth via webhook secret)
         .nest("/api/v1/hooks", hooks::routes(state.clone()))
+        // OAuth2 authorization code flow: external providers redirect here
+        // after the user consents, so these endpoints must be public.
+        // Security is via state_token (per-flow) + short-TTL + PKCE.
+        .nest("/api/v1/oauth", oauth::routes(state.clone()))
         .layer({
             let limiter = public_limiter;
             axum::middleware::from_fn(move |req, next| {
