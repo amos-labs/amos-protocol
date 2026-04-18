@@ -1,5 +1,6 @@
 //! Fleet management routes — deploy, monitor, and control autonomous bounty agents.
 
+use crate::middleware::AdminAuth;
 use crate::openclaw::fleet::AgentProfile;
 use crate::state::AppState;
 use axum::{
@@ -16,6 +17,8 @@ pub fn routes(_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(list_fleet))
         .route("/deploy", post(deploy_agent))
+        .route("/pause", post(pause_fleet))
+        .route("/resume", post(resume_fleet))
         .route("/{id}/stop", post(stop_agent))
         .route("/metrics", get(fleet_metrics))
         .route("/rebalance", post(rebalance_fleet))
@@ -85,6 +88,69 @@ async fn deploy_agent(
                     "error": e.to_string(),
                 })),
             ))
+        }
+    }
+}
+
+/// `POST /api/v1/fleet/pause` — Emergency pause: stop all autonomous fleet agents.
+///
+/// Requires `X-Admin-Key` header matching `AMOS__ADMIN__API_KEY`. This is a
+/// fleet-wide circuit breaker for halting runaway agent behavior; individual
+/// stop remains available at `/api/v1/fleet/{id}/stop`.
+async fn pause_fleet(
+    _admin: AdminAuth,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let fleet = state.fleet_manager.as_ref().ok_or_else(|| {
+        tracing::warn!("Fleet manager not available");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
+
+    match fleet.pause_all().await {
+        Ok(count) => {
+            tracing::warn!(agents_stopped = count, "Fleet paused via admin endpoint");
+            Ok(Json(serde_json::json!({
+                "status": "paused",
+                "agents_stopped": count,
+            })))
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Fleet pause failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// `POST /api/v1/fleet/resume` — Resume fleet by re-deploying the initial fleet.
+///
+/// Requires `X-Admin-Key`. If agents are already running, this is a no-op.
+/// Otherwise it redeploys agents per the `initial_fleet` config — new agent
+/// IDs are assigned; the resumed set may differ from the paused set if the
+/// config changed in between.
+async fn resume_fleet(
+    _admin: AdminAuth,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let fleet = state.fleet_manager.as_ref().ok_or_else(|| {
+        tracing::warn!("Fleet manager not available");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
+
+    match fleet.resume().await {
+        Ok(deployed) => {
+            tracing::info!(
+                agents_deployed = deployed.len(),
+                "Fleet resumed via admin endpoint"
+            );
+            Ok(Json(serde_json::json!({
+                "status": "resumed",
+                "agents_deployed": deployed.len(),
+                "agent_ids": deployed,
+            })))
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Fleet resume failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }

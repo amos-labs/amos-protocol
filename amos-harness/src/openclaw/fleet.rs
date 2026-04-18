@@ -432,6 +432,53 @@ impl FleetManager {
         Ok(())
     }
 
+    /// Emergency pause: stop every currently-deployed fleet agent.
+    ///
+    /// Collects agent IDs under a read lock, then calls `stop_agent` for each
+    /// one serially. `stop_agent` already handles graceful shutdown (5s grace
+    /// then abort), DB status update, and per-agent fleet_events row, so this
+    /// just fans out the operation.
+    ///
+    /// Returns the count of agents successfully stopped. Individual failures
+    /// are logged but do not abort the pause — the caller should still treat
+    /// a partial pause as "mostly stopped" and investigate logs.
+    pub async fn pause_all(&self) -> Result<usize> {
+        let agent_ids: Vec<i32> = {
+            let agents = self.agents.read().await;
+            agents.keys().copied().collect()
+        };
+
+        let total = agent_ids.len();
+        let mut stopped = 0usize;
+        for id in agent_ids {
+            match self.stop_agent(id).await {
+                Ok(()) => stopped += 1,
+                Err(e) => {
+                    warn!(agent_id = id, error = %e, "Failed to stop agent during fleet pause");
+                }
+            }
+        }
+
+        info!(total, stopped, "Fleet paused");
+        Ok(stopped)
+    }
+
+    /// Resume fleet by re-deploying the initial fleet from config.
+    ///
+    /// `auto_deploy_initial_fleet` already short-circuits if any agent is
+    /// currently at a non-stopped status, so calling resume when agents are
+    /// already running is a no-op. The set of deployed agents may differ
+    /// from the exact set that was paused if the `initial_fleet` config
+    /// changed between pause and resume — this is by design (simple,
+    /// stateless resume).
+    ///
+    /// Returns the IDs of newly-deployed agents (empty if nothing was needed).
+    pub async fn resume(&self) -> Result<Vec<i32>> {
+        let deployed = self.auto_deploy_initial_fleet().await?;
+        info!(count = deployed.len(), "Fleet resumed");
+        Ok(deployed)
+    }
+
     /// List all fleet agents and their current status.
     pub async fn list_agents(&self) -> Vec<(i32, AgentProfile, LoopState)> {
         let agents = self.agents.read().await;
