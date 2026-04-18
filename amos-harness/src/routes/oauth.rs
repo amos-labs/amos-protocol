@@ -60,7 +60,7 @@ async fn start(
     // Load the credential row to get the provider's OAuth endpoints.
     let row = sqlx::query_as::<_, CredentialOAuthRow>(
         r#"SELECT id, oauth_auth_url, oauth_token_url, oauth_client_id,
-                  oauth_client_secret, oauth_scopes
+                  oauth_client_secret, oauth_scopes, metadata
              FROM integration_credentials
             WHERE id = $1 AND auth_type = 'oauth2'"#,
     )
@@ -133,6 +133,22 @@ async fn start(
                 q.append_pair("scope", scopes);
             }
         }
+        // Merge any provider-specific extra auth params (e.g. Google's
+        // access_type=offline to get a refresh_token, or Atlassian's
+        // audience=api.atlassian.com). Stored as
+        // metadata.extra_auth_params on the credential row.
+        if let Some(extra) = row
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("extra_auth_params"))
+            .and_then(|v| v.as_object())
+        {
+            for (k, v) in extra {
+                if let Some(s) = v.as_str() {
+                    q.append_pair(k, s);
+                }
+            }
+        }
     }
 
     Ok(Redirect::temporary(url.as_str()))
@@ -185,7 +201,7 @@ async fn callback(
     // Load the credential row to get token URL and client secret.
     let cred_row = sqlx::query_as::<_, CredentialOAuthRow>(
         r#"SELECT id, oauth_auth_url, oauth_token_url, oauth_client_id,
-                  oauth_client_secret, oauth_scopes
+                  oauth_client_secret, oauth_scopes, metadata
              FROM integration_credentials
             WHERE id = $1"#,
     )
@@ -331,6 +347,7 @@ struct CredentialOAuthRow {
     oauth_client_id: Option<String>,
     oauth_client_secret: Option<String>,
     oauth_scopes: Option<String>,
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(sqlx::FromRow)]

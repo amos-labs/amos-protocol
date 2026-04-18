@@ -13,6 +13,7 @@ pub mod image_gen_tools;
 pub mod integration_tools;
 pub mod knowledge_tools;
 pub mod memory_tools;
+pub mod oauth_tools;
 pub mod openclaw_tools;
 // orchestration_tools removed — external agent work delegation is now handled
 // by task_tools (create_bounty, get_task_result) and openclaw_tools (agent management).
@@ -476,6 +477,21 @@ impl ToolRegistry {
         )));
         registry.register(Arc::new(communication_tools::SendDiscordTool::new(
             config.clone(),
+        )));
+
+        // Register OAuth self-service tools
+        registry.register(Arc::new(oauth_tools::ListOAuthProvidersTool::new(
+            db_pool.clone(),
+        )));
+        registry.register(Arc::new(oauth_tools::InitiateOAuthConnectionTool::new(
+            db_pool.clone(),
+            config.clone(),
+        )));
+        registry.register(Arc::new(oauth_tools::ListConnectionsTool::new(
+            db_pool.clone(),
+        )));
+        registry.register(Arc::new(oauth_tools::RevokeConnectionTool::new(
+            db_pool.clone(),
         )));
 
         // Register bounty agent tools (autonomous bounty discovery and execution)
