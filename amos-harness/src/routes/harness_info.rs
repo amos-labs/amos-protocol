@@ -25,6 +25,48 @@ pub fn routes(_state: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .route("/info", get(get_harness_info))
         .route("/specialists", get(get_specialists))
+        .route("/update-status", get(get_update_status))
+}
+
+#[derive(Serialize)]
+struct UpdateStatusResponse {
+    current_version: String,
+    latest_version: Option<String>,
+    update_available: bool,
+    /// URL of the platform dashboard where customers can click Update.
+    platform_update_url: Option<String>,
+}
+
+/// Tells the frontend whether a newer release is available from the
+/// platform. Read by the update banner in the harness SPA — polled
+/// every ~5 minutes or rendered once on page load.
+async fn get_update_status(State(state): State<Arc<AppState>>) -> Json<UpdateStatusResponse> {
+    let current = state.config.deployment.harness_version.clone();
+
+    let (latest, update_available) = match &state.platform_sync {
+        Some(client) => {
+            let latest = client.update_available().await;
+            let available = latest.is_some();
+            (latest, available)
+        }
+        None => (None, false),
+    };
+
+    let platform_update_url = if update_available {
+        Some(format!(
+            "{}/dashboard",
+            state.config.platform.url.trim_end_matches('/')
+        ))
+    } else {
+        None
+    };
+
+    Json(UpdateStatusResponse {
+        current_version: current,
+        latest_version: latest,
+        update_available,
+        platform_update_url,
+    })
 }
 
 // Track startup time via lazy_static-style approach

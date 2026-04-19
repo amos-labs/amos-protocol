@@ -275,6 +275,29 @@ pub async fn create_server(
     // Create shared activity counters for telemetry
     let activity_counters = Arc::new(crate::platform_sync::ActivityCounters::default());
 
+    // Start platform sync client — polls the platform for new releases on
+    // config_sync_interval_secs, sends heartbeats, caches latest version so
+    // the update banner in the UI knows when to appear. Skipped when
+    // platform URL is empty (self-hosted deploys with no central platform).
+    let platform_sync = if !config.platform.url.is_empty() {
+        let client = Arc::new(crate::platform_sync::PlatformSyncClient::new(
+            &config.platform,
+            &config.deployment,
+        ));
+        // start() spawns its loops and returns a JoinHandle we intentionally
+        // drop — the background tasks live for the process lifetime.
+        drop(client.clone().start(activity_counters.clone()));
+        tracing::info!(
+            platform_url = %config.platform.url,
+            harness_version = %config.deployment.harness_version,
+            "Platform sync started"
+        );
+        Some(client)
+    } else {
+        tracing::info!("Platform sync disabled (AMOS__PLATFORM__URL empty)");
+        None
+    };
+
     // Create application state
     let state = Arc::new(AppState {
         db_pool,
@@ -299,6 +322,7 @@ pub async fn create_server(
         activity_counters,
         pending_confirmations,
         email_client,
+        platform_sync,
     });
 
     // Activate packages (bootstrap schemas, collect routes)

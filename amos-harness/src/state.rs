@@ -158,6 +158,12 @@ pub struct AppState {
 
     /// AWS SES email client. `None` if `AMOS__EMAIL__FROM_ADDRESS` is not configured.
     pub email_client: Option<Arc<SesClient>>,
+
+    /// Platform sync client — polls the platform for new releases so the
+    /// frontend update banner can tell the user "new version available" without
+    /// a manual platform-dashboard visit. `None` for self-hosted deploys with
+    /// no platform configured.
+    pub platform_sync: Option<Arc<crate::platform_sync::PlatformSyncClient>>,
 }
 
 impl AppState {

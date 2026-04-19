@@ -60,6 +60,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // Load settings (model selector, provider mode)
     loadSettings();
 
+    // Check for harness updates on load + every 5 min, render banner if available.
+    checkForUpdate();
+    setInterval(checkForUpdate, 5 * 60 * 1000);
+
     // Listen for postMessage from canvas iframes
     window.addEventListener('message', handleCanvasMessage);
 
@@ -139,6 +143,56 @@ function restoreState() {
 // ============================================================================
 // Settings / Model Selector
 // ============================================================================
+
+// ============================================================================
+// Update banner — polls /api/v1/harness/update-status and renders a
+// dismissible banner when a newer release is available. Clicking "Update"
+// opens the platform dashboard where the customer hits the Update button.
+// Dismissals persist in localStorage keyed by the latest version so the
+// banner re-appears for each new release but not on every page load.
+// ============================================================================
+
+async function checkForUpdate() {
+    try {
+        const resp = await fetch('/api/v1/harness/update-status', { credentials: 'include' });
+        if (!resp.ok) return;
+        const status = await resp.json();
+        const banner = document.getElementById('updateBanner');
+        if (!status.update_available || !status.latest_version) {
+            if (banner) banner.remove();
+            return;
+        }
+        const dismissedKey = 'amos-update-dismissed:' + status.latest_version;
+        if (localStorage.getItem(dismissedKey) === 'true') return;
+        renderUpdateBanner(status);
+    } catch (e) {
+        console.warn('Update check failed:', e);
+    }
+}
+
+function renderUpdateBanner(status) {
+    let banner = document.getElementById('updateBanner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'updateBanner';
+        banner.className = 'fixed top-0 left-0 right-0 z-40 flex items-center justify-center gap-3 px-4 py-2 bg-purple-600 text-white text-sm shadow-md';
+        document.body.insertBefore(banner, document.body.firstChild);
+    }
+    const updateUrl = status.platform_update_url || 'https://app.amoslabs.com/dashboard';
+    const safeVersion = escapeHtml(status.latest_version || 'new version');
+    banner.innerHTML =
+        '<i data-lucide="arrow-up-circle" class="w-4 h-4"></i>' +
+        '<span>A new AMOS Harness release is ready — <strong>' + safeVersion + '</strong></span>' +
+        '<a href="' + updateUrl + '" target="_blank" rel="noopener" class="underline font-semibold hover:text-purple-100">Update now</a>' +
+        '<button onclick="dismissUpdateBanner(\'' + safeVersion + '\')" class="ml-2 opacity-75 hover:opacity-100" title="Hide until next release"><i data-lucide="x" class="w-4 h-4"></i></button>';
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+function dismissUpdateBanner(version) {
+    localStorage.setItem('amos-update-dismissed:' + version, 'true');
+    const banner = document.getElementById('updateBanner');
+    if (banner) banner.remove();
+}
 
 async function loadSettings() {
     try {
