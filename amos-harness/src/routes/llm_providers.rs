@@ -306,6 +306,20 @@ async fn activate_provider(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // Activating a BYOK provider implies the customer wants to use it —
+    // flip `llm_provider_mode` to "byok" so the agent proxy actually routes
+    // to this provider instead of shared Bedrock. Without this the provider
+    // would be flagged active in the DB but chats would silently still go
+    // through shared Bedrock, which is the bug we just closed.
+    sqlx::query(
+        r#"INSERT INTO harness_settings (key, value, updated_at)
+              VALUES ('llm_provider_mode', '"byok"'::jsonb, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = '"byok"'::jsonb, updated_at = NOW()"#,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     tx.commit()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -316,7 +330,11 @@ async fn activate_provider(
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    tracing::info!(provider = %row.name, model = %row.default_model, "LLM provider activated");
+    tracing::info!(
+        provider = %row.name,
+        model = %row.default_model,
+        "LLM provider activated (mode flipped to byok)"
+    );
 
     Ok(Json(row))
 }
