@@ -126,14 +126,17 @@ impl ModelProvider for VertexProvider {
         });
 
         if !tools.is_empty() {
-            // Convert to Anthropic tool format
+            // Convert to Anthropic-on-Vertex tool format. The schema may
+            // arrive either as raw (agent-local tools) or wrapped in
+            // Bedrock's `{json: ...}` envelope (harness tools). Vertex /
+            // Anthropic want the raw schema — unwrap via the shared helper.
             let anthropic_tools: Vec<serde_json::Value> = tools
                 .iter()
                 .map(|t| {
                     json!({
                         "name": t.get("name").and_then(|v| v.as_str()).unwrap_or_default(),
                         "description": t.get("description").and_then(|v| v.as_str()).unwrap_or_default(),
-                        "input_schema": t.get("inputSchema").or_else(|| t.get("input_schema")).cloned().unwrap_or(json!({"type": "object"})),
+                        "input_schema": crate::tools::extract_tool_schema(t),
                     })
                 })
                 .collect();

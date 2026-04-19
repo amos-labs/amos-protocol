@@ -262,10 +262,10 @@ impl AnthropicProvider {
             .filter_map(|tool| {
                 let name = tool["name"].as_str()?.to_string();
                 let description = tool["description"].as_str().unwrap_or("").to_string();
-                let input_schema = tool
-                    .get("inputSchema")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}}));
+                // Harness tools arrive with Bedrock's `{json: <schema>}`
+                // envelope; agent-local tools arrive with the schema
+                // directly. Anthropic wants the raw schema — unwrap.
+                let input_schema = crate::tools::extract_tool_schema(tool);
                 Some(AnthropicTool {
                     name,
                     description,

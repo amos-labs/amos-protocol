@@ -52,6 +52,34 @@ pub fn tool_definitions_to_json(defs: &[ToolDefinition]) -> Vec<serde_json::Valu
         .collect()
 }
 
+/// Extract the raw JSON Schema for a tool, regardless of how it was
+/// delivered. This is the function every non-Bedrock provider should use
+/// when it needs the schema to hand to its API.
+///
+/// Handles both shapes we actually see at runtime:
+///   - **Harness tools** arrive with `inputSchema: {json: <schema>}` — the
+///     envelope the harness uses because Bedrock wants it that way.
+///   - **Agent-local tools** arrive with `inputSchema: <schema>` directly.
+///
+/// Anthropic, OpenAI, and Vertex all want the raw schema under their own
+/// field name (`input_schema` / `parameters`) with no envelope. Without
+/// this unwrap, harness tools show up at those providers malformed —
+/// a silent data bug that only surfaces when a customer uses BYOK with
+/// harness tools attached.
+pub fn extract_tool_schema(tool: &serde_json::Value) -> serde_json::Value {
+    let raw = tool
+        .get("inputSchema")
+        .or_else(|| tool.get("input_schema"))
+        .cloned()
+        .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+
+    // If the schema is wrapped in Bedrock's `{json: ...}` envelope, unwrap.
+    match raw.get("json") {
+        Some(inner) => inner.clone(),
+        None => raw,
+    }
+}
+
 /// Context needed by tools during execution.
 pub struct ToolContext {
     pub memory: Arc<Mutex<MemoryStore>>,
@@ -81,5 +109,58 @@ pub async fn execute_local_tool(
         "write_file" => file_tools::write_file(input, &ctx.work_dir),
         "git_status" => git_tools::execute(input, &ctx.work_dir),
         _ => Err(format!("Unknown local tool: {name}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extract_unwraps_bedrock_json_envelope() {
+        // Harness-shape tool — schema sits inside `{json: ...}`
+        let t = json!({
+            "name": "harness_thing",
+            "description": "a harness tool",
+            "inputSchema": { "json": { "type": "object", "properties": { "x": { "type": "string" } } } }
+        });
+        let s = extract_tool_schema(&t);
+        assert_eq!(s["type"], "object");
+        assert!(s["properties"]["x"].is_object());
+        assert!(s.get("json").is_none(), "envelope must be removed");
+    }
+
+    #[test]
+    fn extract_passes_through_raw_schema() {
+        // Agent-local-shape tool — schema directly under inputSchema
+        let t = json!({
+            "name": "think",
+            "description": "internal reasoning",
+            "inputSchema": { "type": "object", "properties": { "thought": { "type": "string" } } }
+        });
+        let s = extract_tool_schema(&t);
+        assert_eq!(s["type"], "object");
+        assert!(s["properties"]["thought"].is_object());
+    }
+
+    #[test]
+    fn extract_accepts_snake_case_alias() {
+        // Some older code paths use `input_schema` instead of `inputSchema`.
+        let t = json!({
+            "name": "legacy",
+            "description": "",
+            "input_schema": { "type": "object" }
+        });
+        let s = extract_tool_schema(&t);
+        assert_eq!(s["type"], "object");
+    }
+
+    #[test]
+    fn extract_defaults_to_empty_object_schema_when_missing() {
+        let t = json!({ "name": "noschema", "description": "" });
+        let s = extract_tool_schema(&t);
+        assert_eq!(s["type"], "object");
+        assert!(s["properties"].is_object());
     }
 }
