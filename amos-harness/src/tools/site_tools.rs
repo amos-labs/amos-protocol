@@ -30,7 +30,7 @@ impl Tool for CreateSiteTool {
     }
 
     fn description(&self) -> &str {
-        "Create a new website or landing page. This creates the site container — then use manage_page to add pages to it. Sites are served at /s/{slug} as standalone public web pages."
+        "Create an empty multi-page website container. ONLY use this for sites with multiple pages (home + about + contact, etc.). For a single-page landing page, use create_landing_page instead — it's one call and produces a working page. After create_site you MUST call manage_page for each page including a '/' homepage, otherwise the site returns 404."
     }
 
     fn parameters_schema(&self) -> JsonValue {
@@ -81,6 +81,132 @@ impl Tool for CreateSiteTool {
             "url": format!("/s/{}", site.slug),
             "message": format!("Site '{}' created. Add pages with manage_page.", site.name)
         })))
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Schema
+    }
+}
+
+// ── CreateLandingPage ────────────────────────────────────────────────────
+
+/// One-shot landing page creator: site + homepage + publish in a single call.
+pub struct CreateLandingPageTool {
+    db_pool: PgPool,
+}
+
+impl CreateLandingPageTool {
+    pub fn new(db_pool: PgPool) -> Self {
+        Self { db_pool }
+    }
+}
+
+#[async_trait]
+impl Tool for CreateLandingPageTool {
+    fn name(&self) -> &str {
+        "create_landing_page"
+    }
+
+    fn description(&self) -> &str {
+        "Create a complete single-page landing page in one call. Creates the site, the homepage at '/', and publishes it — the URL /s/{slug} is immediately live. Use this for any single-page request (landing page, splash page, coming-soon page, one-page site). Write full, responsive HTML in html_content (no <html>/<head>/<body> tags — those are added automatically). Only use create_site + manage_page if the user specifically wants multiple pages."
+    }
+
+    fn parameters_schema(&self) -> JsonValue {
+        json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Site name (e.g. 'Buyers Not Bots')"
+                },
+                "slug": {
+                    "type": "string",
+                    "description": "URL slug (lowercase, hyphens). Page is served at /s/{slug}. Example: 'buyers-not-bots'"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Page title (browser tab). Defaults to site name if omitted."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "SEO meta description for the page"
+                },
+                "html_content": {
+                    "type": "string",
+                    "description": "Full HTML content for the landing page body. Do NOT include <html>, <head>, or <body> — those are added automatically. Write a complete, responsive, self-contained landing page."
+                },
+                "css_content": {
+                    "type": "string",
+                    "description": "CSS styles for the page"
+                },
+                "js_content": {
+                    "type": "string",
+                    "description": "JavaScript for the page"
+                },
+                "form_collection": {
+                    "type": "string",
+                    "description": "Collection slug that receives form submissions. Add data-collection attribute to <form> tags in html_content."
+                }
+            },
+            "required": ["name", "slug", "html_content"]
+        })
+    }
+
+    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+        let name = params["name"]
+            .as_str()
+            .ok_or_else(|| amos_core::AmosError::Validation("name is required".to_string()))?;
+        let slug = params["slug"]
+            .as_str()
+            .ok_or_else(|| amos_core::AmosError::Validation("slug is required".to_string()))?;
+        let html_content = params["html_content"].as_str().ok_or_else(|| {
+            amos_core::AmosError::Validation("html_content is required".to_string())
+        })?;
+
+        let title = params
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or(name);
+        let description = params.get("description").and_then(|v| v.as_str());
+        let css_content = params.get("css_content").and_then(|v| v.as_str());
+        let js_content = params.get("js_content").and_then(|v| v.as_str());
+        let form_collection = params.get("form_collection").and_then(|v| v.as_str());
+
+        let engine = SiteEngine::new(self.db_pool.clone());
+
+        let site = engine.create_site(name, slug, description, None).await?;
+        let page = engine
+            .upsert_page(
+                slug,
+                "/",
+                title,
+                description,
+                html_content,
+                css_content,
+                js_content,
+                None,
+                description,
+                form_collection,
+            )
+            .await?;
+        engine.publish_site(slug, true).await?;
+
+        let page_url = format!("/s/{}", slug);
+        Ok(ToolResult::success_with_metadata(
+            json!({
+                "site_id": site.id.to_string(),
+                "page_id": page.id.to_string(),
+                "slug": slug,
+                "url": page_url,
+                "is_published": true,
+                "message": format!("Landing page '{}' is live at /s/{}", name, slug)
+            }),
+            json!({
+                "__canvas_action": "preview_site",
+                "site_slug": slug,
+                "url": page_url
+            }),
+        ))
     }
 
     fn category(&self) -> ToolCategory {

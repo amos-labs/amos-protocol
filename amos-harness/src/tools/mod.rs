@@ -396,6 +396,9 @@ impl ToolRegistry {
         )));
 
         // Register site tools (websites and landing pages)
+        registry.register(Arc::new(site_tools::CreateLandingPageTool::new(
+            db_pool.clone(),
+        )));
         registry.register(Arc::new(site_tools::CreateSiteTool::new(db_pool.clone())));
         registry.register(Arc::new(site_tools::ManagePageTool::new(db_pool.clone())));
         registry.register(Arc::new(site_tools::PatchPageTool::new(db_pool.clone())));
