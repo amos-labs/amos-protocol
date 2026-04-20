@@ -20,8 +20,19 @@ use tracing::debug;
 
 /// Minimum auto-calculated points for any bounty.
 const MIN_POINTS: u64 = 100;
+
 /// Maximum auto-calculated points for any bounty.
-const MAX_POINTS: u64 = 10_000;
+///
+/// **Pinned to the on-chain `MAX_BOUNTY_POINTS` constant in
+/// `amos-solana/programs/amos-bounty/src/constants.rs`.** The on-chain
+/// `distribution::submit_bounty_proof` rejects any `base_points > 2000`
+/// with `InvalidBountyPoints (6004)`, so auto-pointing above this value
+/// produces bounties where the advertised points never equal the
+/// settleable points — a silent mismatch.
+///
+/// If the on-chain constant changes, update here and re-check the
+/// `on_chain_pointing_cap_is_pinned` test below.
+const MAX_POINTS: u64 = 2_000;
 
 /// Input signals the pointing engine uses to calculate a score.
 #[derive(Debug, Clone)]
@@ -426,5 +437,65 @@ mod tests {
         assert!(b.specialization_mult >= 1.0);
         assert!(b.time_factor > 0.0);
         assert!(b.points > 0);
+    }
+
+    #[test]
+    fn on_chain_pointing_cap_is_pinned() {
+        // This test is the coupling between the off-chain pointing engine
+        // and the on-chain `amos-bounty` program. If the on-chain
+        // `MAX_BOUNTY_POINTS` constant changes, update `MAX_POINTS` at the
+        // top of this file AND this test, or auto-pointed bounties will
+        // once again advertise settle-incompatible values.
+        //
+        // On-chain source: amos-solana/programs/amos-bounty/src/constants.rs
+        //   pub const MAX_BOUNTY_POINTS: u16 = 2000;
+        //   pub const TRUST_LEVEL_MAX_POINTS: [u16; 5] = [100, 200, 500, 1000, 2000];
+        assert_eq!(
+            MAX_POINTS, 2000,
+            "MAX_POINTS must match on-chain MAX_BOUNTY_POINTS (2000). \
+             If the on-chain constant changed, update both and re-run tests."
+        );
+    }
+
+    #[test]
+    fn extreme_bounty_clamps_at_on_chain_cap() {
+        // An extraordinarily large bounty (many capabilities, long
+        // description, security + revenue signals) must still be clamped
+        // to at most MAX_POINTS so it can actually settle on-chain.
+        let big_desc = "AMOS-SECURE-999: Comprehensive protocol audit with full threat model, \
+                       security testing, formal verification, fuzzing, vulnerability disclosure, \
+                       remediation plan, on-chain settlement logic review, dispute mechanism \
+                       hardening, and stress testing across all edge cases. Revenue-critical. \
+                       Genesis bounty. Affects every settlement path in the protocol. Multi-phase \
+                       delivery required with dependency graph and test suite coverage reports."
+            .repeat(5);
+        let input = make_input(
+            "AMOS-SECURE-999: Full Protocol Audit",
+            &big_desc,
+            "infrastructure",
+            &[
+                "solana_development",
+                "security_analysis",
+                "cryptography",
+                "formal_verification",
+                "file_write",
+                "code_execution",
+            ],
+            1.0, // Very urgent → time_factor max
+        );
+        let b = calculate_points(&input);
+        assert!(
+            b.points <= MAX_POINTS,
+            "Extreme bounty exceeded MAX_POINTS cap: got {}, cap {}",
+            b.points,
+            MAX_POINTS
+        );
+        // And it should actually hit the cap, not accidentally come in under
+        // (otherwise this test isn't exercising the clamp).
+        assert_eq!(
+            b.points, MAX_POINTS,
+            "Extreme bounty should hit the clamp exactly, got {}",
+            b.points
+        );
     }
 }
