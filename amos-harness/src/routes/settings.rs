@@ -133,6 +133,20 @@ const AVAILABLE_MODELS: &[ModelInfo] = &[
 
 const DEFAULT_MODEL: &str = "us.anthropic.claude-sonnet-4-6";
 
+/// Public accessor for the shared-Bedrock model catalog.
+///
+/// The single source of truth for "which Claude inference-profile IDs is this
+/// release allowed to use." Consumed by:
+///   * the `/api/v1/settings` handler (customer-facing dropdown)
+///   * the CI `bedrock-probe` binary (live-fire release gate — probes every
+///     ID against Bedrock before the image can ship)
+///
+/// Keeping both on the same list means a new model is auto-probed and a
+/// renamed/removed inference profile blocks the release before customers see it.
+pub fn catalog_model_ids() -> impl Iterator<Item = &'static str> {
+    AVAILABLE_MODELS.iter().map(|m| m.id)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Handlers
 // ═══════════════════════════════════════════════════════════════════════════

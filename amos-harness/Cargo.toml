@@ -9,6 +9,13 @@ license.workspace = true
 name = "amos-harness"
 path = "src/main.rs"
 
+[[bin]]
+# Prints the cataloged Bedrock inference-profile IDs, one per line.
+# Consumed by the CI `live-model-probe` job which then calls Converse
+# against each ID. Keeps the dropdown and the probe in lockstep.
+name = "print-model-catalog"
+path = "src/bin/print_model_catalog.rs"
+
 [features]
 default = []
 pkg-education = ["amos-education"]

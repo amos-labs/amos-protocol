@@ -88,16 +88,85 @@ jobs:
         run: cargo test --lib -p amos-harness schema_tests
 
   # ============================================================================
+  # GATE 1.6: Live Model Probe — actually call Converse on every cataloged model
+  #
+  # Only runs on push to main (needs AWS OIDC, which the trust policy on the
+  # `claude_github` role is scoped to `refs/heads/main`). Uses `print-model-catalog`
+  # as the single source of truth for which model IDs to probe, so the dropdown
+  # and the probe can never drift apart.
+  #
+  # Catches the regression classes the static tests can't see: Marketplace
+  # subscription gaps, IAM permission drift, inference-profile renames, region
+  # availability changes. Blocks the image build on any failure.
+  # ============================================================================
+  live-model-probe:
+    name: Live Model Probe — Every Cataloged Model Responds
+    runs-on: ubuntu-latest
+    needs: release-gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::637423327454:role/claude_github
+          aws-region: us-east-1
+
+      - name: Probe every cataloged model with a tiny Converse call
+        run: |
+          set -euo pipefail
+          MODELS=$(cargo run --quiet --bin print-model-catalog -p amos-harness)
+          fail=0
+          while IFS= read -r m; do
+            [ -z "$m" ] && continue
+            echo "::group::Probe $m"
+            if out=$(aws bedrock-runtime converse \
+                --model-id "$m" \
+                --messages '[{"role":"user","content":[{"text":"hi"}]}]' \
+                --inference-config maxTokens=3 \
+                --region us-east-1 2>&1); then
+              tokens=$(echo "$out" | grep -oE '"outputTokens":\s*[0-9]+' | head -1 || true)
+              echo "OK — $tokens"
+            else
+              echo "FAIL"
+              echo "$out"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done <<< "$MODELS"
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::One or more cataloged models failed to respond. Release blocked."
+            exit 1
+          fi
+          echo "All cataloged models responded successfully."
+
+  # ============================================================================
   # GATE 2: Build Docker images and push to ECR
   #
-  # Depends on `release-gate` — a bad catalog or malformed tool schema cannot
-  # reach a customer harness. `check` (clippy/audit/full test suite) stays
+  # Depends on `release-gate` and `live-model-probe` — neither a malformed
+  # catalog nor a Bedrock access gap can reach a customer harness.
+  # `check` (clippy/audit/full test suite) stays
   # advisory and does not block deploys.
   # ============================================================================
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: release-gate
+    needs: [release-gate, live-model-probe]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     permissions:
