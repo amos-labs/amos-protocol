@@ -5,6 +5,7 @@ members = [
     "amos-relay",
     "amos-cli",
     "amos-agent",
+    "amos-oracle",
     "amos-packages/amos-education",
     "amos-packages/amos-autoresearch",
     "amos-packages/amos-social",
