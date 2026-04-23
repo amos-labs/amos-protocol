@@ -88,6 +88,59 @@ jobs:
         run: cargo test --lib -p amos-harness schema_tests
 
   # ============================================================================
+  # GATE 1.55: Integration Smoke — core app flows against a real Postgres
+  #
+  # Spins up pgvector/pgvector:pg16, applies every harness migration, and
+  # exercises the flows customers hit first: landing-page creation (the exact
+  # flow that broke for Jana), multi-page sites, collection/record CRUD with
+  # field-type validation. Catches broken migrations, broken schemas, and any
+  # regression in the SiteEngine / SchemaEngine that static tests can't see.
+  # Runs on every PR + push.
+  # ============================================================================
+  integration-smoke:
+    name: Integration Smoke — Core App Flows
+    runs-on: ubuntu-latest
+    needs: release-gate
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: amos_harness_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:test@localhost:5432/amos_harness_test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install postgres client
+        run: sudo apt-get install -y postgresql-client
+
+      - name: Enable pgvector extension
+        run: PGPASSWORD=test psql -h localhost -U postgres -d amos_harness_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+
+      - name: Run core-flow smoke tests
+        run: cargo test --test smoke_flows -p amos-harness -- --test-threads=1
+
+  # ============================================================================
   # GATE 1.6: Live Model Probe — actually call Converse on every cataloged model
   #
   # Only runs on push to main (needs AWS OIDC, which the trust policy on the
@@ -166,7 +219,7 @@ jobs:
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: [release-gate, live-model-probe]
+    needs: [release-gate, integration-smoke, live-model-probe]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     permissions:
