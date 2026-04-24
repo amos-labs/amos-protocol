@@ -638,8 +638,7 @@ fn build_converse_request(
     let mut request = serde_json::json!({
         "inferenceConfig": {
             "maxTokens": max_tokens,
-            "temperature": 0.7,
-            "topP": 0.9
+            "temperature": 0.7
         }
     });
 
