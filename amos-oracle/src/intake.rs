@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::agent::OracleAgent;
 use crate::decision::{Confidence, Decision, DecisionPath, IntakeVerdict, ProposedBountySpec};
+use crate::prompt::{self, INTAKE_SCHEMA};
 use crate::{OracleError, Result};
 
 /// A submission arriving at the intake path.
@@ -69,9 +70,16 @@ pub async fn evaluate(agent: &OracleAgent, submission: IntakeSubmission) -> Resu
         .await
         .unwrap_or_default();
 
-    // 4. Assemble prompt
+    // 4. Assemble prompt — shared assembly with intake-specific input block + schema.
     let system_prompt = mission.constitutional_provisions.clone();
-    let user_message = build_intake_user_message(&submission, metrics.as_ref(), &similar);
+    let input_block = render_intake_input_block(&submission);
+    let user_message = prompt::assemble(
+        &mission,
+        metrics.as_ref(),
+        &similar,
+        &input_block,
+        INTAKE_SCHEMA,
+    );
 
     // 5. LLM call
     let raw_response = agent.llm.complete(&system_prompt, &user_message).await?;
@@ -144,101 +152,35 @@ pub async fn evaluate(agent: &OracleAgent, submission: IntakeSubmission) -> Resu
     Ok(decision)
 }
 
-fn build_intake_user_message(
-    submission: &IntakeSubmission,
-    metrics: Option<&crate::metrics::RelaySnapshot>,
-    similar: &[Decision],
-) -> String {
+/// Render the intake-specific input section. The shared `prompt::assemble`
+/// wraps this with mission context, metrics, precedent, and the output schema.
+fn render_intake_input_block(submission: &IntakeSubmission) -> String {
     use std::fmt::Write;
-    let mut msg = String::with_capacity(4096);
+    let mut b = String::with_capacity(2048);
 
-    let _ = writeln!(msg, "## Task");
-    let _ = writeln!(
-        msg,
-        "Evaluate the submission below as a potential AMOS system bounty. Produce output \
-         in the exact JSON schema specified — no surrounding prose, no markdown fences."
-    );
-
-    let _ = writeln!(msg, "\n## Submission");
-    let _ = writeln!(msg, "**Submitter:** {}", submission.submitter);
-    let _ = writeln!(msg, "**Title:** {}", submission.title);
+    let _ = writeln!(b, "## Submission");
+    let _ = writeln!(b, "**Submitter:** {}", submission.submitter);
+    let _ = writeln!(b, "**Title:** {}", submission.title);
     if let Some(parent) = submission.parent_submission_id {
         let _ = writeln!(
-            msg,
+            b,
             "**Re-submission of:** {} (consider prior refine_feedback)",
             parent
         );
     }
     if let Some(cat) = &submission.suggested_category {
-        let _ = writeln!(msg, "**Submitter-suggested category:** {}", cat);
+        let _ = writeln!(b, "**Submitter-suggested category:** {}", cat);
     }
     if !submission.suggested_capabilities.is_empty() {
         let _ = writeln!(
-            msg,
+            b,
             "**Submitter-suggested capabilities:** {}",
             submission.suggested_capabilities.join(", ")
         );
     }
-    let _ = writeln!(msg, "\n**Body:**\n```\n{}\n```", submission.body);
+    let _ = writeln!(b, "\n**Body:**\n```\n{}\n```", submission.body);
 
-    if let Some(m) = metrics {
-        let _ = writeln!(msg, "\n## Relay state");
-        let _ = writeln!(
-            msg,
-            "- Daily emission remaining: {} pts",
-            m.daily_emission_remaining_points
-        );
-        let _ = writeln!(msg, "- Bounties posted (7d): {}", m.bounties_posted_7d);
-        let _ = writeln!(msg, "- Bounties settled (7d): {}", m.bounties_settled_7d);
-        let _ = writeln!(
-            msg,
-            "- Commercial volume (7d): {} atomic AMOS",
-            m.commercial_volume_7d
-        );
-        let _ = writeln!(msg, "- Active agents (7d): {}", m.active_agents_7d);
-    }
-
-    if !similar.is_empty() {
-        let _ = writeln!(msg, "\n## Similar past decisions (precedent)");
-        for (i, d) in similar.iter().enumerate() {
-            let _ = writeln!(
-                msg,
-                "{}. [{}] {} — confidence {:.2}",
-                i + 1,
-                d.verdict,
-                d.mission_alignment_notes
-                    .chars()
-                    .take(160)
-                    .collect::<String>(),
-                d.confidence.0
-            );
-        }
-    }
-
-    let _ = writeln!(msg, "\n## Output schema (strict JSON)");
-    let _ = writeln!(
-        msg,
-        r#"{{
-  "verdict": "commission" | "reject" | "refine" | "escalate",
-  "confidence": <number in [0.0, 1.0]>,
-  "short_term_value": "<1 paragraph>",
-  "long_term_value": "<1 paragraph>",
-  "tension_resolution": "<1 paragraph or 'no tension'>",
-  "mission_alignment_notes": "<1-2 paragraphs>",
-  "proposed_bounty_spec": {{
-    "title": "<string>",
-    "description": "<string>",
-    "category": "<one of the registered contribution types>",
-    "required_capabilities": ["<string>", ...],
-    "reward_points": <u64>,
-    "reasoning_for_points": "<string>",
-    "deadline_days": <u32>
-  }} | null,
-  "refine_feedback": "<string>" | null
-}}"#
-    );
-
-    msg
+    b
 }
 
 fn parse_intake_output(raw: &str) -> Result<IntakeLlmOutput> {
@@ -355,9 +297,37 @@ fn apply_intake_guards(
             );
             return Ok((IntakeVerdict::Escalate, confidence));
         }
+
+        // Reasoning-substrate recursion guard (constitutional prompt §6).
+        // Oracle may commission plumbing improvements to itself but may not
+        // self-authorize changes to how it reasons. On-chain layer is the
+        // authoritative floor (see OPS-ORACLE-ONCHAIN-GUARD-001); this is the
+        // code-level mirror that trips before chain rejection.
+        if matches!(out.verdict, IntakeVerdict::Commission)
+            && is_reasoning_substrate_category(&spec.category)
+        {
+            info!(
+                category = %spec.category,
+                "intake: category is reasoning-substrate → escalate"
+            );
+            return Ok((IntakeVerdict::Escalate, confidence));
+        }
     }
 
     Ok((out.verdict.clone(), confidence))
+}
+
+/// Categories the Oracle may never self-authorize against. Matches the
+/// `forbidden_category_bitmap` intent of OPS-ORACLE-ONCHAIN-GUARD-001.
+fn is_reasoning_substrate_category(category: &str) -> bool {
+    matches!(
+        category.trim().to_ascii_lowercase().as_str(),
+        "oracle_substrate"
+            | "oracle-substrate"
+            | "constitutional"
+            | "core_protocol"
+            | "core-protocol"
+    )
 }
 
 #[cfg(test)]

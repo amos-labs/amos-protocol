@@ -44,6 +44,7 @@ pub mod llm;
 pub mod metrics;
 pub mod mission;
 pub mod precedent;
+pub mod prompt;
 pub mod registry;
 pub mod review;
 

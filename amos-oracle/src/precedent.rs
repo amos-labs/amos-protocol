@@ -69,27 +69,13 @@ pub trait EventLog: Send + Sync {
 
 /// Postgres-backed event log.
 ///
-/// Schema (migration to be added in amos-relay/migrations/ or a dedicated
-/// amos-oracle/migrations/ once we wire up sqlx there):
+/// Schema lives at
+/// `amos-relay/migrations/20260423000001_oracle_decisions_and_outcomes.sql`
+/// — Oracle shares the relay DB. Creating its own DB is a follow-up.
 ///
-/// ```sql
-/// CREATE TABLE oracle_decisions (
-///     decision_id  UUID PRIMARY KEY,
-///     path         TEXT NOT NULL,
-///     payload      JSONB NOT NULL,
-///     decided_at   TIMESTAMPTZ NOT NULL,
-///     prompt_version TEXT NOT NULL,
-///     model_version  TEXT NOT NULL
-/// );
-///
-/// CREATE TABLE oracle_outcomes (
-///     outcome_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-///     decision_id   UUID NOT NULL REFERENCES oracle_decisions(decision_id),
-///     outcome_kind  TEXT NOT NULL,
-///     payload       JSONB NOT NULL,
-///     recorded_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-/// );
-/// ```
+/// `similar_decisions` is MVP: returns N most-recent decisions on the same
+/// path. Upgrade path is pgvector-embedding-based similarity over payload
+/// text, but pre-live the corpus is empty, so recency is fine and will evolve.
 pub struct PgEventLog {
     pub pool: sqlx::PgPool,
 }
@@ -102,27 +88,139 @@ impl PgEventLog {
 
 #[async_trait]
 impl EventLog for PgEventLog {
-    async fn record_decision(&self, _decision: &Decision) -> Result<()> {
-        // MVP: not yet wired up. Implementation sketch:
-        //   INSERT INTO oracle_decisions (decision_id, path, payload, ...)
-        Err(crate::OracleError::EventLog(
-            "PgEventLog::record_decision not yet implemented — see precedent.rs".into(),
-        ))
+    async fn record_decision(&self, decision: &Decision) -> Result<()> {
+        let path = match decision.path {
+            crate::decision::DecisionPath::Intake => "intake",
+            crate::decision::DecisionPath::Review => "review",
+        };
+        let verdict = decision.verdict.as_str().unwrap_or("unknown").to_string();
+        let payload = serde_json::to_value(decision)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO oracle_decisions (
+                decision_id, path, verdict, confidence,
+                prompt_version, model_version, decided_at, payload
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (decision_id) DO NOTHING
+            "#,
+        )
+        .bind(decision.decision_id)
+        .bind(path)
+        .bind(&verdict)
+        .bind(decision.confidence.0)
+        .bind(&decision.prompt_version)
+        .bind(&decision.model_version)
+        .bind(decision.decided_at)
+        .bind(&payload)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
-    async fn record_outcome(&self, _decision_id: Uuid, _outcome: Outcome) -> Result<()> {
-        Err(crate::OracleError::EventLog(
-            "PgEventLog::record_outcome not yet implemented — see precedent.rs".into(),
-        ))
+    async fn record_outcome(&self, decision_id: Uuid, outcome: Outcome) -> Result<()> {
+        let outcome_kind = match &outcome {
+            Outcome::CouncilOverride { .. } => "council_override",
+            Outcome::CommissionedBountyClaimed { .. } => "commissioned_bounty_claimed",
+            Outcome::CommissionedBountySettled { .. } => "commissioned_bounty_settled",
+            Outcome::ApprovedBountySettled { .. } => "approved_bounty_settled",
+            Outcome::DownstreamChainSettled { .. } => "downstream_chain_settled",
+        };
+        let payload = serde_json::to_value(&outcome)?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO oracle_outcomes (
+                outcome_id, decision_id, outcome_kind, payload
+            )
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(decision_id)
+        .bind(outcome_kind)
+        .bind(&payload)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 
-    async fn similar_decisions(&self, _query: &str, _n: usize) -> Result<Vec<Decision>> {
-        // MVP returns empty; corpus is empty pre-Oracle-live anyway.
-        Ok(vec![])
+    async fn similar_decisions(&self, query: &str, n: usize) -> Result<Vec<Decision>> {
+        // MVP: path-aware recency. We sniff whether the caller is on intake or
+        // review from the query prefix ("intake: ..." / "review: ...") so the
+        // precedent corpus is unitary in storage but the retriever returns
+        // same-path examples first. If the sniff fails, fall back to most
+        // recent across both paths.
+        let path = if query.starts_with("intake:") {
+            Some("intake")
+        } else if query.starts_with("review:") {
+            Some("review")
+        } else {
+            None
+        };
+
+        let rows: Vec<(serde_json::Value,)> = match path {
+            Some(p) => {
+                sqlx::query_as(
+                    r#"
+                    SELECT payload FROM oracle_decisions
+                    WHERE path = $1
+                    ORDER BY decided_at DESC
+                    LIMIT $2
+                    "#,
+                )
+                .bind(p)
+                .bind(n as i64)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query_as(
+                    r#"
+                    SELECT payload FROM oracle_decisions
+                    ORDER BY decided_at DESC
+                    LIMIT $1
+                    "#,
+                )
+                .bind(n as i64)
+                .fetch_all(&self.pool)
+                .await?
+            }
+        };
+
+        let mut out = Vec::with_capacity(rows.len());
+        for (payload,) in rows {
+            match serde_json::from_value::<Decision>(payload) {
+                Ok(d) => out.push(d),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "precedent: skipping malformed oracle_decisions row"
+                    );
+                }
+            }
+        }
+        Ok(out)
     }
 
-    async fn decision_by_id(&self, _decision_id: Uuid) -> Result<Option<Decision>> {
-        Ok(None)
+    async fn decision_by_id(&self, decision_id: Uuid) -> Result<Option<Decision>> {
+        let row: Option<(serde_json::Value,)> = sqlx::query_as(
+            r#"
+            SELECT payload FROM oracle_decisions
+            WHERE decision_id = $1
+            "#,
+        )
+        .bind(decision_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        match row {
+            None => Ok(None),
+            Some((payload,)) => Ok(Some(serde_json::from_value::<Decision>(payload)?)),
+        }
     }
 }
 

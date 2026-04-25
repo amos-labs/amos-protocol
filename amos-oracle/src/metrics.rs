@@ -74,17 +74,37 @@ impl AmosMetricsProvider {
 #[async_trait]
 impl MetricsProvider for AmosMetricsProvider {
     async fn snapshot(&self) -> Result<RelaySnapshot> {
-        // MVP: stub. Real implementation pulls from:
-        //   GET /api/v1/pool/today  (daily pool state)
-        //   GET /api/v1/bounties?limit=... (for rolling 7d counts — needs
-        //       aggregation or a new /api/v1/metrics/snapshot endpoint)
-        //   GET /api/v1/agents (for active count)
-        //
-        // Adding a dedicated /api/v1/metrics/snapshot endpoint on the relay is
-        // tracked as a follow-up; for now we'll compose from existing
-        // endpoints. Left as a TODO to keep the scaffold small.
-        Err(crate::OracleError::MetricsProvider(
-            "snapshot() not yet implemented — see TODO in amos-oracle/src/metrics.rs".into(),
-        ))
+        // Single call to a dedicated relay endpoint. If the endpoint doesn't
+        // yet exist (tracked as a separate relay-side task), this errors and
+        // the Oracle's prompt-assembly path treats it as "zero commercial
+        // signal" — weighting decisions harder toward escalate per
+        // constitutional §4. That graceful degradation is intentional.
+        let url = format!(
+            "{}/api/v1/metrics/snapshot",
+            self.relay_url.trim_end_matches('/')
+        );
+
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+            .map_err(|e| crate::OracleError::MetricsProvider(format!("request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(crate::OracleError::MetricsProvider(format!(
+                "relay returned {status}: {}",
+                body.chars().take(300).collect::<String>()
+            )));
+        }
+
+        let snapshot: RelaySnapshot = resp.json().await.map_err(|e| {
+            crate::OracleError::MetricsProvider(format!("response not a valid RelaySnapshot: {e}"))
+        })?;
+
+        Ok(snapshot)
     }
 }
