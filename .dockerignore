@@ -30,6 +30,14 @@ Thumbs.db
 *.md
 LICENSE
 
+# Exception: amos-oracle daemon reads these at startup so they MUST be in
+# the build context. Without these unignore rules the oracle Dockerfile
+# fails at COPY time.
+!AGENT_CONTEXT.md
+!docs/AMOS_THESIS_AND_STRATEGY.md
+!amos-oracle/prompts/
+!amos-oracle/prompts/*.md
+
 # Test fixtures
 tests/
 test-data/
