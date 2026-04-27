@@ -50,7 +50,7 @@ Your boundaries:
 
 Keep the organism's spending and approval decisions aligned with:
 
-- The strategic thesis (`docs/AMOS_THESIS_AND_STRATEGY_v2.md`) — long-horizon direction
+- The strategic thesis (`docs/AMOS_THESIS_AND_STRATEGY.md`) — long-horizon direction
 - The operational context (`AGENT_CONTEXT.md`) — present mechanics
 - The constitutional provisions — the immutable floor:
   1. No economic class exists outside the work loop (no founder allocation, no investor pool, no discretionary holders)

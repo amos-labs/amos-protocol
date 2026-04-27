@@ -42,7 +42,7 @@ COPY --from=builder /app/target/release/amos-oracle-agent /usr/local/bin/
 # update ships as a new image.
 COPY amos-oracle/prompts /app/amos-oracle/prompts
 COPY AGENT_CONTEXT.md /app/AGENT_CONTEXT.md
-COPY docs/AMOS_THESIS_AND_STRATEGY_v2.md /app/docs/AMOS_THESIS_AND_STRATEGY_v2.md
+COPY docs/AMOS_THESIS_AND_STRATEGY.md /app/docs/AMOS_THESIS_AND_STRATEGY.md
 
 # Non-root user
 RUN useradd -m -u 1000 amos && \
