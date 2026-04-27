@@ -398,6 +398,18 @@ jobs:
           cache-from: type=gha,scope=relay
           cache-to: type=gha,mode=max,scope=relay
 
+      - name: Build and push amos-oracle
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/oracle/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/amos-oracle:${{ steps.vars.outputs.IMAGE_TAG }}
+            ${{ env.ECR_REGISTRY }}/amos-oracle:latest
+          cache-from: type=gha,scope=oracle
+          cache-to: type=gha,mode=max,scope=oracle
+
       - name: Roll relay ECS service to pick up new :latest image
         # The amos-relay-v2 service runs the :latest tag, so a forced
         # new deployment pulls the image we just pushed and replaces the
@@ -410,6 +422,20 @@ jobs:
             --region us-east-1 \
             --no-cli-pager > /dev/null
           echo "Relay rolling deployment kicked off for tag ${{ steps.vars.outputs.IMAGE_TAG }}"
+
+      - name: Roll amos-oracle ECS service
+        # No-op if the service hasn't been created yet (--force-new-deployment
+        # against a missing service errors). continue-on-error keeps that from
+        # blocking the build until first-time service creation is done.
+        run: |
+          aws ecs update-service \
+            --cluster swarm-infrastructure-cluster \
+            --service amos-oracle \
+            --force-new-deployment \
+            --region us-east-1 \
+            --no-cli-pager > /dev/null
+          echo "Oracle rolling deployment kicked off for tag ${{ steps.vars.outputs.IMAGE_TAG }}"
+        continue-on-error: true
 
       - name: Register release with platform
         run: |
@@ -428,5 +454,6 @@ jobs:
           echo "| amos-harness | \`${{ steps.vars.outputs.IMAGE_TAG }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| amos-agent | \`${{ steps.vars.outputs.IMAGE_TAG }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| amos-relay | \`${{ steps.vars.outputs.IMAGE_TAG }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| amos-oracle | \`${{ steps.vars.outputs.IMAGE_TAG }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "New harnesses will use this image. Existing harnesses can pull updates via the dashboard." >> "$GITHUB_STEP_SUMMARY"
