@@ -73,7 +73,12 @@ pub fn validate(receipt: &JsonValue) -> Result<(), String> {
         let check = check
             .as_object()
             .ok_or_else(|| format!("validation_plan.selected_checks[{i}] must be an object"))?;
-        if check.get("id").and_then(JsonValue::as_str).unwrap_or("").is_empty() {
+        if check
+            .get("id")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("")
+            .is_empty()
+        {
             return Err(format!(
                 "validation_plan.selected_checks[{i}].id is required and non-empty"
             ));
@@ -92,10 +97,15 @@ pub fn validate(receipt: &JsonValue) -> Result<(), String> {
     }
     if let Some(skipped) = plan.get("skipped_checks").and_then(JsonValue::as_array) {
         for (i, check) in skipped.iter().enumerate() {
-            let check = check.as_object().ok_or_else(|| {
-                format!("validation_plan.skipped_checks[{i}] must be an object")
-            })?;
-            if check.get("id").and_then(JsonValue::as_str).unwrap_or("").is_empty() {
+            let check = check
+                .as_object()
+                .ok_or_else(|| format!("validation_plan.skipped_checks[{i}] must be an object"))?;
+            if check
+                .get("id")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("")
+                .is_empty()
+            {
                 return Err(format!(
                     "validation_plan.skipped_checks[{i}].id is required"
                 ));
@@ -123,11 +133,16 @@ pub fn validate(receipt: &JsonValue) -> Result<(), String> {
         return Err("execution_evidence.commands must be non-empty".to_string());
     }
     for (i, cmd) in commands.iter().enumerate() {
-        let cmd = cmd.as_object().ok_or_else(|| {
-            format!("execution_evidence.commands[{i}] must be an object")
-        })?;
+        let cmd = cmd
+            .as_object()
+            .ok_or_else(|| format!("execution_evidence.commands[{i}] must be an object"))?;
         for f in ["id", "command", "started_at", "ended_at"] {
-            if cmd.get(f).and_then(JsonValue::as_str).unwrap_or("").is_empty() {
+            if cmd
+                .get(f)
+                .and_then(JsonValue::as_str)
+                .unwrap_or("")
+                .is_empty()
+            {
                 return Err(format!(
                     "execution_evidence.commands[{i}].{f} is required and non-empty"
                 ));
@@ -296,7 +311,11 @@ fn require_string_field(
     label: &str,
 ) -> Result<(), String> {
     let key = label.rsplit('.').next().unwrap_or(label);
-    let v = obj.get(key).and_then(JsonValue::as_str).unwrap_or("").trim();
+    let v = obj
+        .get(key)
+        .and_then(JsonValue::as_str)
+        .unwrap_or("")
+        .trim();
     if v.is_empty() {
         return Err(format!("{label} is required and non-empty"));
     }
@@ -449,7 +468,10 @@ mod tests {
     #[test]
     fn missing_self_modifying_flag_fails() {
         let mut r = good_receipt();
-        r["intent"].as_object_mut().unwrap().remove("self_modifying");
+        r["intent"]
+            .as_object_mut()
+            .unwrap()
+            .remove("self_modifying");
         assert!(validate(&r).unwrap_err().contains("self_modifying"));
     }
 
