@@ -19,9 +19,10 @@
 //!
 //! ## Model selection
 //!
-//! The model ID is set at construction. Oracle defaults to Claude Opus
-//! (`anthropic.claude-opus-4-20250514-v1:0`) — highest-capability model for
-//! mission-alignment reasoning. Override via env for cost-tier work.
+//! The model ID is set at construction. Oracle defaults to Claude Opus 4 via
+//! the US cross-region inference profile (`us.anthropic.claude-opus-4-...`),
+//! since Bedrock no longer supports on-demand invocation of bare Opus 4 IDs.
+//! Override via `ORACLE_BEDROCK_MODEL_ID` env var for cost-tier work.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -37,7 +38,11 @@ use crate::{OracleError, Result};
 type HmacSha256 = Hmac<Sha256>;
 
 /// Default model — highest-capability Claude for mission reasoning.
-pub const DEFAULT_MODEL_ID: &str = "anthropic.claude-opus-4-20250514-v1:0";
+///
+/// Uses the US cross-region inference profile prefix because Bedrock no
+/// longer supports on-demand invocation of bare Claude Opus 4 model IDs.
+/// Override via `ORACLE_BEDROCK_MODEL_ID` env var.
+pub const DEFAULT_MODEL_ID: &str = "us.anthropic.claude-opus-4-20250514-v1:0";
 
 #[derive(Clone)]
 pub struct BedrockLlmClient {
