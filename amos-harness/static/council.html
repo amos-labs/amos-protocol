@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AMOS Council Ops</title>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+    <link rel="stylesheet" href="/css/app.css">
+    <style>
+      .pill { @apply inline-block px-2 py-0.5 rounded text-xs font-medium; }
+      pre { white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 min-h-full">
+<div class="max-w-5xl mx-auto p-6">
+
+<header class="mb-6 flex items-center justify-between">
+  <div>
+    <h1 class="text-2xl font-semibold">Council Ops</h1>
+    <p class="text-sm text-gray-600">
+      Pending Oracle escalations. Resolution drives the autonomous loop —
+      commission auto-creates the bounty, refine sends feedback, reject is terminal.
+    </p>
+  </div>
+  <div class="flex items-center gap-3">
+    <span id="connection" class="pill bg-gray-200 text-gray-700">disconnected</span>
+    <button id="refresh" class="px-3 py-1.5 rounded bg-gray-900 text-white text-sm hover:bg-gray-700">
+      Refresh
+    </button>
+  </div>
+</header>
+
+<section id="config" class="mb-6 p-4 bg-white border border-gray-200 rounded">
+  <h2 class="text-sm font-medium mb-2">Configuration</h2>
+  <div class="grid grid-cols-2 gap-3 text-sm">
+    <label class="block">
+      <span class="text-gray-700">Relay URL</span>
+      <input id="relay-url" class="mt-1 w-full border-gray-300 rounded text-sm" placeholder="https://relay.amoslabs.com">
+    </label>
+    <label class="block">
+      <span class="text-gray-700">Bearer token (agent UUID)</span>
+      <input id="api-key" type="password" class="mt-1 w-full border-gray-300 rounded text-sm" placeholder="1b53...">
+    </label>
+    <label class="block">
+      <span class="text-gray-700">Council wallet (poster_wallet for commissioned bounties)</span>
+      <input id="council-wallet" class="mt-1 w-full border-gray-300 rounded text-sm" placeholder="WxdX...">
+    </label>
+    <label class="block">
+      <span class="text-gray-700">Resolved-by label</span>
+      <input id="resolved-by" class="mt-1 w-full border-gray-300 rounded text-sm" placeholder="rick-founder">
+    </label>
+  </div>
+  <p class="text-xs text-gray-500 mt-2">
+    Cached locally in your browser. Never sent anywhere except the configured relay.
+  </p>
+</section>
+
+<section id="escalations">
+  <div id="empty" class="text-center text-gray-500 py-12 hidden">
+    No pending escalations. Oracle is keeping up.
+  </div>
+  <div id="list" class="space-y-4"></div>
+</section>
+
+<div id="error" class="fixed bottom-4 right-4 max-w-md bg-red-600 text-white p-3 rounded shadow-lg hidden"></div>
+<div id="success" class="fixed bottom-4 right-4 max-w-md bg-green-600 text-white p-3 rounded shadow-lg hidden"></div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// ───── persisted config ─────
+const cfg = {
+  load() {
+    $("relay-url").value     = localStorage.getItem("council:relayUrl") || "https://relay.amoslabs.com";
+    $("api-key").value       = localStorage.getItem("council:apiKey") || "";
+    $("council-wallet").value = localStorage.getItem("council:wallet") || "";
+    $("resolved-by").value   = localStorage.getItem("council:resolvedBy") || "rick-founder";
+  },
+  save() {
+    localStorage.setItem("council:relayUrl",   $("relay-url").value.trim());
+    localStorage.setItem("council:apiKey",     $("api-key").value.trim());
+    localStorage.setItem("council:wallet",     $("council-wallet").value.trim());
+    localStorage.setItem("council:resolvedBy", $("resolved-by").value.trim());
+  },
+  base()   { return $("relay-url").value.trim().replace(/\/+$/, ""); },
+  key()    { return $("api-key").value.trim(); },
+  wallet() { return $("council-wallet").value.trim(); },
+  by()     { return $("resolved-by").value.trim() || "rick-founder"; },
+};
+
+["relay-url","api-key","council-wallet","resolved-by"].forEach(id => {
+  $(id).addEventListener("change", () => { cfg.save(); refresh(); });
+});
+
+// ───── notifications ─────
+function flash(elId, msg, ms=4000) {
+  const el = $(elId);
+  el.textContent = msg;
+  el.classList.remove("hidden");
+  setTimeout(() => el.classList.add("hidden"), ms);
+}
+const flashErr = (m) => flash("error", m, 6000);
+const flashOk  = (m) => flash("success", m);
+
+// ───── relay client ─────
+async function relayGet(path) {
+  const r = await fetch(cfg.base() + path, {
+    headers: { "Authorization": "Bearer " + cfg.key() }
+  });
+  if (!r.ok) throw new Error(`GET ${path}: ${r.status}`);
+  return await r.json();
+}
+async function relayPost(path, body) {
+  const r = await fetch(cfg.base() + path, {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + cfg.key(),
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(()=>"");
+    throw new Error(`POST ${path}: ${r.status} ${txt}`);
+  }
+  return await r.json().catch(() => ({}));
+}
+
+// ───── render ─────
+async function refresh() {
+  if (!cfg.key()) {
+    $("connection").textContent = "missing token";
+    $("connection").className = "pill bg-yellow-200 text-yellow-900";
+    return;
+  }
+
+  try {
+    const escs = await relayGet("/api/v1/escalations?status=pending");
+    $("connection").textContent = "connected";
+    $("connection").className = "pill bg-green-200 text-green-900";
+
+    const list = $("list");
+    const empty = $("empty");
+    list.innerHTML = "";
+    if (!escs.length) {
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    for (const esc of escs) {
+      list.appendChild(await renderEscalation(esc));
+    }
+    if (window.lucide) window.lucide.createIcons();
+  } catch (e) {
+    $("connection").textContent = "error";
+    $("connection").className = "pill bg-red-200 text-red-900";
+    flashErr("Refresh failed: " + e.message);
+  }
+}
+
+async function renderEscalation(esc) {
+  const card = document.createElement("div");
+  card.className = "bg-white border border-gray-200 rounded p-4 shadow-sm";
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "flex items-start justify-between gap-3 mb-3";
+  header.innerHTML = `
+    <div>
+      <div class="text-xs text-gray-500 font-mono">${esc.escalation_id}</div>
+      <div class="mt-0.5 flex items-center gap-2">
+        <span class="pill bg-blue-100 text-blue-800">${esc.path}</span>
+        <span class="text-xs text-gray-500">created ${new Date(esc.created_at).toLocaleString()}</span>
+      </div>
+    </div>
+  `;
+  card.appendChild(header);
+
+  // Oracle reasoning
+  const reason = document.createElement("div");
+  reason.className = "mb-3";
+  reason.innerHTML = `
+    <h3 class="text-sm font-medium text-gray-800 mb-1">Oracle reasoning</h3>
+    <pre class="text-xs bg-gray-50 border border-gray-200 rounded p-2">${escapeHtml(esc.reason)}</pre>
+  `;
+  card.appendChild(reason);
+
+  // For intake-path: try to load the original Decision's proposed_bounty_spec
+  // and the original intake submission so council can see the full context.
+  if (esc.path === "intake") {
+    const ctx = await fetchIntakeContext(esc.decision_id).catch(() => null);
+    if (ctx?.intake) {
+      const intakeEl = document.createElement("div");
+      intakeEl.className = "mb-3";
+      intakeEl.innerHTML = `
+        <h3 class="text-sm font-medium text-gray-800 mb-1">Original submission</h3>
+        <div class="text-xs bg-gray-50 border border-gray-200 rounded p-2">
+          <div><span class="font-semibold">${escapeHtml(ctx.intake.title)}</span></div>
+          <div class="text-gray-600">submitter: ${escapeHtml(ctx.intake.submitter)}</div>
+          <pre class="mt-1">${escapeHtml(ctx.intake.body)}</pre>
+        </div>`;
+      card.appendChild(intakeEl);
+    }
+    if (ctx?.spec) {
+      const specEl = document.createElement("div");
+      specEl.className = "mb-3";
+      specEl.innerHTML = `
+        <h3 class="text-sm font-medium text-gray-800 mb-1">Oracle's draft proposed_bounty_spec</h3>
+        <textarea data-spec class="w-full text-xs font-mono border border-gray-200 rounded p-2"
+                  rows="10">${escapeHtml(JSON.stringify(ctx.spec, null, 2))}</textarea>
+        <p class="text-xs text-gray-500 mt-1">
+          Editable. On commission this is sent as <code>proposed_bounty_spec</code> override.
+          Leave as-is to accept Oracle's draft.
+        </p>`;
+      card.appendChild(specEl);
+    } else if (esc.path === "intake") {
+      // No spec on the decision (legacy pre-fix) — let council compose one
+      const specEl = document.createElement("div");
+      specEl.className = "mb-3";
+      specEl.innerHTML = `
+        <h3 class="text-sm font-medium text-gray-800 mb-1">proposed_bounty_spec (required for commission)</h3>
+        <textarea data-spec class="w-full text-xs font-mono border border-gray-200 rounded p-2"
+                  rows="10" placeholder='{"title":"...","description":"...","category":"infrastructure","required_capabilities":[],"reward_points":150,"reasoning_for_points":"...","deadline_days":3}'></textarea>`;
+      card.appendChild(specEl);
+    }
+  }
+
+  // Reasoning input + buttons
+  const action = document.createElement("div");
+  action.className = "border-t border-gray-100 pt-3";
+  action.innerHTML = `
+    <label class="text-sm font-medium text-gray-800 block mb-1">
+      Council reasoning <span class="text-gray-500 text-xs">(required, ≥40 chars)</span>
+    </label>
+    <textarea data-reasoning class="w-full text-sm border border-gray-200 rounded p-2"
+              rows="3" placeholder="Why this resolution. Recorded permanently in oracle_outcomes."></textarea>
+    <div class="mt-3 flex gap-2 flex-wrap">
+      ${esc.path === "intake"
+        ? `<button data-act="commission" class="px-3 py-1.5 rounded bg-green-600 text-white text-sm hover:bg-green-700">Commission</button>
+           <button data-act="refine" class="px-3 py-1.5 rounded bg-yellow-500 text-white text-sm hover:bg-yellow-600">Refine</button>
+           <button data-act="reject" class="px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700">Reject</button>`
+        : `<button data-act="approve" class="px-3 py-1.5 rounded bg-green-600 text-white text-sm hover:bg-green-700">Approve</button>
+           <button data-act="revise" class="px-3 py-1.5 rounded bg-yellow-500 text-white text-sm hover:bg-yellow-600">Revise</button>
+           <button data-act="reject" class="px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700">Reject</button>`}
+    </div>
+  `;
+  card.appendChild(action);
+
+  card.querySelectorAll("button[data-act]").forEach(btn => {
+    btn.addEventListener("click", () => resolveEscalation(esc, btn.dataset.act, card));
+  });
+
+  return card;
+}
+
+async function fetchIntakeContext(decisionId) {
+  // We don't have a direct /api/v1/decisions endpoint; we look up the intake
+  // by decision_id via the public /api/v1/intakes listing. Since the listing
+  // doesn't filter by decision_id, fetch all evaluated intakes and match.
+  const intakes = await relayGet("/api/v1/intakes?limit=500");
+  const intake = intakes.find(i => i.decision_id === decisionId);
+  if (!intake) return null;
+  // The proposed_bounty_spec lives in oracle_decisions.payload, not on the intake row.
+  // Without a decision-fetch endpoint, we can't surface the draft in-page; council
+  // can still author one in the textarea above.
+  return { intake, spec: null };
+}
+
+async function resolveEscalation(esc, verdict, card) {
+  const reasoning = card.querySelector("textarea[data-reasoning]").value.trim();
+  if (reasoning.length < 40) {
+    flashErr("Council reasoning must be ≥40 characters.");
+    return;
+  }
+
+  const body = {
+    council_verdict: verdict,
+    council_reasoning: reasoning,
+    resolved_by: cfg.by(),
+  };
+
+  if (esc.path === "intake" && verdict === "commission") {
+    if (!cfg.wallet()) {
+      flashErr("Council wallet (poster_wallet) is required to commission a bounty.");
+      return;
+    }
+    body.poster_wallet = cfg.wallet();
+
+    const specEl = card.querySelector("textarea[data-spec]");
+    if (specEl?.value.trim()) {
+      try {
+        body.proposed_bounty_spec = JSON.parse(specEl.value);
+      } catch (e) {
+        flashErr("Spec textarea is not valid JSON: " + e.message);
+        return;
+      }
+    }
+  }
+
+  try {
+    const result = await relayPost(`/api/v1/escalations/${esc.escalation_id}/resolve`, body);
+    if (result.commissioned_bounty_id) {
+      flashOk(`Resolved ${verdict}. Bounty created: ${result.commissioned_bounty_id}`);
+    } else {
+      flashOk(`Resolved ${verdict}.`);
+    }
+    setTimeout(refresh, 800);
+  } catch (e) {
+    flashErr("Resolve failed: " + e.message);
+  }
+}
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// ───── boot ─────
+$("refresh").addEventListener("click", refresh);
+cfg.load();
+refresh();
+// auto-refresh every 60s
+setInterval(refresh, 60_000);
+</script>
+
+</body>
+</html>

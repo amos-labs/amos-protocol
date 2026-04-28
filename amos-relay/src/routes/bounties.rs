@@ -325,6 +325,12 @@ pub struct VerifySubmissionRequest {
 pub struct ApproveSubmissionRequest {
     pub reviewer_wallet: String,
     pub quality_score: Option<u8>,
+    /// AMOS-META-007 phase 5: when approving a code bounty without a
+    /// proof_receipt, the reviewer must supply an explicit override reason
+    /// (≥40 chars). The reason is persisted permanently and feeds drift
+    /// monitoring per spec §6 (override accountability).
+    #[serde(default)]
+    pub override_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -400,6 +406,15 @@ pub struct BountyResponse {
     /// revision request. Workers consume this in their rework prompt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_capsule: Option<JsonValue>,
+    /// AMOS-META-007 phase 5: when a code bounty was approved without a
+    /// proof_receipt, this carries the reviewer's override reason.
+    /// Permanent + drift-monitored.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate_override_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate_override_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate_override_at: Option<DateTime<Utc>>,
 }
 
 // =============================================================================
@@ -417,6 +432,7 @@ const BOUNTY_SELECT: &str = r#"
     settlement_tx, settlement_status,
     revision_count, revision_feedback, pr_url, category,
     policy, proof_receipt, failure_capsule,
+    gate_override_reason, gate_override_by, gate_override_at,
     created_at, updated_at
 "#;
 
@@ -462,6 +478,9 @@ fn bounty_from_row(row: sqlx::postgres::PgRow) -> Result<BountyResponse, sqlx::E
         policy: row.try_get("policy").ok().flatten(),
         proof_receipt: row.try_get("proof_receipt").ok().flatten(),
         failure_capsule: row.try_get("failure_capsule").ok().flatten(),
+        gate_override_reason: row.try_get("gate_override_reason").ok().flatten(),
+        gate_override_by: row.try_get("gate_override_by").ok().flatten(),
+        gate_override_at: row.try_get("gate_override_at").ok().flatten(),
     })
 }
 
@@ -1140,10 +1159,12 @@ async fn approve_submission(
 
     let now = Utc::now();
 
-    // Fetch the bounty with poster, claimer wallets, and verification status
+    // Fetch the bounty with poster, claimer wallets, verification status,
+    // category, and the proof_receipt (META-007 phase 5 strict gate).
     let current_bounty = sqlx::query(
         r#"
-        SELECT reward_tokens, poster_wallet, claimed_by_wallet, verified_at
+        SELECT reward_tokens, poster_wallet, claimed_by_wallet, verified_at,
+               category, proof_receipt
         FROM relay_bounties
         WHERE id = $1 AND status = $2
         "#,
@@ -1176,6 +1197,48 @@ async fn approve_submission(
              with evidence that the deliverable is pushed and tested.",
             id
         )));
+    }
+
+    // --- META-007 phase 5 strict gate: code bounties require proof_receipt ---
+    // Code-class categories (infrastructure, research) require an
+    // AMOS-META-007 proof_receipt on the bounty row before approval.
+    // Reviewers can override with an explicit reason (≥40 chars) which is
+    // persisted permanently for drift monitoring (spec §6).
+    let bounty_category: Option<String> = current_bounty.get("category");
+    let proof_receipt: Option<JsonValue> = current_bounty.get("proof_receipt");
+    let category_requires_receipt = matches!(
+        bounty_category.as_deref(),
+        Some("infrastructure") | Some("research")
+    );
+    let mut gate_override_reason: Option<String> = None;
+    if category_requires_receipt && proof_receipt.is_none() {
+        match req.override_reason.as_deref() {
+            None => {
+                warn!(
+                    "Strict gate: bounty {} ({:?}) has no proof_receipt and no override_reason",
+                    id, bounty_category
+                );
+                return Err(ApiError::precondition_required(
+                    "Code bounties (category=infrastructure or research) require a proof_receipt \
+                     submitted with the work. To approve without one, supply override_reason \
+                     (≥40 chars) explaining why. Override is permanent and feeds drift monitoring.",
+                ));
+            }
+            Some(reason) if reason.trim().len() < 40 => {
+                return Err(ApiError::bad_request(
+                    "override_reason must be ≥40 characters. Generic short reasons fail \
+                     validation per spec §6.",
+                ));
+            }
+            Some(reason) => {
+                gate_override_reason = Some(reason.trim().to_string());
+                warn!(
+                    bounty = %id,
+                    reviewer = %req.reviewer_wallet,
+                    "Strict gate OVERRIDDEN: receipt missing, override_reason supplied"
+                );
+            }
+        }
     }
 
     // --- Separation of duties: prevent self-approval ---
@@ -1229,10 +1292,17 @@ async fn approve_submission(
         id, reward_tokens, fee.total_fee, fee.holder_share, fee.burn_share, fee.labs_share
     );
 
-    // Update the bounty status (also store reviewer_wallet for settlement retry)
-    let row = sqlx::query(
-        &format!("UPDATE relay_bounties SET status = $1, approved_at = $2, quality_score = $3, updated_at = $4, reviewer_wallet = $7 WHERE id = $5 AND status = $6 RETURNING {BOUNTY_SELECT}"),
-    )
+    // Update the bounty status (also store reviewer_wallet for settlement
+    // retry) + persist any META-007 strict-gate override.
+    let row = sqlx::query(&format!(
+        "UPDATE relay_bounties SET \
+             status = $1, approved_at = $2, quality_score = $3, updated_at = $4, \
+             reviewer_wallet = $7, \
+             gate_override_reason = $8, \
+             gate_override_by    = CASE WHEN $8 IS NOT NULL THEN $7 ELSE NULL END, \
+             gate_override_at    = CASE WHEN $8 IS NOT NULL THEN $2 ELSE NULL END \
+             WHERE id = $5 AND status = $6 RETURNING {BOUNTY_SELECT}"
+    ))
     .bind(BountyStatus::Approved.as_str())
     .bind(now)
     .bind(req.quality_score.map(|s| s as i16))
@@ -1240,6 +1310,7 @@ async fn approve_submission(
     .bind(id)
     .bind(BountyStatus::Submitted.as_str())
     .bind(&req.reviewer_wallet)
+    .bind(gate_override_reason.as_deref())
     .fetch_optional(&state.db)
     .await
     .map_err(|e| {
