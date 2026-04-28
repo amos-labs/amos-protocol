@@ -37,6 +37,19 @@ use crate::{OracleError, Result};
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Anthropic deprecated `temperature` in Opus 4.5+ (extended-thinking models).
+/// Bedrock surfaces this as a 400 with "temperature is deprecated for this
+/// model." Detect via model id substring and omit the param accordingly.
+fn model_deprecates_temperature(model_id: &str) -> bool {
+    let lower = model_id.to_ascii_lowercase();
+    // Anthropic models from Opus/Sonnet 4.5 onwards reject temperature.
+    lower.contains("opus-4-5")
+        || lower.contains("opus-4-6")
+        || lower.contains("opus-4-7")
+        || lower.contains("sonnet-4-5")
+        || lower.contains("sonnet-4-6")
+}
+
 /// Default model — highest-capability Claude for mission reasoning.
 ///
 /// Uses the US cross-region inference profile prefix because Bedrock no
@@ -128,11 +141,22 @@ impl BedrockLlmClient {
 #[async_trait]
 impl LlmClient for BedrockLlmClient {
     async fn complete(&self, system_prompt: &str, user_message: &str) -> Result<String> {
+        // Build inferenceConfig — temperature is omitted for newer Anthropic
+        // models (Opus 4.5+) which deprecated the parameter. We sniff via the
+        // model id; bare names like "...claude-opus-4-7" or "...4-5..." opt
+        // out. Older inference profiles still honor temperature for
+        // determinism.
+        let mut inference_config = serde_json::Map::new();
+        inference_config.insert("maxTokens".into(), serde_json::Value::from(self.max_tokens));
+        if !model_deprecates_temperature(&self.model_id) {
+            inference_config.insert(
+                "temperature".into(),
+                serde_json::Value::from(self.temperature),
+            );
+        }
+
         let request_body = serde_json::json!({
-            "inferenceConfig": {
-                "maxTokens": self.max_tokens,
-                "temperature": self.temperature,
-            },
+            "inferenceConfig": inference_config,
             "system": [{ "text": system_prompt }],
             "messages": [{
                 "role": "user",
