@@ -427,9 +427,7 @@ fn load_aws_credentials(
 
 /// Fetch short-lived credentials from the ECS container metadata endpoint.
 /// Returns `(access_key_id, secret_access_key, session_token)`.
-fn load_ecs_container_credentials(
-    relative_uri: &str,
-) -> Result<(String, String, Option<String>)> {
+fn load_ecs_container_credentials(relative_uri: &str) -> Result<(String, String, Option<String>)> {
     let url = format!("http://169.254.170.2{}", relative_uri);
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
