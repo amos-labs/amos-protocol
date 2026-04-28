@@ -72,6 +72,12 @@ pub struct ResolveEscalationRequest {
     /// founder wallet or a designated treasury wallet.
     #[serde(default)]
     pub poster_wallet: Option<String>,
+    /// Optional spec override for intake-commission. When omitted, the handler
+    /// uses Oracle's draft `proposed_bounty_spec` from the original Decision.
+    /// When supplied, replaces it — useful when council wants to adjust scope,
+    /// reward, or deadline, or when Oracle didn't emit one.
+    #[serde(default)]
+    pub proposed_bounty_spec: Option<JsonValue>,
 }
 
 // ─── Handlers ────────────────────────────────────────────────────────────
@@ -265,13 +271,21 @@ async fn resolve_escalation(
     //    review-path resolution falls through to outcome-only recording.
     match (resp.path.as_str(), req.council_verdict.as_str()) {
         ("intake", "commission") => {
-            let spec = decision_payload.get("proposed_bounty_spec").cloned();
+            // Spec sourcing priority:
+            //   1. council-supplied override in the resolve request
+            //   2. Oracle's draft from the original Decision
+            //   3. error if neither
+            let spec = match req.proposed_bounty_spec.clone() {
+                Some(s) if !s.is_null() => Some(s),
+                _ => decision_payload.get("proposed_bounty_spec").cloned(),
+            };
             let spec = match spec {
                 Some(s) if !s.is_null() => s,
                 _ => {
                     warn!(
                         decision_id = %resp.decision_id,
-                        "council voted commission but decision has no proposed_bounty_spec"
+                        "council voted commission but neither override nor Oracle draft \
+                         provided a proposed_bounty_spec"
                     );
                     return Err(StatusCode::UNPROCESSABLE_ENTITY);
                 }

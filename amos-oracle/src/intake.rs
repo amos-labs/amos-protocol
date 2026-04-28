@@ -124,12 +124,12 @@ pub async fn evaluate(agent: &OracleAgent, submission: IntakeSubmission) -> Resu
         model_version: agent.llm.model_version(),
     };
 
-    // If we escalated due to a guard trip, scrub fields that don't apply.
-    if matches!(final_verdict, IntakeVerdict::Escalate) {
-        // Escalate decisions carry reasoning + confidence but no proposed
-        // bounty (council will redraft if they commission).
-        decision.proposed_bounty_spec = None;
-    }
+    // Escalate decisions preserve the proposed_bounty_spec (when Oracle
+    // emitted one) as a council-reference draft. The LLM's suggestion is
+    // useful input for council; carrying it forward is not the same as
+    // Oracle authorizing it. Council may accept the draft as-is by passing
+    // verdict=commission to resolve_escalation, or supply its own
+    // proposed_bounty_spec override at resolve time.
 
     // 9. Write to event log (non-fatal if it fails — decision still returned,
     //    but log + alert for drift analysis).
@@ -498,8 +498,9 @@ mod tests {
         let d = evaluate(&agent, sample_submission()).await.unwrap();
         let v: IntakeVerdict = serde_json::from_value(d.verdict.clone()).unwrap();
         assert_eq!(v, IntakeVerdict::Escalate);
-        // Escalate should scrub the proposed spec.
-        assert!(d.proposed_bounty_spec.is_none());
+        // Escalate decisions preserve the LLM's draft proposed_bounty_spec
+        // as a council-reference. Council can accept or override at resolve.
+        assert!(d.proposed_bounty_spec.is_some());
     }
 
     #[tokio::test]
