@@ -41,6 +41,19 @@ pub struct ReviewRequest {
     pub qa_evidence: serde_json::Value,
     pub proof: serde_json::Value,
     pub revision_count: u8,
+    /// AMOS-META-007 phase 4: policy block from bounty creation. Oracle
+    /// judges whether the submission respected these constraints.
+    #[serde(default)]
+    pub policy: Option<serde_json::Value>,
+    /// AMOS-META-007 phase 4: worker's proof receipt (intent, validation
+    /// plan, execution evidence). When present, Oracle's review prompt
+    /// cites the validation plan and asks whether it covered the changes.
+    #[serde(default)]
+    pub proof_receipt: Option<serde_json::Value>,
+    /// AMOS-META-007 phase 4: prior-revision failure capsule, if any.
+    /// Oracle judges whether the resubmission addressed the cited failure.
+    #[serde(default)]
+    pub failure_capsule: Option<serde_json::Value>,
 }
 
 /// Raw LLM output shape for review decisions.
@@ -162,7 +175,7 @@ pub async fn evaluate(agent: &OracleAgent, request: ReviewRequest) -> Result<Dec
 
 fn render_review_input_block(request: &ReviewRequest) -> String {
     use std::fmt::Write;
-    let mut b = String::with_capacity(4096);
+    let mut b = String::with_capacity(8192);
 
     let _ = writeln!(b, "## Completed bounty under review");
     let _ = writeln!(b, "**Bounty ID:** {}", request.bounty_id);
@@ -179,6 +192,42 @@ fn render_review_input_block(request: &ReviewRequest) -> String {
         request.bounty_description
     );
 
+    // Policy — what constraints the bounty said the submission must respect.
+    if let Some(policy) = &request.policy {
+        let _ = writeln!(
+            b,
+            "\n## Bounty policy (constraints submission must respect)"
+        );
+        let _ = writeln!(
+            b,
+            "```json\n{}\n```",
+            serde_json::to_string_pretty(policy).unwrap_or_default()
+        );
+        let _ = writeln!(
+            b,
+            "**Judge:** did the submission respect this policy? Was \
+             `self_modifying` declared accurately?"
+        );
+    }
+
+    // Failure capsule from a prior revision, if any.
+    if request.revision_count > 0 {
+        if let Some(capsule) = &request.failure_capsule {
+            let _ = writeln!(b, "\n## Prior failure capsule (from last revision request)");
+            let _ = writeln!(
+                b,
+                "```json\n{}\n```",
+                serde_json::to_string_pretty(capsule).unwrap_or_default()
+            );
+            let _ = writeln!(
+                b,
+                "**Judge:** does this resubmission address the prior \
+                 `next_action_requested`? If not, that's a strong signal \
+                 toward revise/reject."
+            );
+        }
+    }
+
     let _ = writeln!(b, "\n## QA bot evidence (mechanical verification)");
     let _ = writeln!(
         b,
@@ -186,7 +235,38 @@ fn render_review_input_block(request: &ReviewRequest) -> String {
         serde_json::to_string_pretty(&request.qa_evidence).unwrap_or_default()
     );
 
-    let _ = writeln!(b, "\n## Worker proof of completion");
+    // Proof receipt — intent + validation plan + execution evidence.
+    if let Some(receipt) = &request.proof_receipt {
+        let _ = writeln!(b, "\n## Worker proof receipt (AMOS-META-007 contract)");
+        let _ = writeln!(
+            b,
+            "```json\n{}\n```",
+            serde_json::to_string_pretty(receipt).unwrap_or_default()
+        );
+        let _ = writeln!(
+            b,
+            "**Judge against the receipt:** does `validation_plan.selected_checks` \
+             actually cover the changes in `github.changed_files`? Did the listed \
+             `execution_evidence.commands` run cleanly (`exit_code` = 0)? Are \
+             skipped checks justified by `skipped_checks[].reason`? Is \
+             `intent.self_modifying` consistent with the changed paths and the \
+             bounty's policy? Generic / boilerplate validation plans that don't \
+             match the diff fail your gate, regardless of QA bot result."
+        );
+    } else {
+        let _ = writeln!(
+            b,
+            "\n**Note:** no proof_receipt on this submission. Phase 5 of \
+             META-007 makes this required; for now, judge based on QA evidence \
+             + proof + policy alone, and weight harder toward escalate / revise \
+             if the work is non-trivial."
+        );
+    }
+
+    let _ = writeln!(
+        b,
+        "\n## Worker proof of completion (legacy free-form field)"
+    );
     let _ = writeln!(
         b,
         "```json\n{}\n```",
@@ -196,8 +276,9 @@ fn render_review_input_block(request: &ReviewRequest) -> String {
     let _ = writeln!(
         b,
         "\n**Reminder:** QA bot judges mechanical checks. You judge whether \
-         this completed work advances the mission. Do not re-run QA's checks — \
-         your verdict layers on top."
+         this completed work advances the mission AND respects the contract \
+         (policy + receipt). Do not re-run QA's checks — your verdict layers \
+         on top of theirs."
     );
 
     b
@@ -344,6 +425,9 @@ mod tests {
                 "diff_summary": "+40 -0 in amos-relay/src/settle.rs"
             }),
             revision_count: 0,
+            policy: None,
+            proof_receipt: None,
+            failure_capsule: None,
         }
     }
 

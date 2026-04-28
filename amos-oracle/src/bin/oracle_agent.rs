@@ -382,6 +382,12 @@ struct PendingReviewRow {
     qa_evidence: JsonValue,
     proof: JsonValue,
     revision_count: u8,
+    #[serde(default)]
+    policy: Option<JsonValue>,
+    #[serde(default)]
+    proof_receipt: Option<JsonValue>,
+    #[serde(default)]
+    failure_capsule: Option<JsonValue>,
 }
 
 impl PendingReviewRow {
@@ -395,6 +401,9 @@ impl PendingReviewRow {
             qa_evidence: self.qa_evidence,
             proof: self.proof,
             revision_count: self.revision_count,
+            policy: self.policy,
+            proof_receipt: self.proof_receipt,
+            failure_capsule: self.failure_capsule,
         }
     }
 }

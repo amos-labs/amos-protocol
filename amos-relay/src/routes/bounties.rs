@@ -122,6 +122,19 @@ pub struct PendingReviewResponse {
     pub qa_evidence: JsonValue,
     pub proof: JsonValue,
     pub revision_count: u8,
+    /// AMOS-META-007 phase 4: policy block from bounty creation. Constraints
+    /// the submission was supposed to respect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<JsonValue>,
+    /// AMOS-META-007 phase 4: worker's proof receipt — intent, validation
+    /// plan, execution evidence. The substrate Oracle judges against.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof_receipt: Option<JsonValue>,
+    /// AMOS-META-007 phase 4: failure capsule from the most recent revision
+    /// request, if any. Lets Oracle judge whether the resubmission addresses
+    /// the prior cited failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_capsule: Option<JsonValue>,
 }
 
 /// A bounty is "pending Oracle review" when it's submitted, mechanically
@@ -134,7 +147,8 @@ async fn list_pending_review(
         SELECT
             id, title, description, category,
             verification_evidence, quality_evidence, result,
-            revision_count
+            revision_count,
+            policy, proof_receipt, failure_capsule
         FROM relay_bounties
         WHERE status = 'submitted'
           AND verified_at IS NOT NULL
@@ -184,6 +198,10 @@ async fn list_pending_review(
 
         let contribution_type_id = category_to_contribution_type(&category_str);
 
+        let policy: Option<JsonValue> = row.try_get("policy").ok().flatten();
+        let proof_receipt: Option<JsonValue> = row.try_get("proof_receipt").ok().flatten();
+        let failure_capsule: Option<JsonValue> = row.try_get("failure_capsule").ok().flatten();
+
         out.push(PendingReviewResponse {
             bounty_id,
             bounty_title: title,
@@ -193,6 +211,9 @@ async fn list_pending_review(
             qa_evidence: JsonValue::Object(qa_evidence),
             proof,
             revision_count,
+            policy,
+            proof_receipt,
+            failure_capsule,
         });
     }
 
