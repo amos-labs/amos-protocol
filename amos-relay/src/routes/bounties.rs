@@ -316,6 +316,11 @@ pub struct RejectSubmissionRequest {
 pub struct RequestRevisionRequest {
     pub reviewer_wallet: String,
     pub feedback: String,
+    /// AMOS-META-007 phase 3: optional structured failure capsule. When
+    /// present, shape-validated and stored on the bounty row. Workers consume
+    /// this directly in their rework prompt. See `proof_receipt::validate_failure_capsule`.
+    #[serde(default)]
+    pub failure_capsule: Option<JsonValue>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -370,6 +375,10 @@ pub struct BountyResponse {
     /// AMOS-META-007: proof receipt set at submission time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proof_receipt: Option<JsonValue>,
+    /// AMOS-META-007 phase 3: latest failure capsule from the most recent
+    /// revision request. Workers consume this in their rework prompt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_capsule: Option<JsonValue>,
 }
 
 // =============================================================================
@@ -386,7 +395,7 @@ const BOUNTY_SELECT: &str = r#"
     quality_score, approved_at, rejected_at, rejection_reason,
     settlement_tx, settlement_status,
     revision_count, revision_feedback, pr_url, category,
-    policy, proof_receipt,
+    policy, proof_receipt, failure_capsule,
     created_at, updated_at
 "#;
 
@@ -431,6 +440,7 @@ fn bounty_from_row(row: sqlx::postgres::PgRow) -> Result<BountyResponse, sqlx::E
         estimated_payout_amos: None, // Enriched in list_bounties when Solana is configured
         policy: row.try_get("policy").ok().flatten(),
         proof_receipt: row.try_get("proof_receipt").ok().flatten(),
+        failure_capsule: row.try_get("failure_capsule").ok().flatten(),
     })
 }
 
@@ -1564,6 +1574,16 @@ async fn request_revision(
         )));
     }
 
+    // AMOS-META-007 phase 3: shape-validate the failure capsule.
+    if let Some(ref capsule) = req.failure_capsule {
+        if let Err(msg) = crate::proof_receipt::validate_failure_capsule(capsule) {
+            warn!(bounty = %id, error = %msg, "request_revision: failure_capsule rejected");
+            return Err(ApiError::bad_request(format!(
+                "failure_capsule rejected: {msg}"
+            )));
+        }
+    }
+
     // Reviewer must be trust >= 5
     require_trust(
         &state.db,
@@ -1635,7 +1655,10 @@ async fn request_revision(
 
     let now = Utc::now();
 
-    // Reset to claimed with feedback — agent can rework and resubmit
+    // Reset to claimed with feedback — agent can rework and resubmit.
+    // failure_capsule is upserted (latest revision wins); proof_receipt
+    // from the prior submit is cleared so the worker's next submission
+    // starts fresh.
     let row = sqlx::query(&format!(
         "UPDATE relay_bounties SET \
          status = $1, \
@@ -1645,6 +1668,8 @@ async fn request_revision(
          verified_at = NULL, \
          verified_by_wallet = NULL, \
          verification_evidence = NULL, \
+         failure_capsule = $6, \
+         proof_receipt = NULL, \
          updated_at = $3 \
          WHERE id = $4 AND status = $5 \
          RETURNING {BOUNTY_SELECT}"
@@ -1654,6 +1679,7 @@ async fn request_revision(
     .bind(now)
     .bind(id)
     .bind(BountyStatus::Submitted.as_str())
+    .bind(req.failure_capsule.as_ref())
     .fetch_optional(&state.db)
     .await
     .map_err(|e| {

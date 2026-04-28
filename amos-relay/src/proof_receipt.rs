@@ -183,6 +183,90 @@ pub fn validate(receipt: &JsonValue) -> Result<(), String> {
     Ok(())
 }
 
+// ─── failure capsule ────────────────────────────────────────────────────
+
+/// Hard cap on serialized capsule size. The relevant_log_excerpt should be
+/// 200-1000 chars per spec §7; if the reviewer needs more they should point
+/// at full logs externally rather than inline them here.
+pub const MAX_CAPSULE_BYTES: usize = 16 * 1024;
+
+/// Validate a failure capsule's shape. Capsule lives on a bounty's row and
+/// feeds the worker's rework prompt directly, so the fields must be coherent.
+///
+/// Required: `failing_command` (≥1 char), `exit_code` (int), `suspected_cause`
+/// (≥`MIN_REASON_LEN`), `next_action_requested` (≥1 char). `changed_files_implicated`
+/// must be an array (possibly empty). `relevant_log_excerpt` is optional but
+/// length-bounded.
+pub fn validate_failure_capsule(capsule: &JsonValue) -> Result<(), String> {
+    let serialized = serde_json::to_string(capsule)
+        .map_err(|e| format!("capsule is not serializable JSON: {e}"))?;
+    if serialized.len() > MAX_CAPSULE_BYTES {
+        return Err(format!(
+            "capsule size {} exceeds cap {} bytes",
+            serialized.len(),
+            MAX_CAPSULE_BYTES
+        ));
+    }
+
+    let obj = capsule
+        .as_object()
+        .ok_or_else(|| "failure_capsule must be an object".to_string())?;
+
+    let failing_command = obj
+        .get("failing_command")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("")
+        .trim();
+    if failing_command.is_empty() {
+        return Err("failure_capsule.failing_command is required and non-empty".to_string());
+    }
+
+    if obj.get("exit_code").and_then(JsonValue::as_i64).is_none() {
+        return Err("failure_capsule.exit_code must be an integer".to_string());
+    }
+
+    let suspected = obj
+        .get("suspected_cause")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("")
+        .trim();
+    if suspected.len() < MIN_REASON_LEN {
+        return Err(format!(
+            "failure_capsule.suspected_cause must be ≥{MIN_REASON_LEN} chars; \
+             generic short text fails — workers depend on this for rework"
+        ));
+    }
+
+    let next_action = obj
+        .get("next_action_requested")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("")
+        .trim();
+    if next_action.is_empty() {
+        return Err("failure_capsule.next_action_requested is required and non-empty".to_string());
+    }
+
+    if !obj
+        .get("changed_files_implicated")
+        .map(JsonValue::is_array)
+        .unwrap_or(false)
+    {
+        return Err("failure_capsule.changed_files_implicated must be an array".to_string());
+    }
+
+    if let Some(excerpt) = obj.get("relevant_log_excerpt").and_then(JsonValue::as_str) {
+        if excerpt.len() > 4_000 {
+            return Err(
+                "failure_capsule.relevant_log_excerpt > 4000 chars; trim the excerpt and \
+                 link to full logs externally"
+                    .to_string(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 // ─── helpers ────────────────────────────────────────────────────────────
 
 fn require_string(receipt: &JsonValue, field: &str) -> Result<(), String> {
@@ -367,5 +451,66 @@ mod tests {
         let mut r = good_receipt();
         r["intent"].as_object_mut().unwrap().remove("self_modifying");
         assert!(validate(&r).unwrap_err().contains("self_modifying"));
+    }
+
+    fn good_capsule() -> JsonValue {
+        serde_json::json!({
+            "failing_command": "cargo-test-lib",
+            "exit_code": 101,
+            "relevant_log_excerpt": "thread 'auth::tests::roundtrip' panicked at 'assertion failed: ...'",
+            "changed_files_implicated": ["amos-relay/src/middleware.rs"],
+            "suspected_cause": "Token-hash comparison branch added a status filter that rejects unscoped agents.",
+            "next_action_requested": "Either drop the status filter or backfill agent rows with status='active'."
+        })
+    }
+
+    #[test]
+    fn good_capsule_passes() {
+        validate_failure_capsule(&good_capsule()).unwrap();
+    }
+
+    #[test]
+    fn capsule_missing_failing_command_fails() {
+        let mut c = good_capsule();
+        c.as_object_mut().unwrap().remove("failing_command");
+        assert!(validate_failure_capsule(&c)
+            .unwrap_err()
+            .contains("failing_command"));
+    }
+
+    #[test]
+    fn capsule_short_suspected_cause_fails() {
+        let mut c = good_capsule();
+        c["suspected_cause"] = serde_json::json!("looks bad");
+        assert!(validate_failure_capsule(&c)
+            .unwrap_err()
+            .contains("suspected_cause"));
+    }
+
+    #[test]
+    fn capsule_missing_next_action_fails() {
+        let mut c = good_capsule();
+        c.as_object_mut().unwrap().remove("next_action_requested");
+        assert!(validate_failure_capsule(&c)
+            .unwrap_err()
+            .contains("next_action_requested"));
+    }
+
+    #[test]
+    fn capsule_log_excerpt_too_long_fails() {
+        let mut c = good_capsule();
+        c["relevant_log_excerpt"] = serde_json::json!("x".repeat(5_000));
+        assert!(validate_failure_capsule(&c)
+            .unwrap_err()
+            .contains("relevant_log_excerpt"));
+    }
+
+    #[test]
+    fn capsule_changed_files_must_be_array() {
+        let mut c = good_capsule();
+        c["changed_files_implicated"] = serde_json::json!("not-an-array");
+        assert!(validate_failure_capsule(&c)
+            .unwrap_err()
+            .contains("changed_files_implicated"));
     }
 }
