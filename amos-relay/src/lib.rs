@@ -10,6 +10,7 @@
 
 pub mod middleware;
 pub mod pointing;
+pub mod proof_receipt;
 pub mod protocol_fees;
 pub mod reputation;
 pub mod routes;

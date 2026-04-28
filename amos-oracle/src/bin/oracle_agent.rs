@@ -288,6 +288,30 @@ async fn dispatch_review_decision(
     Ok(())
 }
 
+/// AMOS-META-007: derive an initial policy block for an Oracle-commissioned
+/// bounty. Conservative defaults — Oracle never commissions reasoning-substrate
+/// changes (those escalate), so `self_modifying = false` is safe here. Manual
+/// posters and council overrides can supply richer policies explicitly.
+fn derive_policy_from_spec(spec: &ProposedBountySpec) -> Option<JsonValue> {
+    let category = spec.category.trim().to_ascii_lowercase();
+    let forbidden_paths: Vec<&str> = vec![
+        // Reasoning substrate — Oracle should never commission against these,
+        // but make it explicit in the policy so receipts can be checked.
+        "amos-oracle/prompts/**",
+        "amos-oracle/src/agent.rs",
+        "amos-oracle/src/intake.rs",
+        "amos-oracle/src/review.rs",
+    ];
+    Some(serde_json::json!({
+        "forbidden_paths": forbidden_paths,
+        "required_paths_subset": [],
+        "scope_constraint_ids": [format!("category:{category}")],
+        "minimum_coverage_pct": null,
+        "max_file_size_bytes": null,
+        "self_modifying": false,
+    }))
+}
+
 fn verdict_to_str(v: &JsonValue) -> &'static str {
     match v.as_str() {
         Some("commission") => "commission",
@@ -384,6 +408,11 @@ struct CreateBountyBody<'a> {
     required_capabilities: &'a [String],
     poster_wallet: &'a str,
     category: &'a str,
+    /// AMOS-META-007: optional policy block. Oracle commissioning attaches
+    /// constraints inferred from the bounty's contribution type + scope so
+    /// future submissions can be judged against them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    policy: Option<JsonValue>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,6 +458,7 @@ impl RelayClient {
     ) -> anyhow::Result<Uuid> {
         let deadline =
             chrono::Utc::now() + chrono::Duration::days(spec.deadline_days.max(1) as i64);
+        let policy = derive_policy_from_spec(spec);
         let body = CreateBountyBody {
             title: &spec.title,
             description: &spec.description,
@@ -437,6 +467,7 @@ impl RelayClient {
             required_capabilities: &spec.required_capabilities,
             poster_wallet: &cfg.poster_wallet,
             category: &spec.category,
+            policy,
         };
 
         let url = format!("{}/api/v1/bounties", self.base);

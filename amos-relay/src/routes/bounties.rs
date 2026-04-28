@@ -213,6 +213,14 @@ pub struct CreateBountyRequest {
     pub poster_wallet: String,
     /// Bounty category: infrastructure, growth, research, content (default: infrastructure)
     pub category: Option<String>,
+    /// AMOS-META-007: optional policy block. Constraints the worker's submission
+    /// must respect (forbidden_paths, required_paths_subset, scope_constraint_ids,
+    /// minimum_coverage_pct, max_file_size_bytes, self_modifying flag). Stored
+    /// on the bounty row so future submissions can be judged against it.
+    /// Manual posters may set explicitly; Oracle commission flow sets via
+    /// proposed_bounty_spec.
+    #[serde(default)]
+    pub policy: Option<JsonValue>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -274,6 +282,13 @@ pub struct SubmitWorkRequest {
     pub result: JsonValue,
     pub quality_evidence: Option<JsonValue>,
     pub wallet_address: Option<String>,
+    /// AMOS-META-007 phase 2: optional proof-carrying receipt. When present,
+    /// shape-validated by relay (see `proof_receipt::validate`) and stored on
+    /// the bounty row. Semantic content judgment (does the validation plan
+    /// cover the changes?) is Oracle's job, not the relay's.
+    /// Becomes required for code-bounty approval in phase 5.
+    #[serde(default)]
+    pub proof_receipt: Option<JsonValue>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,6 +363,13 @@ pub struct BountyResponse {
     /// Only present for open/claimed bounties when Solana is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub estimated_payout_amos: Option<f64>,
+    /// AMOS-META-007: policy block set at bounty creation. Constraints the
+    /// submission must respect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<JsonValue>,
+    /// AMOS-META-007: proof receipt set at submission time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof_receipt: Option<JsonValue>,
 }
 
 // =============================================================================
@@ -364,6 +386,7 @@ const BOUNTY_SELECT: &str = r#"
     quality_score, approved_at, rejected_at, rejection_reason,
     settlement_tx, settlement_status,
     revision_count, revision_feedback, pr_url, category,
+    policy, proof_receipt,
     created_at, updated_at
 "#;
 
@@ -406,6 +429,8 @@ fn bounty_from_row(row: sqlx::postgres::PgRow) -> Result<BountyResponse, sqlx::E
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
         estimated_payout_amos: None, // Enriched in list_bounties when Solana is configured
+        policy: row.try_get("policy").ok().flatten(),
+        proof_receipt: row.try_get("proof_receipt").ok().flatten(),
     })
 }
 
@@ -563,9 +588,10 @@ async fn create_bounty(
         "INSERT INTO relay_bounties (
                 id, title, description, reward_tokens, deadline_at,
                 required_capabilities, poster_wallet, status, category,
+                policy,
                 created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING {BOUNTY_SELECT}"
     ))
     .bind(bounty_id)
@@ -577,6 +603,7 @@ async fn create_bounty(
     .bind(&req.poster_wallet)
     .bind(BountyStatus::Open.as_str())
     .bind(category)
+    .bind(req.policy.as_ref())
     .bind(now)
     .bind(now)
     .fetch_one(&state.db)
@@ -893,6 +920,16 @@ async fn submit_work(
         }
     }
 
+    // AMOS-META-007 phase 2: shape-validate the proof receipt up front.
+    // Content judgment (does the validation plan cover the changes?) belongs
+    // to Oracle, not the relay.
+    if let Some(ref receipt) = req.proof_receipt {
+        if let Err(msg) = crate::proof_receipt::validate(receipt) {
+            warn!(bounty = %id, error = %msg, "submit_work: proof_receipt rejected");
+            return Err(StatusCode::UNPROCESSABLE_ENTITY);
+        }
+    }
+
     let now = Utc::now();
 
     // Extract pr_url from result JSON if present
@@ -936,7 +973,31 @@ async fn submit_work(
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .ok_or(StatusCode::CONFLICT)?;
-    let bounty = bounty_from_row(row).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut bounty = bounty_from_row(row).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Persist the proof receipt (if any) on the same row. Already shape-validated.
+    if let Some(receipt) = req.proof_receipt {
+        let res = sqlx::query(
+            "UPDATE relay_bounties SET proof_receipt = $1, updated_at = $2 WHERE id = $3",
+        )
+        .bind(&receipt)
+        .bind(now)
+        .bind(id)
+        .execute(&state.db)
+        .await;
+        match res {
+            Ok(_) => {
+                bounty.proof_receipt = Some(receipt);
+                info!(bounty = %id, "proof_receipt stored");
+            }
+            Err(e) => {
+                // Submit succeeded; receipt persist failed. Surface a 207-ish
+                // signal by logging — caller can re-submit the receipt. We
+                // don't roll back the submit because it already happened.
+                warn!(bounty = %id, error = %e, "proof_receipt persist failed; submit succeeded without it");
+            }
+        }
+    }
 
     info!("Work submitted for bounty {} by agent {}", id, req.agent_id);
 
