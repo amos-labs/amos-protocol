@@ -75,20 +75,26 @@ pub async fn api_key_auth(
         }
     };
 
-    // Hash the token for comparison
+    // Two valid auth shapes:
+    //   - Harness API key:  hash and compare to relay_harnesses.api_key_hash
+    //   - Agent UUID:        compare raw token to relay_agents.id::text
+    // The previous query bound only the hash for both branches, so agent-UUID
+    // auth was effectively broken — no agent ID will ever equal its own SHA256.
     let token_hash = hash_api_key(token);
 
-    // Check against harnesses first, then agents
     let is_valid = sqlx::query_scalar::<_, bool>(
         r#"
         SELECT EXISTS(
-            SELECT 1 FROM relay_harnesses WHERE api_key_hash = $1 AND status = 'active'
+            SELECT 1 FROM relay_harnesses
+              WHERE api_key_hash = $1 AND status = 'active'
             UNION ALL
-            SELECT 1 FROM relay_agents WHERE id::text = $1
+            SELECT 1 FROM relay_agents
+              WHERE id::text = $2 AND status = 'active'
         )
         "#,
     )
     .bind(&token_hash)
+    .bind(token)
     .fetch_one(&db)
     .await
     .unwrap_or(false);
