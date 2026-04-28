@@ -19,6 +19,9 @@
 //!   - `AWS_REGION`                   — Bedrock region (e.g. us-east-1)
 //!   - `ORACLE_POSTER_WALLET`         — Solana wallet used as poster for
 //!     Oracle-commissioned bounties
+//!   - `ORACLE_REVIEWER_WALLET`       — Solana wallet used on the review-side
+//!     (approve / reject / request_revision). MUST be distinct from
+//!     ORACLE_POSTER_WALLET (relay enforces separation of duties).
 //!
 //! Optional:
 //!   - `ORACLE_PROJECT_ROOT`          — for mission file paths (default: cwd)
@@ -183,7 +186,7 @@ async fn tick(
         let bid = req.bounty_id;
         match agent.review(req).await {
             Ok(decision) => {
-                if let Err(e) = dispatch_review_decision(&relay, bid, &decision).await {
+                if let Err(e) = dispatch_review_decision(&relay, cfg, bid, &decision).await {
                     warn!(bounty_id = %bid, error = %e, "review dispatch failed");
                 }
             }
@@ -252,6 +255,7 @@ async fn dispatch_intake_decision(
 
 async fn dispatch_review_decision(
     relay: &RelayClient,
+    cfg: &Config,
     bounty_id: Uuid,
     decision: &Decision,
 ) -> anyhow::Result<()> {
@@ -260,12 +264,12 @@ async fn dispatch_review_decision(
 
     match verdict {
         ReviewVerdict::Approve => {
-            relay.approve_bounty(bounty_id, decision).await?;
+            relay.approve_bounty(cfg, bounty_id, decision).await?;
             info!(bounty_id = %bounty_id, "review: approved");
         }
         ReviewVerdict::Reject => {
             relay
-                .reject_bounty(bounty_id, &decision.mission_alignment_notes)
+                .reject_bounty(cfg, bounty_id, &decision.mission_alignment_notes)
                 .await?;
             info!(bounty_id = %bounty_id, "review: rejected");
         }
@@ -274,7 +278,7 @@ async fn dispatch_review_decision(
                 .feedback
                 .clone()
                 .unwrap_or_else(|| decision.mission_alignment_notes.clone());
-            relay.request_revision(bounty_id, &feedback).await?;
+            relay.request_revision(cfg, bounty_id, &feedback).await?;
             info!(bounty_id = %bounty_id, "review: revision requested");
         }
         ReviewVerdict::Escalate => {
@@ -551,14 +555,23 @@ impl RelayClient {
         Ok(())
     }
 
-    async fn approve_bounty(&self, bounty_id: Uuid, decision: &Decision) -> anyhow::Result<()> {
+    async fn approve_bounty(
+        &self,
+        cfg: &Config,
+        bounty_id: Uuid,
+        decision: &Decision,
+    ) -> anyhow::Result<()> {
         let url = format!("{}/api/v1/bounties/{}/approve", self.base, bounty_id);
+        // The relay expects `reviewer_wallet` (not approver_wallet); it must
+        // be a valid Solana base58 address AND distinct from the bounty's
+        // poster + claimer (separation of duties). cfg.reviewer_wallet is
+        // sourced from ORACLE_REVIEWER_WALLET — must be configured to a
+        // wallet different from ORACLE_POSTER_WALLET.
         let body = serde_json::json!({
-            "approver_wallet": "oracle",
+            "reviewer_wallet": cfg.reviewer_wallet,
             "quality_score": 80u8.saturating_add_signed(
                 decision_quality_adjustment(decision).clamp(-20, 20) as i8
             ),
-            "notes": decision.mission_alignment_notes,
         });
         let resp = self
             .http
@@ -568,15 +581,26 @@ impl RelayClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            anyhow::bail!("approve_bounty: {}", resp.status());
+            let s = resp.status();
+            let t = resp.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "approve_bounty {}: {}",
+                s,
+                t.chars().take(300).collect::<String>()
+            );
         }
         Ok(())
     }
 
-    async fn reject_bounty(&self, bounty_id: Uuid, reason: &str) -> anyhow::Result<()> {
+    async fn reject_bounty(
+        &self,
+        cfg: &Config,
+        bounty_id: Uuid,
+        reason: &str,
+    ) -> anyhow::Result<()> {
         let url = format!("{}/api/v1/bounties/{}/reject", self.base, bounty_id);
         let body = serde_json::json!({
-            "reviewer_wallet": "oracle",
+            "reviewer_wallet": cfg.reviewer_wallet,
             "reason": reason,
         });
         let resp = self
@@ -587,18 +611,29 @@ impl RelayClient {
             .send()
             .await?;
         if !resp.status().is_success() {
-            anyhow::bail!("reject_bounty: {}", resp.status());
+            let s = resp.status();
+            let t = resp.text().await.unwrap_or_default();
+            anyhow::bail!(
+                "reject_bounty {}: {}",
+                s,
+                t.chars().take(300).collect::<String>()
+            );
         }
         Ok(())
     }
 
-    async fn request_revision(&self, bounty_id: Uuid, feedback: &str) -> anyhow::Result<()> {
+    async fn request_revision(
+        &self,
+        cfg: &Config,
+        bounty_id: Uuid,
+        feedback: &str,
+    ) -> anyhow::Result<()> {
         let url = format!(
             "{}/api/v1/bounties/{}/request_revision",
             self.base, bounty_id
         );
         let body = serde_json::json!({
-            "reviewer_wallet": "oracle",
+            "reviewer_wallet": cfg.reviewer_wallet,
             "feedback": feedback,
         });
         let resp = self
@@ -647,6 +682,12 @@ struct Config {
     poll_interval_secs: u64,
     model_id: String,
     poster_wallet: String,
+    /// Wallet Oracle uses on the review-side (approve / reject /
+    /// request_revision). Must be a valid base58 Solana address AND distinct
+    /// from `poster_wallet` to satisfy the relay's separation-of-duties
+    /// check. Without this, autonomous review is non-functional and council
+    /// must intervene via the canvas.
+    reviewer_wallet: String,
 }
 
 impl Config {
@@ -664,6 +705,7 @@ impl Config {
             relay_api_key: req("ORACLE_RELAY_API_KEY")?,
             aws_region: req("AWS_REGION")?,
             poster_wallet: req("ORACLE_POSTER_WALLET")?,
+            reviewer_wallet: req("ORACLE_REVIEWER_WALLET")?,
             project_root: env::var("ORACLE_PROJECT_ROOT")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into())),
