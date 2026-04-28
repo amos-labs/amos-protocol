@@ -42,9 +42,15 @@ pub const DEFAULT_MODEL_ID: &str = "anthropic.claude-opus-4-20250514-v1:0";
 #[derive(Clone)]
 pub struct BedrockLlmClient {
     region: String,
+    /// Cached credentials from startup. Used unless `ecs_relative_uri` is set,
+    /// in which case we refetch per request because ECS task creds expire
+    /// every ~6h and a long-running daemon must roll without restart.
     access_key_id: String,
     secret_access_key: String,
     session_token: Option<String>,
+    /// Set when creds were sourced from ECS metadata. Triggers per-request
+    /// refresh; the cached values above act as the bootstrap fallback.
+    ecs_relative_uri: Option<String>,
     model_id: String,
     http: reqwest::Client,
     /// Temperature — Oracle uses 0.0 for determinism. Exposed for tests.
@@ -64,6 +70,7 @@ impl BedrockLlmClient {
         model_id: Option<String>,
     ) -> Result<Self> {
         let creds = load_aws_credentials(region, access_key_id, secret_access_key)?;
+        let ecs_relative_uri = std::env::var("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI").ok();
 
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
@@ -75,11 +82,29 @@ impl BedrockLlmClient {
             access_key_id: creds.access_key_id,
             secret_access_key: creds.secret_access_key,
             session_token: creds.session_token,
+            ecs_relative_uri,
             model_id: model_id.unwrap_or_else(|| DEFAULT_MODEL_ID.to_string()),
             http,
             temperature: 0.0,
             max_tokens: 16_384,
         })
+    }
+
+    /// Resolve credentials for a single request. ECS task creds rotate every
+    /// ~6h, so when running in Fargate we re-hit the metadata endpoint per
+    /// call (it's a link-local hop, ~ms). Outside ECS, cached creds are used.
+    fn resolve_request_creds(&self) -> (String, String, Option<String>) {
+        if let Some(uri) = &self.ecs_relative_uri {
+            match load_ecs_container_credentials(uri) {
+                Ok((key, secret, token)) => return (key, secret, token),
+                Err(e) => warn!(error = %e, "ECS creds refresh failed; falling back to cached"),
+            }
+        }
+        (
+            self.access_key_id.clone(),
+            self.secret_access_key.clone(),
+            self.session_token.clone(),
+        )
     }
 
     pub fn with_temperature(mut self, t: f64) -> Self {
@@ -117,7 +142,15 @@ impl LlmClient for BedrockLlmClient {
 
         debug!(model = %self.model_id, region = %self.region, "bedrock converse");
 
-        let headers = self.sign_request("POST", &endpoint, &body_json)?;
+        let (access_key, secret_key, session_token) = self.resolve_request_creds();
+        let headers = self.sign_request(
+            "POST",
+            &endpoint,
+            &body_json,
+            &access_key,
+            &secret_key,
+            session_token.as_deref(),
+        )?;
 
         let resp = self
             .http
@@ -151,7 +184,16 @@ impl LlmClient for BedrockLlmClient {
 }
 
 impl BedrockLlmClient {
-    fn sign_request(&self, method: &str, url: &str, body: &str) -> Result<HeaderMap> {
+    #[allow(clippy::too_many_arguments)]
+    fn sign_request(
+        &self,
+        method: &str,
+        url: &str,
+        body: &str,
+        access_key_id: &str,
+        secret_access_key: &str,
+        session_token: Option<&str>,
+    ) -> Result<HeaderMap> {
         let now = Utc::now();
         let date_stamp = now.format("%Y%m%d").to_string();
         let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
@@ -189,8 +231,8 @@ impl BedrockLlmClient {
         headers_map.insert("content-type".to_string(), "application/json".to_string());
         headers_map.insert("host".to_string(), host.to_string());
         headers_map.insert("x-amz-date".to_string(), amz_date.clone());
-        if let Some(ref token) = self.session_token {
-            headers_map.insert("x-amz-security-token".to_string(), token.clone());
+        if let Some(token) = session_token {
+            headers_map.insert("x-amz-security-token".to_string(), token.to_string());
         }
 
         let canonical_headers_str = headers_map
@@ -221,7 +263,7 @@ impl BedrockLlmClient {
         );
 
         let signature = calculate_signature(
-            &self.secret_access_key,
+            secret_access_key,
             &date_stamp,
             &self.region,
             service,
@@ -230,7 +272,7 @@ impl BedrockLlmClient {
 
         let auth_header = format!(
             "{} Credential={}/{}, SignedHeaders={}, Signature={}",
-            algorithm, self.access_key_id, credential_scope, signed_headers, signature
+            algorithm, access_key_id, credential_scope, signed_headers, signature
         );
 
         let mut out = HeaderMap::new();
@@ -250,7 +292,7 @@ impl BedrockLlmClient {
             HeaderValue::from_str(host)
                 .map_err(|e| OracleError::Llm(format!("header host: {}", e)))?,
         );
-        if let Some(ref token) = self.session_token {
+        if let Some(token) = session_token {
             out.insert(
                 HeaderName::from_static("x-amz-security-token"),
                 HeaderValue::from_str(token)
