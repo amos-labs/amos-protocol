@@ -63,6 +63,7 @@ pub mod schema;
 pub mod server;
 pub mod ses;
 pub mod sessions;
+pub mod shutdown;
 pub mod sites;
 pub mod state;
 pub mod storage;

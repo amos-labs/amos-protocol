@@ -4,6 +4,7 @@
 
 use amos_core::{AppConfig, Result};
 use amos_harness::create_server;
+use amos_harness::shutdown::shutdown_signal;
 use secrecy::ExposeSecret;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
@@ -91,10 +92,16 @@ async fn main() -> Result<()> {
 
     info!("Server listening on {}", addr);
 
+    // Graceful shutdown: SIGTERM/SIGINT (Unix) or Ctrl-C (non-Unix) stops
+    // accepting new connections and drains in-flight requests — including
+    // long-running SSE chat streams. A 30s watchdog (see `shutdown_signal`)
+    // force-exits if the drain hangs so rolling deploys don't stall.
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| amos_core::AmosError::Internal(format!("Server error: {}", e)))?;
 
+    info!("Server shut down cleanly");
     Ok(())
 }
 
