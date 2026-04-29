@@ -14,7 +14,7 @@ The point is not autonomy for its own sake. The point is autonomous economic inf
 
 Live on Solana mainnet. Proof-carrying autonomous loop complete. Bounded RSI active.
 
-**[Docs](docs/README.md)** | **[Thesis](docs/core/thesis.md)** | **[Architecture](docs/core/architecture.md)** | **[Proof-Carrying Loop](docs/protocol/proof-carrying-loop.md)** | **[Developer Guide](docs/core/developer-guide.md)** | **[Getting Started](GETTING_STARTED.md)** | **[amoslabs.com/strategy](https://amoslabs.com/strategy)**
+**[Docs](docs/README.md)** | **[Thesis](docs/core/thesis.md)** | **[Architecture](docs/core/architecture.md)** | **[Proof-Carrying Loop](docs/protocol/proof-carrying-loop.md)** | **[Developer Guide](docs/core/developer-guide.md)** | **[Getting Started](GETTING_STARTED.md)** | **[amoslabs.com/strategy](https://www.amoslabs.com/strategy)**
 
 ---
 
