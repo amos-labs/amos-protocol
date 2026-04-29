@@ -159,6 +159,109 @@ pub fn compute_dynamic_max_reward(
     max_reward.max(ONE_TOKEN.min(available))
 }
 
+/// Minimum size in bytes of a valid on-chain `BountyConfig` account payload.
+/// Layout: 8 discriminator + 32 oracle + 32 mint + 32 treasury + 8 start_time.
+const CONFIG_ACCOUNT_MIN_LEN: usize = 112;
+
+/// Byte offset of `start_time` within a `BountyConfig` account payload.
+const CONFIG_START_TIME_OFFSET: usize = 104;
+
+/// Minimum size in bytes of a valid on-chain `DailyPool` account payload.
+/// Layout: 8 disc + 4 day_index + 8 daily_emission + 8 tokens_distributed +
+/// 8 total_points + 4 proof_count + 1 finalized + 1 bump +
+/// 8 growth_tokens + 8 growth_points + 8 technical_tokens + 8 technical_points.
+const DAILY_POOL_ACCOUNT_MIN_LEN: usize = 8 + 4 + 8 + 8 + 8 + 4 + 1 + 1 + 8 + 8 + 8 + 8;
+
+/// Decode a `BountyConfig` account payload and return its `start_time`.
+///
+/// Pure function: takes the raw account bytes and returns the little-endian
+/// `i64` stored at offset `CONFIG_START_TIME_OFFSET`. Returns
+/// `AmosError::Internal` if the payload is shorter than expected, or
+/// `AmosError::SolanaRpc` if slice-to-array conversion fails (defense-in-depth;
+/// unreachable given the length check).
+fn decode_config_start_time(data: &[u8]) -> Result<i64> {
+    if data.len() < CONFIG_ACCOUNT_MIN_LEN {
+        return Err(AmosError::Internal(format!(
+            "Config account too small: got {} bytes, need at least {}",
+            data.len(),
+            CONFIG_ACCOUNT_MIN_LEN
+        )));
+    }
+    let slice = data[CONFIG_START_TIME_OFFSET..CONFIG_START_TIME_OFFSET + 8]
+        .try_into()
+        .map_err(|_| AmosError::SolanaRpc("Config start_time slice conversion failed".into()))?;
+    Ok(i64::from_le_bytes(slice))
+}
+
+/// Decode a `DailyPool` account payload into a [`DailyPoolState`].
+///
+/// Pure function: takes the raw account bytes (including the 8-byte Anchor
+/// discriminator) and the expected `day_index`. Returns
+/// `AmosError::Internal` if the payload is shorter than expected, or
+/// `AmosError::SolanaRpc` if any slice-to-array conversion fails
+/// (defense-in-depth; unreachable given the length check).
+fn decode_daily_pool(data: &[u8], day_index: u32) -> Result<DailyPoolState> {
+    if data.len() < DAILY_POOL_ACCOUNT_MIN_LEN {
+        return Err(AmosError::Internal(format!(
+            "DailyPool account too small: got {} bytes, need at least {}",
+            data.len(),
+            DAILY_POOL_ACCOUNT_MIN_LEN
+        )));
+    }
+    let off = 8; // skip discriminator
+    let daily_emission = u64::from_le_bytes(data[off + 4..off + 12].try_into().map_err(|_| {
+        AmosError::SolanaRpc("DailyPool daily_emission slice conversion failed".into())
+    })?);
+    let tokens_distributed =
+        u64::from_le_bytes(data[off + 12..off + 20].try_into().map_err(|_| {
+            AmosError::SolanaRpc("DailyPool tokens_distributed slice conversion failed".into())
+        })?);
+    let total_points = u64::from_le_bytes(data[off + 20..off + 28].try_into().map_err(|_| {
+        AmosError::SolanaRpc("DailyPool total_points slice conversion failed".into())
+    })?);
+    let proof_count = u32::from_le_bytes(data[off + 28..off + 32].try_into().map_err(|_| {
+        AmosError::SolanaRpc("DailyPool proof_count slice conversion failed".into())
+    })?);
+    Ok(DailyPoolState {
+        day_index,
+        daily_emission,
+        tokens_distributed,
+        total_points,
+        proof_count,
+    })
+}
+
+/// Validate an RPC endpoint URL.
+///
+/// Rejects empty strings and URLs that don't start with a supported scheme.
+/// Solana RPC uses HTTP(S) for JSON-RPC and WS(S) for pubsub; anything else
+/// is almost certainly a misconfiguration.
+fn validate_rpc_url(rpc_url: &str) -> Result<()> {
+    let trimmed = rpc_url.trim();
+    if trimmed.is_empty() {
+        return Err(AmosError::Validation("RPC URL cannot be empty".into()));
+    }
+    const SUPPORTED_SCHEMES: [&str; 4] = ["http://", "https://", "ws://", "wss://"];
+    if !SUPPORTED_SCHEMES.iter().any(|s| trimmed.starts_with(s)) {
+        return Err(AmosError::Validation(format!(
+            "RPC URL must start with http://, https://, ws://, or wss:// (got: {})",
+            trimmed
+        )));
+    }
+    Ok(())
+}
+
+/// Validate that an agent trust level is in the allowed range 1..=5.
+fn validate_trust_level(trust_level: u8) -> Result<()> {
+    if !(1..=5).contains(&trust_level) {
+        return Err(AmosError::Validation(format!(
+            "trust_level must be in range 1..=5 (got: {})",
+            trust_level
+        )));
+    }
+    Ok(())
+}
+
 /// Compute a fallback max_reward when the on-chain pool cannot be read
 /// (e.g., pool not created yet, RPC error). Uses a conservative estimate
 /// based on the sigmoid emission schedule.
@@ -175,12 +278,17 @@ pub fn fallback_max_reward(points: u64) -> u64 {
 
 impl SolanaClient {
     /// Create a new Solana client connected to the given RPC endpoint.
+    ///
+    /// Validates that `rpc_url` is non-empty and uses a supported scheme
+    /// (`http://`, `https://`, or the Solana-specific `ws://`/`wss://`).
     pub fn new(rpc_url: &str, bounty_program_id: &str) -> Result<Self> {
+        validate_rpc_url(rpc_url)?;
+
         let rpc =
             RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
 
         let bounty_program_id = Pubkey::from_str(bounty_program_id)
-            .map_err(|e| AmosError::SolanaRpc(format!("Invalid bounty program ID: {}", e)))?;
+            .map_err(|e| AmosError::Validation(format!("Invalid bounty program ID: {}", e)))?;
 
         Ok(Self {
             rpc: Arc::new(rpc),
@@ -203,6 +311,10 @@ impl SolanaClient {
     ///   still proceeds — the warning is advisory.
     pub fn load_oracle_keypair(&mut self, keypair_path: &str) -> Result<()> {
         use std::io::Read;
+
+        if keypair_path.trim().is_empty() {
+            return Err(AmosError::Validation("Keypair path cannot be empty".into()));
+        }
 
         let path = Path::new(keypair_path);
 
@@ -590,14 +702,7 @@ impl SolanaClient {
             for attempt in 0..3 {
                 match rpc.get_account(&config_pda) {
                     Ok(account) => {
-                        let data = account.data;
-                        if data.len() < 112 {
-                            return Err(AmosError::Internal("Config account too small".into()));
-                        }
-                        // Layout: 8 disc + 32 oracle + 32 mint + 32 treasury + 8 start_time
-                        let ts = i64::from_le_bytes(data[104..112].try_into().map_err(|_| {
-                            AmosError::Internal("Config start_time slice conversion failed".into())
-                        })?);
+                        let ts = decode_config_start_time(&account.data)?;
                         let now = chrono::Utc::now().timestamp();
                         return Ok::<(i64, i64), AmosError>((ts, now));
                     }
@@ -611,7 +716,9 @@ impl SolanaClient {
             }
             Err(AmosError::SolanaRpc(format!(
                 "Failed to fetch config after 3 attempts: {}",
-                last_err.unwrap()
+                last_err
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "no error recorded".into())
             )))
         })
         .await
@@ -634,39 +741,7 @@ impl SolanaClient {
             for attempt in 0..3 {
                 match rpc.get_account(&daily_pool_pda) {
                     Ok(account) => {
-                        let data = account.data;
-                        // DailyPool layout (after 8-byte Anchor discriminator):
-                        //   day_index: u32 (4)
-                        //   daily_emission: u64 (8)
-                        //   tokens_distributed: u64 (8)
-                        //   total_points: u64 (8)
-                        //   proof_count: u32 (4)
-                        //   finalized: bool (1)
-                        //   bump: u8 (1)
-                        //   growth_tokens_distributed: u64 (8)
-                        //   growth_points: u64 (8)
-                        //   technical_tokens_distributed: u64 (8)
-                        //   technical_points: u64 (8)
-                        if data.len() < 8 + 4 + 8 + 8 + 8 + 4 + 1 + 1 + 8 + 8 + 8 + 8 {
-                            return Err(AmosError::Internal("DailyPool account too small".into()));
-                        }
-                        let off = 8; // skip discriminator
-                        let daily_emission =
-                            u64::from_le_bytes(data[off + 4..off + 12].try_into().unwrap());
-                        let tokens_distributed =
-                            u64::from_le_bytes(data[off + 12..off + 20].try_into().unwrap());
-                        let total_points =
-                            u64::from_le_bytes(data[off + 20..off + 28].try_into().unwrap());
-                        let proof_count =
-                            u32::from_le_bytes(data[off + 28..off + 32].try_into().unwrap());
-
-                        return Ok(Some(DailyPoolState {
-                            day_index,
-                            daily_emission,
-                            tokens_distributed,
-                            total_points,
-                            proof_count,
-                        }));
+                        return Ok(Some(decode_daily_pool(&account.data, day_index)?));
                     }
                     Err(e) => {
                         let err_str = e.to_string();
@@ -684,7 +759,9 @@ impl SolanaClient {
             }
             Err(AmosError::SolanaRpc(format!(
                 "Failed to fetch daily pool after 3 attempts: {}",
-                last_err.unwrap()
+                last_err
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "no error recorded".into())
             )))
         })
         .await
@@ -776,6 +853,37 @@ impl SolanaClient {
         claim_timeout_hours: u64,
         deadline: i64,
     ) -> Result<String> {
+        // ── Input validation at the trust boundary ───────────────────────
+        if reward_amount == 0 {
+            return Err(AmosError::Validation(
+                "reward_amount must be greater than 0".into(),
+            ));
+        }
+        if bounty_source > 2 {
+            return Err(AmosError::Validation(format!(
+                "bounty_source must be 0..=2 (got: {})",
+                bounty_source
+            )));
+        }
+        if contribution_type > 3 {
+            return Err(AmosError::Validation(format!(
+                "contribution_type must be 0..=3 (got: {})",
+                contribution_type
+            )));
+        }
+        validate_trust_level(required_trust_level)?;
+        if claim_timeout_hours == 0 {
+            return Err(AmosError::Validation(
+                "claim_timeout_hours must be greater than 0".into(),
+            ));
+        }
+        if deadline <= 0 {
+            return Err(AmosError::Validation(format!(
+                "deadline must be a positive unix timestamp (got: {})",
+                deadline
+            )));
+        }
+
         let oracle = self.oracle_keypair.as_ref().ok_or_else(|| {
             AmosError::Internal(
                 "Oracle keypair not configured — cannot post bounty on-chain".into(),
@@ -838,6 +946,8 @@ impl SolanaClient {
         wallet_address: &str,
         trust_level: u8,
     ) -> Result<String> {
+        validate_trust_level(trust_level)?;
+
         let oracle = self.oracle_keypair.as_ref().ok_or_else(|| {
             AmosError::Internal(
                 "Oracle keypair not configured — cannot bootstrap agent trust".into(),
@@ -845,7 +955,7 @@ impl SolanaClient {
         })?;
 
         let wallet_pubkey = Pubkey::from_str(wallet_address)
-            .map_err(|e| AmosError::Internal(format!("Invalid wallet address: {}", e)))?;
+            .map_err(|e| AmosError::Validation(format!("Invalid wallet address: {}", e)))?;
         let agent_id = wallet_pubkey.to_bytes();
 
         let program_id = self.bounty_program_id;
@@ -900,7 +1010,7 @@ impl SolanaClient {
         })?;
 
         let wallet_pubkey = Pubkey::from_str(wallet_address)
-            .map_err(|e| AmosError::Internal(format!("Invalid wallet address: {}", e)))?;
+            .map_err(|e| AmosError::Validation(format!("Invalid wallet address: {}", e)))?;
         let agent_id = wallet_pubkey.to_bytes();
 
         let program_id = self.bounty_program_id;
@@ -2330,5 +2440,517 @@ mod tests {
             reward >= ONE_TOKEN,
             "Fallback should return at least 1 AMOS"
         );
+    }
+
+    // ── Malformed-input / fuzz tests ───────────────────────────────────
+    //
+    // These tests feed pathological inputs into every public `SolanaClient`
+    // function and assert each one returns `Err(_)` rather than panicking.
+    // They guard against the class of bug fixed by SECURE-007: unchecked
+    // `.unwrap()` / unvalidated boundary input that could DoS the relay
+    // when an attacker or buggy caller supplies bad data.
+
+    const VALID_PROGRAM_ID: &str = "4XbUwKNMoERKuzzeSKJgATttgHFcjazohuYYgiwj9tsq";
+    const VALID_RPC_URL: &str = "https://api.devnet.solana.com";
+
+    fn make_client() -> SolanaClient {
+        SolanaClient::new(VALID_RPC_URL, VALID_PROGRAM_ID).unwrap()
+    }
+
+    /// Build a client with a random in-memory oracle keypair loaded. This
+    /// makes boundary-validation tests exercise the specific validation
+    /// code path rather than short-circuiting on the "oracle not configured"
+    /// error (which would also return `Err` but prove nothing about the
+    /// input check).
+    fn make_client_with_oracle() -> SolanaClient {
+        let mut client = make_client();
+        client.oracle_keypair = Some(Keypair::new());
+        client
+    }
+
+    // --- validate_rpc_url ---
+
+    #[test]
+    fn test_validate_rpc_url_accepts_supported_schemes() {
+        for url in [
+            "http://localhost:8899",
+            "https://api.devnet.solana.com",
+            "ws://localhost:8900",
+            "wss://api.mainnet-beta.solana.com",
+        ] {
+            assert!(validate_rpc_url(url).is_ok(), "should accept {}", url);
+        }
+    }
+
+    #[test]
+    fn test_validate_rpc_url_rejects_empty_and_whitespace() {
+        for url in ["", "   ", "\t\n"] {
+            assert!(
+                validate_rpc_url(url).is_err(),
+                "should reject empty-ish URL: {:?}",
+                url
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_rpc_url_rejects_unsupported_schemes() {
+        for url in [
+            "ftp://example.com",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "api.devnet.solana.com", // no scheme at all
+            "localhost",
+            "://no-scheme",
+        ] {
+            assert!(
+                validate_rpc_url(url).is_err(),
+                "should reject unsupported URL: {}",
+                url
+            );
+        }
+    }
+
+    // --- SolanaClient::new ---
+
+    #[test]
+    fn test_new_rejects_empty_rpc_url() {
+        let result = SolanaClient::new("", VALID_PROGRAM_ID);
+        assert!(result.is_err(), "empty URL should be rejected");
+    }
+
+    #[test]
+    fn test_new_rejects_garbage_rpc_url() {
+        let result = SolanaClient::new("not a url at all", VALID_PROGRAM_ID);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_new_rejects_malformed_program_ids() {
+        for bad_id in [
+            "",
+            " ",
+            "not_base58",
+            "OIl0", // contains 0, O, I, l — none valid in base58
+            "too_short",
+            "A",
+            &"X".repeat(128), // excessively long
+            "\0\0\0\0",
+            "🦀🦀🦀",
+        ] {
+            let result = SolanaClient::new(VALID_RPC_URL, bad_id);
+            assert!(
+                result.is_err(),
+                "SolanaClient::new should reject malformed program id: {:?}",
+                bad_id
+            );
+        }
+    }
+
+    // --- load_oracle_keypair ---
+
+    #[test]
+    fn test_load_oracle_keypair_rejects_empty_path() {
+        let mut client = make_client();
+        assert!(client.load_oracle_keypair("").is_err());
+        assert!(client.load_oracle_keypair("   ").is_err());
+    }
+
+    #[test]
+    fn test_load_oracle_keypair_rejects_nonexistent_path() {
+        let mut client = make_client();
+        let result = client.load_oracle_keypair("/definitely/does/not/exist/keypair.json");
+        assert!(result.is_err());
+    }
+
+    // --- set_mint / set_treasury ---
+
+    #[test]
+    fn test_set_mint_rejects_malformed_input() {
+        let mut client = make_client();
+        for bad in [
+            "",
+            " ",
+            "not_base58",
+            "O0Il", // invalid base58 chars
+            "\0",
+            &"Z".repeat(256),
+        ] {
+            assert!(
+                client.set_mint(bad).is_err(),
+                "set_mint should reject: {:?}",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn test_set_treasury_rejects_malformed_input() {
+        let mut client = make_client();
+        for bad in ["", " ", "not_base58", "O0Il", &"Z".repeat(256)] {
+            assert!(
+                client.set_treasury(bad).is_err(),
+                "set_treasury should reject: {:?}",
+                bad
+            );
+        }
+    }
+
+    // --- validate_trust_level ---
+
+    #[test]
+    fn test_validate_trust_level_accepts_valid_range() {
+        for level in 1..=5 {
+            assert!(validate_trust_level(level).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_validate_trust_level_rejects_out_of_range() {
+        for bad in [0, 6, 7, 100, u8::MAX] {
+            assert!(
+                validate_trust_level(bad).is_err(),
+                "should reject trust_level {}",
+                bad
+            );
+        }
+    }
+
+    // --- bootstrap_agent_trust (boundary validation only — no RPC call made
+    //     when validation fails fast) ---
+
+    #[tokio::test]
+    async fn test_bootstrap_agent_trust_rejects_invalid_trust_level() {
+        let client = make_client_with_oracle();
+        for bad_level in [0, 6, 7, u8::MAX] {
+            let result = client
+                .bootstrap_agent_trust("HxfBT3nUz4xTL6zSbXF9HanW2Ext99Ah9f6NPU6dhr5N", bad_level)
+                .await;
+            assert!(
+                result.is_err(),
+                "bootstrap should reject trust_level={}",
+                bad_level
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_agent_trust_rejects_malformed_wallet() {
+        let client = make_client_with_oracle();
+        for bad in ["", " ", "not_base58", "O0Il", "\0\0", &"Q".repeat(256)] {
+            let result = client.bootstrap_agent_trust(bad, 5).await;
+            assert!(
+                result.is_err(),
+                "bootstrap should reject malformed wallet: {:?}",
+                bad
+            );
+        }
+    }
+
+    // --- post_bounty_on_chain (numeric-boundary validation) ---
+    //
+    // These use `make_client_with_oracle()` so that validation is what fails,
+    // not the "no oracle keypair configured" check. A valid deadline in the
+    // future is used for cases that only exercise one other field.
+
+    #[tokio::test]
+    async fn test_post_bounty_rejects_zero_reward() {
+        let client = make_client_with_oracle();
+        let result = client
+            .post_bounty_on_chain(&[0u8; 32], 0, 0, 0, 5, 24, 1_800_000_000)
+            .await;
+        assert!(result.is_err(), "should reject zero reward_amount");
+    }
+
+    #[tokio::test]
+    async fn test_post_bounty_rejects_bad_source() {
+        let client = make_client_with_oracle();
+        for bad_source in [3u8, 4, 100, u8::MAX] {
+            let result = client
+                .post_bounty_on_chain(&[0u8; 32], bad_source, 1000, 0, 5, 24, 1_800_000_000)
+                .await;
+            assert!(
+                result.is_err(),
+                "should reject bounty_source={}",
+                bad_source
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_post_bounty_rejects_bad_contribution_type() {
+        let client = make_client_with_oracle();
+        for bad_ct in [4u8, 5, 100, u8::MAX] {
+            let result = client
+                .post_bounty_on_chain(&[0u8; 32], 0, 1000, bad_ct, 5, 24, 1_800_000_000)
+                .await;
+            assert!(
+                result.is_err(),
+                "should reject contribution_type={}",
+                bad_ct
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_post_bounty_rejects_bad_trust_level() {
+        let client = make_client_with_oracle();
+        for bad in [0u8, 6, 100, u8::MAX] {
+            let result = client
+                .post_bounty_on_chain(&[0u8; 32], 0, 1000, 0, bad, 24, 1_800_000_000)
+                .await;
+            assert!(result.is_err(), "should reject trust_level={}", bad);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_post_bounty_rejects_zero_timeout() {
+        let client = make_client_with_oracle();
+        let result = client
+            .post_bounty_on_chain(&[0u8; 32], 0, 1000, 0, 5, 0, 1_800_000_000)
+            .await;
+        assert!(result.is_err(), "should reject zero claim_timeout_hours");
+    }
+
+    #[tokio::test]
+    async fn test_post_bounty_rejects_nonpositive_deadline() {
+        let client = make_client_with_oracle();
+        for bad_deadline in [0i64, -1, -100, i64::MIN] {
+            let result = client
+                .post_bounty_on_chain(&[0u8; 32], 0, 1000, 0, 5, 24, bad_deadline)
+                .await;
+            assert!(result.is_err(), "should reject deadline={}", bad_deadline);
+        }
+    }
+
+    // --- register_agent_on_chain ---
+
+    #[tokio::test]
+    async fn test_register_agent_rejects_malformed_wallet() {
+        let client = make_client_with_oracle();
+        for bad in ["", " ", "not_base58", "O0Il", "\0\0", &"Q".repeat(256)] {
+            let result = client.register_agent_on_chain(bad).await;
+            assert!(
+                result.is_err(),
+                "register_agent should reject malformed wallet: {:?}",
+                bad
+            );
+        }
+    }
+
+    // ── Pure decoder tests ─────────────────────────────────────────────
+    //
+    // These directly exercise `decode_config_start_time` and
+    // `decode_daily_pool` with hand-crafted byte arrays — covering the
+    // exact `try_into.map_err` paths that replaced the original
+    // unwrap()s. Feeding truncated, empty, and boundary-sized inputs
+    // here proves the fix behaves as designed without needing a live
+    // Solana RPC.
+
+    fn build_config_payload(start_time: i64) -> Vec<u8> {
+        let mut buf = vec![0u8; CONFIG_ACCOUNT_MIN_LEN];
+        buf[CONFIG_START_TIME_OFFSET..CONFIG_START_TIME_OFFSET + 8]
+            .copy_from_slice(&start_time.to_le_bytes());
+        buf
+    }
+
+    fn build_daily_pool_payload(
+        day_index: u32,
+        daily_emission: u64,
+        tokens_distributed: u64,
+        total_points: u64,
+        proof_count: u32,
+    ) -> Vec<u8> {
+        let mut buf = vec![0u8; DAILY_POOL_ACCOUNT_MIN_LEN];
+        let off = 8; // discriminator
+        buf[off..off + 4].copy_from_slice(&day_index.to_le_bytes());
+        buf[off + 4..off + 12].copy_from_slice(&daily_emission.to_le_bytes());
+        buf[off + 12..off + 20].copy_from_slice(&tokens_distributed.to_le_bytes());
+        buf[off + 20..off + 28].copy_from_slice(&total_points.to_le_bytes());
+        buf[off + 28..off + 32].copy_from_slice(&proof_count.to_le_bytes());
+        buf
+    }
+
+    // --- decode_config_start_time ---
+
+    #[test]
+    fn test_decode_config_start_time_valid() {
+        let payload = build_config_payload(1_800_000_000);
+        assert_eq!(decode_config_start_time(&payload).unwrap(), 1_800_000_000);
+    }
+
+    #[test]
+    fn test_decode_config_start_time_negative_value_is_preserved() {
+        // i64::from_le_bytes should handle negative timestamps round-trip
+        let payload = build_config_payload(-1);
+        assert_eq!(decode_config_start_time(&payload).unwrap(), -1);
+    }
+
+    #[test]
+    fn test_decode_config_start_time_rejects_empty() {
+        let result = decode_config_start_time(&[]);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("Config account too small"),
+            "unexpected err: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_decode_config_start_time_rejects_one_byte_short() {
+        // CONFIG_ACCOUNT_MIN_LEN - 1 bytes → still below threshold
+        let payload = vec![0u8; CONFIG_ACCOUNT_MIN_LEN - 1];
+        let result = decode_config_start_time(&payload);
+        assert!(result.is_err(), "should reject 111-byte payload");
+    }
+
+    #[test]
+    fn test_decode_config_start_time_rejects_all_short_sizes() {
+        for size in 0..CONFIG_ACCOUNT_MIN_LEN {
+            let payload = vec![0xAAu8; size];
+            assert!(
+                decode_config_start_time(&payload).is_err(),
+                "should reject {}-byte payload",
+                size
+            );
+        }
+    }
+
+    #[test]
+    fn test_decode_config_start_time_accepts_exact_min_size() {
+        let payload = vec![0u8; CONFIG_ACCOUNT_MIN_LEN];
+        assert!(decode_config_start_time(&payload).is_ok());
+    }
+
+    #[test]
+    fn test_decode_config_start_time_accepts_oversized_payload() {
+        // A longer-than-expected account (e.g., future schema extension)
+        // must still decode the start_time at the fixed offset.
+        let mut payload = build_config_payload(42);
+        payload.extend(std::iter::repeat_n(0xFFu8, 500));
+        assert_eq!(decode_config_start_time(&payload).unwrap(), 42);
+    }
+
+    #[test]
+    fn test_decode_config_start_time_fuzz_garbage_short() {
+        // Pseudo-random short garbage should never panic — only ever Err.
+        let garbage_sizes = [1usize, 7, 8, 50, 100, 103, 111];
+        for size in garbage_sizes {
+            let payload: Vec<u8> = (0..size).map(|i| (i * 37 + 13) as u8).collect();
+            assert!(
+                decode_config_start_time(&payload).is_err(),
+                "size {} should err",
+                size
+            );
+        }
+    }
+
+    // --- decode_daily_pool ---
+
+    #[test]
+    fn test_decode_daily_pool_valid_roundtrip() {
+        let payload = build_daily_pool_payload(7, 16_000_000_000_000, 500_000_000, 12_345, 42);
+        let pool = decode_daily_pool(&payload, 7).unwrap();
+        assert_eq!(pool.day_index, 7);
+        assert_eq!(pool.daily_emission, 16_000_000_000_000);
+        assert_eq!(pool.tokens_distributed, 500_000_000);
+        assert_eq!(pool.total_points, 12_345);
+        assert_eq!(pool.proof_count, 42);
+    }
+
+    #[test]
+    fn test_decode_daily_pool_rejects_empty() {
+        assert!(decode_daily_pool(&[], 0).is_err());
+    }
+
+    #[test]
+    fn test_decode_daily_pool_rejects_one_byte_short() {
+        let payload = vec![0u8; DAILY_POOL_ACCOUNT_MIN_LEN - 1];
+        let result = decode_daily_pool(&payload, 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decode_daily_pool_rejects_all_short_sizes() {
+        for size in 0..DAILY_POOL_ACCOUNT_MIN_LEN {
+            let payload = vec![0xAAu8; size];
+            assert!(
+                decode_daily_pool(&payload, 0).is_err(),
+                "should reject {}-byte payload",
+                size
+            );
+        }
+    }
+
+    #[test]
+    fn test_decode_daily_pool_accepts_exact_min_size() {
+        let payload = vec![0u8; DAILY_POOL_ACCOUNT_MIN_LEN];
+        let pool = decode_daily_pool(&payload, 99).unwrap();
+        assert_eq!(pool.day_index, 99);
+        assert_eq!(pool.daily_emission, 0);
+        assert_eq!(pool.tokens_distributed, 0);
+        assert_eq!(pool.total_points, 0);
+        assert_eq!(pool.proof_count, 0);
+    }
+
+    #[test]
+    fn test_decode_daily_pool_accepts_oversized_payload() {
+        let mut payload = build_daily_pool_payload(7, 16_000_000_000_000, 500_000_000, 12_345, 42);
+        payload.extend(std::iter::repeat_n(0xFFu8, 500));
+        let pool = decode_daily_pool(&payload, 7).unwrap();
+        assert_eq!(pool.daily_emission, 16_000_000_000_000);
+        assert_eq!(pool.proof_count, 42);
+    }
+
+    #[test]
+    fn test_decode_daily_pool_error_message_reports_sizes() {
+        let result = decode_daily_pool(&[0xAA; 10], 0);
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("10 bytes"),
+            "error should include actual size: {}",
+            msg
+        );
+        assert!(
+            msg.contains("DailyPool account too small"),
+            "error should identify the account: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_decode_daily_pool_fuzz_garbage_short() {
+        // Range of pseudo-random short garbage payloads — never panic.
+        let sizes = [1usize, 7, 8, 20, 50, 65, 73];
+        for size in sizes {
+            let payload: Vec<u8> = (0..size).map(|i| (i * 53 + 17) as u8).collect();
+            assert!(
+                decode_daily_pool(&payload, 0).is_err(),
+                "size {} should err",
+                size
+            );
+        }
+    }
+
+    #[test]
+    fn test_decode_daily_pool_preserves_caller_day_index() {
+        // The caller passes day_index explicitly — the decoder should echo
+        // it regardless of what's in the payload. This guards against
+        // silent drift if the on-chain layout changes.
+        let payload = build_daily_pool_payload(7, 0, 0, 0, 0);
+        let pool = decode_daily_pool(&payload, 999).unwrap();
+        assert_eq!(pool.day_index, 999);
+    }
+
+    #[test]
+    fn test_decode_daily_pool_does_not_panic_on_any_size_up_to_min() {
+        // Exhaustive guard: every single byte-length up to MIN must
+        // either Ok or Err — never panic. Runs under 1 ms.
+        for size in 0..=DAILY_POOL_ACCOUNT_MIN_LEN {
+            let payload = vec![0xFFu8; size];
+            let _ = decode_daily_pool(&payload, 0);
+        }
     }
 }
