@@ -506,14 +506,23 @@ fn render_app_html(app_name: &str, app_config: &JsonValue) -> (String, String, S
                 ));
             }
             "custom" => {
-                let custom_html = config.get("html").and_then(|v| v.as_str()).unwrap_or("");
+                let custom_html_raw = config.get("html").and_then(|v| v.as_str()).unwrap_or("");
                 let custom_js = config.get("js").and_then(|v| v.as_str()).unwrap_or("");
+
+                // SECURE-005: strip scripts, inline event handlers, unsafe
+                // URL schemes, and disallowed tags before the HTML is
+                // injected into the DOM via `innerHTML`. The companion
+                // `custom_js` is emitted as-is — it is intentionally
+                // author-supplied code and is contained by the iframe
+                // sandbox + CSP on the canvas route.
+                let custom_html = crate::html_sanitizer::sanitize_html(custom_html_raw);
+
                 init_scripts.push_str(&format!(
                     r#"document.getElementById('view-{v_slug}').innerHTML = {custom_html_json};
 {custom_js}
 "#,
                     custom_html_json =
-                        serde_json::to_string(custom_html).unwrap_or_else(|_| "\"\"".to_string()),
+                        serde_json::to_string(&custom_html).unwrap_or_else(|_| "\"\"".to_string()),
                 ));
             }
             _ => {}
@@ -702,5 +711,132 @@ mod tests {
         // Default theme colors
         assert!(css.contains("#4f46e5"));
         assert!(css.contains("#1e1b4b"));
+    }
+
+    // ── SECURE-005: custom-view HTML sanitization ─────────────────────
+    //
+    // The `custom` view_type pulls `html` straight out of the user-supplied
+    // app config and injects it into the canvas iframe via
+    // `element.innerHTML = <json-encoded html>`. Without sanitization, a
+    // hostile agent could smuggle inline event handlers, `<script>` tags,
+    // or `javascript:` URLs into the rendered document. These tests pin
+    // the guarantee that every script-surface path is stripped before the
+    // JSON encoding step runs.
+
+    #[test]
+    fn test_custom_view_strips_script_tag_from_html() {
+        let config = json!({
+            "views": [{
+                "name": "Custom",
+                "slug": "custom",
+                "view_type": "custom",
+                "component_config": {
+                    "html": "<p>hi</p><script>alert('xss')</script>",
+                    "js": "// author-supplied, intentionally left intact"
+                }
+            }]
+        });
+        let (_html, js, _css) = render_app_html("App", &config);
+        assert!(
+            !js.contains("<script>alert('xss')</script>"),
+            "raw <script> tag leaked into init script: {}",
+            js
+        );
+        assert!(!js.contains("alert('xss')"), "script body leaked: {}", js);
+    }
+
+    #[test]
+    fn test_custom_view_strips_inline_event_handlers() {
+        let config = json!({
+            "views": [{
+                "name": "Custom",
+                "slug": "custom",
+                "view_type": "custom",
+                "component_config": {
+                    "html": r#"<img src="x" onerror="steal()"><p onclick="evil()">hi</p>"#,
+                    "js": ""
+                }
+            }]
+        });
+        let (_html, js, _css) = render_app_html("App", &config);
+        assert!(!js.contains("onerror"), "onerror leaked: {}", js);
+        assert!(!js.contains("onclick"), "onclick leaked: {}", js);
+        assert!(!js.contains("steal()"), "event body leaked: {}", js);
+    }
+
+    #[test]
+    fn test_custom_view_strips_javascript_url() {
+        let config = json!({
+            "views": [{
+                "name": "Custom",
+                "slug": "custom",
+                "view_type": "custom",
+                "component_config": {
+                    "html": r#"<a href="javascript:alert(1)">click</a>"#,
+                    "js": ""
+                }
+            }]
+        });
+        let (_html, js, _css) = render_app_html("App", &config);
+        assert!(
+            !js.contains("javascript:"),
+            "javascript: URL leaked: {}",
+            js
+        );
+    }
+
+    #[test]
+    fn test_custom_view_preserves_safe_html() {
+        let config = json!({
+            "views": [{
+                "name": "Custom",
+                "slug": "custom",
+                "view_type": "custom",
+                "component_config": {
+                    "html": "<p><strong>Hello</strong> <em>world</em></p>",
+                    "js": "console.log('hi');"
+                }
+            }]
+        });
+        let (_html, js, _css) = render_app_html("App", &config);
+        // The HTML is JSON-encoded into the init script — so check for
+        // the encoded form (with escaped quotes) OR the raw text content.
+        assert!(js.contains("Hello"), "safe text stripped: {}", js);
+        assert!(js.contains("world"), "safe text stripped: {}", js);
+        assert!(
+            js.contains("strong") && js.contains("em"),
+            "safe tags stripped: {}",
+            js
+        );
+        // Author-supplied JS is NOT sanitized (that's the iframe sandbox's job)
+        assert!(js.contains("console.log"), "js stripped: {}", js);
+    }
+
+    #[test]
+    fn test_custom_view_handles_empty_html() {
+        let config = json!({
+            "views": [{
+                "name": "Custom",
+                "slug": "custom",
+                "view_type": "custom",
+                "component_config": { "html": "", "js": "" }
+            }]
+        });
+        // Must not panic on empty input
+        let (_html, _js, _css) = render_app_html("App", &config);
+    }
+
+    #[test]
+    fn test_custom_view_handles_missing_html_field() {
+        let config = json!({
+            "views": [{
+                "name": "Custom",
+                "slug": "custom",
+                "view_type": "custom",
+                "component_config": {}
+            }]
+        });
+        // Missing html key should be treated as empty, not panic
+        let (_html, _js, _css) = render_app_html("App", &config);
     }
 }

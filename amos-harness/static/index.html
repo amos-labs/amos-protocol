@@ -199,7 +199,19 @@
                         <button onclick="closeCanvas()" class="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700" title="Close canvas"><i data-lucide="x" class="w-4 h-4"></i></button>
                     </div>
                 </div>
-                <iframe id="canvasFrame" class="flex-1 w-full border-0 min-h-0"></iframe>
+                <!--
+                    SECURE-005: iframe sandbox for canvas content.
+                    - `allow-scripts`: canvas JS and AMOS.* components must run.
+                    - `allow-same-origin`: retained so same-origin fetches to
+                      /api/v1/* and /js/amos-components.js keep working. The
+                      iframe still blocks top-level navigation, form
+                      submission, popups, plugins, pointer lock, etc., which
+                      mitigates most XSS exploitation paths even when a
+                      hostile canvas manages to execute arbitrary JS.
+                -->
+                <iframe id="canvasFrame"
+                        class="flex-1 w-full border-0 min-h-0"
+                        sandbox="allow-scripts allow-same-origin"></iframe>
             </div>
 
         </main>

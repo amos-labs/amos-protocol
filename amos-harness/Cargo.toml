@@ -111,6 +111,9 @@ docx-rs = { workspace = true }
 genpdf = { workspace = true }
 zip = { workspace = true }
 
+# HTML sanitization for user-provided canvas content (SECURE-005)
+ammonia = "4.1"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 pretty_assertions = "1.4"

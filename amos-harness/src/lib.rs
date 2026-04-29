@@ -46,6 +46,7 @@ pub mod canvas;
 pub mod documents;
 pub mod embeddings;
 pub mod geo;
+pub mod html_sanitizer;
 pub mod image_gen;
 pub mod integrations;
 pub mod memory;

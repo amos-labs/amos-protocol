@@ -1478,38 +1478,71 @@ function escapeHtml(text) {
 // ============================================================================
 
 /**
+ * Generate a cryptographically random, URL-safe base64 CSP nonce.
+ * 128 bits of randomness — matches the server-side helper in
+ * amos-harness/src/canvas/types.rs.
+ */
+function generateCanvasNonce() {
+    const bytes = new Uint8Array(16);
+    (window.crypto || window.msCrypto).getRandomValues(bytes);
+    // base64url encode without padding
+    return btoa(String.fromCharCode.apply(null, bytes))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+}
+
+/**
  * Build a full HTML document for canvas iframe/popup.
  * Includes Bootstrap 5 CSS, Lucide icons, and the canvas's own CSS/JS.
+ *
+ * SECURE-005: a per-load CSP nonce is attached to the meta CSP tag and
+ * every inline <script> / <style> emitted here. Any attacker-injected
+ * inline script that survives sanitization will lack the nonce and be
+ * blocked by the browser.
  */
 function buildCanvasDocument(title, html, css, js) {
     // Base href ensures relative URLs (e.g. /api/v1/canvases) resolve against the server
     // origin, since the iframe loads from a blob: URL which has no inherent base.
     const baseHref = window.location.origin;
+    const nonce = generateCanvasNonce();
+    const csp =
+        "default-src 'self'; " +
+        `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net https://unpkg.com; ` +
+        `style-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net; ` +
+        "img-src 'self' data: https:; " +
+        "font-src 'self' data: https://cdn.jsdelivr.net; " +
+        "connect-src 'self'; " +
+        "object-src 'none'; " +
+        "base-uri 'self'; " +
+        "form-action 'self'; " +
+        "frame-ancestors 'self'";
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="${csp}">
     <base href="${baseHref}/">
     <title>${title}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-    <style>
+    <script nonce="${nonce}" src="https://unpkg.com/lucide@latest"></script>
+    <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <style nonce="${nonce}">
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         ${css}
     </style>
 </head>
 <body>
     ${html}
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"><\/script>
-    <script src="/js/amos-components.js"><\/script>
-    <script>
+    <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"><\/script>
+    <script nonce="${nonce}" src="/js/amos-components.js"><\/script>
+    <script nonce="${nonce}">
         // Initialize Lucide icons inside canvas
         if (typeof lucide !== 'undefined') { lucide.createIcons(); }
     <\/script>
-    <script>${js}<\/script>
+    <script nonce="${nonce}">${js}<\/script>
 </body>
 </html>`;
 }
