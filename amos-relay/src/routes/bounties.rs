@@ -427,9 +427,9 @@ pub struct BountyResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate_override_at: Option<DateTime<Utc>>,
     /// OPS-AUTOMERGE-001: set by the auto-merge bot when the bounty's PR
-    /// has been squash-merged onto main. Until this is non-null, "approved
-    /// + settled" is contract-true but the code may not actually be on
-    /// main — see feedback_settled_neq_merged.md for the prior incident.
+    /// has been squash-merged onto main. Until this is non-null,
+    /// "approved + settled" is contract-true but the code may not
+    /// actually be on main; see feedback_settled_neq_merged.md.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merge_commit_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

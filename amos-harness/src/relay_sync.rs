@@ -9,6 +9,7 @@ use amos_core::config::{DeploymentConfig, RelayConfig};
 use reqwest::Client;
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -29,6 +30,11 @@ pub struct RelaySyncClient {
 }
 
 /// Bounty pulled from the relay marketplace.
+///
+/// Mirrors the relay's `BountyResponse` — keep this in sync. Fields that the
+/// agent needs to plan + claim are surfaced here so `discover_bounties` can
+/// return enough signal that the agent doesn't have to fetch each bounty
+/// individually to assess fit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelayBounty {
     pub id: Uuid,
@@ -39,6 +45,26 @@ pub struct RelayBounty {
     pub required_capabilities: Vec<String>,
     #[serde(default = "default_category")]
     pub category: String,
+    /// Bounty status (open, claimed, submitted, approved, rejected, etc.).
+    #[serde(default)]
+    pub status: Option<String>,
+    /// PR url, set once the worker submits. Useful for the agent to check
+    /// whether work is already in flight on a bounty it sees in the cache.
+    #[serde(default)]
+    pub pr_url: Option<String>,
+    /// Wallet that posted the bounty. Lets the agent avoid claiming bounties
+    /// where it would be both worker and reviewer.
+    #[serde(default)]
+    pub poster_wallet: Option<String>,
+    /// Number of revisions already used. Agents can avoid bounties that have
+    /// burned through their revision budget.
+    #[serde(default)]
+    pub revision_count: i16,
+    /// Optional structured policy block (forbidden_paths, scope constraints,
+    /// minimum_coverage_pct, etc.). When present, this is the hard contract
+    /// the submission must respect.
+    #[serde(default)]
+    pub policy: Option<JsonValue>,
 }
 
 fn default_category() -> String {

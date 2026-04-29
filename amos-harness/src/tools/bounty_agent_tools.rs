@@ -62,9 +62,14 @@ impl Tool for DiscoverBountiesTool {
     }
 
     fn description(&self) -> &str {
-        "Discover available bounties from the AMOS relay marketplace. Filters by \
-         required capabilities, trust level, and complexity. Returns bounties the \
-         agent is potentially qualified for."
+        "Discover available bounties from the AMOS relay marketplace. Returns \
+         bounties matching the agent's capabilities/trust/complexity filters. \
+         Each bounty row includes: bounty_id, title, description (read this \
+         carefully — acceptance criteria live here today), reward_tokens, \
+         deadline, required_capabilities, category, revision_count, and when \
+         present: status, pr_url, poster_wallet, policy (structured constraints \
+         the submission must respect). Use the description + policy together \
+         to plan; call assess_bounty_fit before claiming."
     }
 
     fn parameters_schema(&self) -> JsonValue {
@@ -257,14 +262,31 @@ impl DiscoverBountiesTool {
             })
             .take(limit)
             .map(|b| {
-                json!({
+                let mut row = json!({
                     "bounty_id": b.id.to_string(),
                     "title": b.title,
                     "description": b.description,
                     "reward_tokens": b.reward_tokens,
                     "deadline": b.deadline,
                     "required_capabilities": b.required_capabilities,
-                })
+                    "category": b.category,
+                    "revision_count": b.revision_count,
+                });
+                // Skip-when-None fields — keep the payload tight, but expose
+                // anything useful for the agent's plan/claim decision.
+                if let Some(s) = &b.status {
+                    row["status"] = json!(s);
+                }
+                if let Some(p) = &b.pr_url {
+                    row["pr_url"] = json!(p);
+                }
+                if let Some(w) = &b.poster_wallet {
+                    row["poster_wallet"] = json!(w);
+                }
+                if let Some(p) = &b.policy {
+                    row["policy"] = p.clone();
+                }
+                row
             })
             .collect()
     }
@@ -1130,6 +1152,11 @@ mod tests {
             deadline: "2026-05-01".into(),
             required_capabilities: caps.into_iter().map(String::from).collect(),
             category: "infrastructure".into(),
+            status: None,
+            pr_url: None,
+            poster_wallet: None,
+            revision_count: 0,
+            policy: None,
         }
     }
 
