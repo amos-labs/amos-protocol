@@ -131,7 +131,12 @@ pub const INTAKE_SCHEMA: &str = r#"{
     "required_capabilities": ["<string>", ...],
     "reward_points": <u64 — your judgment, not an auto-pointer's>,
     "reasoning_for_points": "<string>",
-    "deadline_days": <u32>
+    "deadline_days": <u32>,
+    "acceptance_criteria": [
+      "<one assertion per array element. Concrete + checkable: 'GET /api/v1/bounties responds with X-Request-ID header on success and error responses', not 'request IDs work'. Workers read this when planning; QA bot uses it as the gate; you read it back at review.>",
+      ...
+    ] | null,
+    "test_command": "<exact shell command the QA bot runs from repo root. Exits 0 iff acceptance_criteria pass. e.g. 'cargo test --test x_request_id_integration -- --include-ignored'. REQUIRED for code-class bounties (categories: infrastructure, research). NULL is acceptable for non-code bounties (docs, content).>" | null
   } | null,
   "refine_feedback": "<string>" | null
 }"#;

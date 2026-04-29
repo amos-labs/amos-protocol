@@ -59,11 +59,19 @@ log "Found $COUNT unverified bounties to process."
 # ── Step 2: Process each bounty ──────────────────────────────────────────────
 
 echo "$UNVERIFIED" | python3 -c "
-import sys, json
+import sys, json, base64
 for b in json.load(sys.stdin):
-    print(f\"{b['id']}|{json.dumps(b.get('result', {}))}\")
-" | while IFS='|' read -r BOUNTY_ID RESULT_JSON; do
+    # test_command is base64-encoded so embedded pipes/newlines/quotes
+    # don't break the shell pipeline. May be null/empty, in which case
+    # the bot falls back to the generic cargo check+test path.
+    tc = b.get('test_command') or ''
+    tc_b64 = base64.b64encode(tc.encode('utf-8')).decode('ascii')
+    print(f\"{b['id']}|{tc_b64}|{json.dumps(b.get('result', {}))}\")
+" | while IFS='|' read -r BOUNTY_ID TEST_COMMAND_B64 RESULT_JSON; do
     log "Processing bounty: $BOUNTY_ID"
+
+    # Decode the bounty's test_command (may be empty for older bounties).
+    TEST_COMMAND=$(printf '%s' "$TEST_COMMAND_B64" | base64 -d 2>/dev/null || echo "")
 
     # Extract git_sha from result JSON
     GIT_SHA=$(echo "$RESULT_JSON" | python3 -c "
@@ -125,49 +133,100 @@ print(json.dumps(e))
 ")
     fi
 
-    # ── Check 2: Local build ─────────────────────────────────────────────
-    log "  Running cargo check..."
-    if (cd "$PROJECT_ROOT" && cargo check 2>&1 | tail -3); then
-        log "  Cargo check: PASS"
-        EVIDENCE=$(echo "$EVIDENCE" | python3 -c "
+    # ── Check 2/3: Bounty-specific test_command, or fall back to cargo ───
+    #
+    # OPS-QA-SEMANTIC-001: when the bounty has a test_command set (Oracle
+    # drafts these at commission time), run THAT command as the source of
+    # truth. The command is shell-evaluated under `bash -c` with a 600s
+    # cap. Stdout+stderr are merged; the last 4KB are recorded in evidence
+    # so Oracle can see what actually happened on a failure.
+    #
+    # Trust model: test_command is set on the bounty row at /create time by
+    # the poster (Oracle daemon, founder wallet, or trusted council), not
+    # by the worker on /submit. So the bot can run it without sandboxing
+    # the way it'd have to for arbitrary worker input.
+
+    if [ -n "$TEST_COMMAND" ]; then
+        log "  Running bounty test_command: $TEST_COMMAND"
+        TEST_OUTPUT_FILE=$(mktemp)
+        TEST_EXIT=0
+        ( cd "$PROJECT_ROOT" && timeout 600 bash -c "$TEST_COMMAND" ) \
+          > "$TEST_OUTPUT_FILE" 2>&1 || TEST_EXIT=$?
+        TEST_TAIL=$(tail -c 4096 "$TEST_OUTPUT_FILE" | python3 -c "import sys,json;print(json.dumps(sys.stdin.read()))")
+        rm -f "$TEST_OUTPUT_FILE"
+        if [ "$TEST_EXIT" = "0" ]; then
+            log "  test_command: PASS"
+            EVIDENCE=$(echo "$EVIDENCE" | python3 -c "
+import sys, json, os
+e = json.load(sys.stdin)
+e['test_command'] = os.environ.get('TC','')
+e['test_command_exit'] = 0
+e['test_command_pass'] = True
+print(json.dumps(e))
+" TC="$TEST_COMMAND")
+        else
+            log "  test_command: FAIL (exit $TEST_EXIT)"
+            PASSED=false
+            REJECT_REASON="bounty test_command failed (exit $TEST_EXIT)"
+            EVIDENCE=$(echo "$EVIDENCE" | python3 -c "
+import sys, json, os
+e = json.load(sys.stdin)
+e['test_command'] = os.environ.get('TC','')
+e['test_command_exit'] = int(os.environ.get('EX','1'))
+e['test_command_pass'] = False
+e['test_command_tail'] = json.loads(os.environ.get('TAIL','\"\"'))
+print(json.dumps(e))
+" TC="$TEST_COMMAND" EX="$TEST_EXIT" TAIL="$TEST_TAIL")
+        fi
+    else
+        # Fallback: bounty has no test_command (older or non-code bounty).
+        # Generic cargo check+test runs against the *current* main, not the
+        # bounty's PR — it's a smoke signal, not a real verification. The
+        # Oracle review prompt knows to weight this evidence accordingly.
+        log "  No test_command on bounty — running generic cargo check+test fallback"
+        if (cd "$PROJECT_ROOT" && cargo check 2>&1 | tail -3); then
+            log "  Cargo check: PASS"
+            EVIDENCE=$(echo "$EVIDENCE" | python3 -c "
 import sys, json
 e = json.load(sys.stdin)
 e['cargo_check'] = 'pass'
+e['test_command'] = None
 print(json.dumps(e))
 ")
-    else
-        log "  Cargo check: FAIL"
-        PASSED=false
-        REJECT_REASON="cargo check failed"
-        EVIDENCE=$(echo "$EVIDENCE" | python3 -c "
+        else
+            log "  Cargo check: FAIL"
+            PASSED=false
+            REJECT_REASON="cargo check failed (no bounty test_command)"
+            EVIDENCE=$(echo "$EVIDENCE" | python3 -c "
 import sys, json
 e = json.load(sys.stdin)
 e['cargo_check'] = 'fail'
+e['test_command'] = None
 print(json.dumps(e))
 ")
-    fi
+        fi
 
-    # ── Check 3: Tests pass ──────────────────────────────────────────────
-    if [ "$PASSED" = true ]; then
-        log "  Running cargo test..."
-        if (cd "$PROJECT_ROOT" && cargo test --lib -p amos-harness -p amos-relay -p amos-core 2>&1 | tail -5); then
-            log "  Cargo test: PASS"
-            EVIDENCE=$(echo "$EVIDENCE" | python3 -c "
+        if [ "$PASSED" = true ]; then
+            log "  Running cargo test..."
+            if (cd "$PROJECT_ROOT" && cargo test --lib -p amos-harness -p amos-relay -p amos-core 2>&1 | tail -5); then
+                log "  Cargo test: PASS"
+                EVIDENCE=$(echo "$EVIDENCE" | python3 -c "
 import sys, json
 e = json.load(sys.stdin)
 e['cargo_test'] = 'pass'
 print(json.dumps(e))
 ")
-        else
-            log "  Cargo test: FAIL"
-            PASSED=false
-            REJECT_REASON="cargo test failed"
-            EVIDENCE=$(echo "$EVIDENCE" | python3 -c "
+            else
+                log "  Cargo test: FAIL"
+                PASSED=false
+                REJECT_REASON="cargo test failed (no bounty test_command)"
+                EVIDENCE=$(echo "$EVIDENCE" | python3 -c "
 import sys, json
 e = json.load(sys.stdin)
 e['cargo_test'] = 'fail'
 print(json.dumps(e))
 ")
+            fi
         fi
     fi
 

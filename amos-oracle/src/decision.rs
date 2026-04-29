@@ -140,6 +140,18 @@ pub struct ProposedBountySpec {
     pub reward_points: u64,
     pub reasoning_for_points: String,
     pub deadline_days: u32,
+    /// OPS-QA-SEMANTIC-001: structured "what does done look like" — read by
+    /// workers when planning, by the QA bot when verifying, by Oracle when
+    /// reviewing. JSON shape is open (Oracle uses prose bullets, given/when/then
+    /// assertions, or contract checks per bounty type). Required for code-class
+    /// bounties; null OK for documentation/content bounties.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance_criteria: Option<serde_json::Value>,
+    /// OPS-QA-SEMANTIC-001: exact shell command the QA bot will run to verify
+    /// the deliverable. Must exit 0 iff acceptance criteria pass. Bounded at
+    /// 600s by the bot. Required for code-class bounties; null OK otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_command: Option<String>,
 }
 
 /// Reference to a past decision retrieved as precedent.

@@ -714,7 +714,11 @@ impl Tool for SubmitBountyProofTool {
 
     fn description(&self) -> &str {
         "Submit proof of completed bounty work to the relay for verification. \
-         Includes output, test results, and execution metrics."
+         Includes output, test results, and execution metrics. ALWAYS call \
+         verify_bounty FIRST and pass its result object as test_results — \
+         submitting work that does not pass verify_bounty is a quality and \
+         reputation risk. The relay reviewer will run the same test_command \
+         the verify_bounty tool ran."
     }
 
     fn parameters_schema(&self) -> JsonValue {
@@ -1272,6 +1276,240 @@ impl Tool for BountyWorkspaceTool {
     }
 }
 
+// ── VerifyBountyTool ────────────────────────────────────────────────────
+
+/// Run a bounty's declared `test_command` in the agent's workspace and
+/// return structured pass/fail. Lets the agent self-check before
+/// `submit_bounty_proof` instead of guessing what "approved" looks like.
+///
+/// This is the contract the relay's verifier will run — by surfacing it
+/// to the agent, the agent stops shipping work that obviously fails the
+/// gate. The result object is shaped to plug directly into
+/// `submit_bounty_proof`'s `test_results` field.
+pub struct VerifyBountyTool {
+    db_pool: PgPool,
+    bounty_cache: Arc<RwLock<Vec<RelayBounty>>>,
+    relay_url: String,
+}
+
+impl VerifyBountyTool {
+    pub fn new(
+        db_pool: PgPool,
+        bounty_cache: Arc<RwLock<Vec<RelayBounty>>>,
+        relay_url: String,
+    ) -> Self {
+        Self {
+            db_pool,
+            bounty_cache,
+            relay_url,
+        }
+    }
+
+    fn workspace_base() -> String {
+        std::env::var("AMOS__BOUNTY_WORKSPACE_BASE")
+            .unwrap_or_else(|_| "/tmp/amos-bounties".to_string())
+    }
+
+    /// Cache-first lookup with a relay fallback. Same pattern as discover.
+    async fn lookup_bounty(&self, bounty_id: &str) -> Option<RelayBounty> {
+        {
+            let cache = self.bounty_cache.read().await;
+            if let Some(b) = cache.iter().find(|b| b.id.to_string() == bounty_id) {
+                return Some(b.clone());
+            }
+        }
+        let url = format!("{}/api/v1/bounties/{}", self.relay_url, bounty_id);
+        let client = reqwest::Client::new();
+        let resp = client.get(&url).send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        resp.json::<RelayBounty>().await.ok()
+    }
+}
+
+#[async_trait]
+impl Tool for VerifyBountyTool {
+    fn name(&self) -> &str {
+        "verify_bounty"
+    }
+
+    fn description(&self) -> &str {
+        "Run the bounty's declared test_command in your workspace and return \
+         structured pass/fail. Call this AFTER you've placed your work in the \
+         workspace's repo/ directory, BEFORE submit_bounty_proof. The result \
+         mirrors what the relay verifier will see — submitting work that \
+         doesn't pass this is a quality and reputation risk. Returns: \
+         { exit_code, status (passed|failed|skipped), stdout, stderr, \
+         test_command, ran_in }. The whole object can be passed straight \
+         into submit_bounty_proof's test_results parameter."
+    }
+
+    fn parameters_schema(&self) -> JsonValue {
+        json!({
+            "type": "object",
+            "properties": {
+                "bounty_id": {
+                    "type": "string",
+                    "description": "ID of the active claim. The bounty must have a test_command set; if not, the tool returns status=skipped."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Override the default 120s timeout. Capped at 300.",
+                    "minimum": 1,
+                    "maximum": 300
+                }
+            },
+            "required": ["bounty_id"]
+        })
+    }
+
+    async fn execute(&self, params: JsonValue) -> Result<ToolResult> {
+        let bounty_id = params["bounty_id"]
+            .as_str()
+            .ok_or_else(|| amos_core::AmosError::Validation("bounty_id is required".to_string()))?;
+        let timeout_secs = params
+            .get("timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(120)
+            .min(300);
+
+        // Reject path-traversal attempts before they reach the filesystem.
+        if bounty_id.is_empty()
+            || bounty_id.contains('/')
+            || bounty_id.contains('\\')
+            || bounty_id.contains("..")
+        {
+            return Ok(ToolResult::error(
+                "bounty_id contains illegal characters".to_string(),
+            ));
+        }
+
+        // Active claim required — same gate as bounty_workspace.
+        let claim: Option<(String,)> = sqlx::query_as(
+            "SELECT bounty_id FROM bounty_claims \
+             WHERE bounty_id = $1 AND status NOT IN ('rejected', 'expired') \
+             LIMIT 1",
+        )
+        .bind(bounty_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .ok()
+        .flatten();
+        if claim.is_none() {
+            return Ok(ToolResult::error(format!(
+                "No active claim for bounty {bounty_id}. Claim it with claim_bounty first."
+            )));
+        }
+
+        // Pull the bounty (cache or relay) to read its test_command.
+        let bounty = match self.lookup_bounty(bounty_id).await {
+            Some(b) => b,
+            None => {
+                return Ok(ToolResult::error(format!(
+                    "Could not find bounty {bounty_id} in cache or on the relay."
+                )));
+            }
+        };
+
+        let Some(test_command) = bounty.test_command else {
+            return Ok(ToolResult::success(json!({
+                "status": "skipped",
+                "reason": "Bounty has no test_command — verification must be done by reading description and acceptance_criteria, then by the human/QA reviewer.",
+                "bounty_id": bounty_id,
+                "test_command": null,
+            })));
+        };
+
+        // Execute in {workspace}/repo so test paths are relative to the work tree.
+        let base = Self::workspace_base();
+        let ran_in = format!("{}/{}/repo", base.trim_end_matches('/'), bounty_id);
+
+        if !std::path::Path::new(&ran_in).is_dir() {
+            return Ok(ToolResult::error(format!(
+                "Workspace repo dir does not exist: {ran_in}. Call bounty_workspace and place your work there before verifying."
+            )));
+        }
+
+        let cmd = test_command.clone();
+        let cwd = ran_in.clone();
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+
+        let output = match tokio::time::timeout(
+            timeout,
+            tokio::task::spawn_blocking(move || {
+                std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&cmd)
+                    .current_dir(&cwd)
+                    .output()
+            }),
+        )
+        .await
+        {
+            Ok(join_result) => join_result
+                .map_err(|e| amos_core::AmosError::Internal(format!("Task join error: {e}")))?,
+            Err(_) => {
+                return Ok(ToolResult::success(json!({
+                    "status": "failed",
+                    "reason": format!("test_command timed out after {timeout_secs}s"),
+                    "bounty_id": bounty_id,
+                    "test_command": test_command,
+                    "ran_in": ran_in,
+                    "exit_code": null,
+                    "stdout": "",
+                    "stderr": "",
+                })));
+            }
+        };
+
+        let output = match output {
+            Ok(o) => o,
+            Err(e) => {
+                return Ok(ToolResult::error(format!(
+                    "Failed to spawn test_command: {e}"
+                )));
+            }
+        };
+
+        // Truncate output so a runaway test_command can't fill the agent's context.
+        const MAX_OUTPUT: usize = 8_192;
+        let truncate = |s: String| -> String {
+            if s.len() <= MAX_OUTPUT {
+                s
+            } else {
+                format!(
+                    "{}\n\n[truncated; original was {} bytes]",
+                    &s[..MAX_OUTPUT],
+                    s.len()
+                )
+            }
+        };
+        let stdout = truncate(String::from_utf8_lossy(&output.stdout).into_owned());
+        let stderr = truncate(String::from_utf8_lossy(&output.stderr).into_owned());
+        let exit_code = output.status.code();
+        let status = if output.status.success() {
+            "passed"
+        } else {
+            "failed"
+        };
+
+        Ok(ToolResult::success(json!({
+            "status": status,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "test_command": test_command,
+            "ran_in": ran_in,
+            "bounty_id": bounty_id,
+        })))
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::BountyAgent
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1617,5 +1855,55 @@ mod tests {
                 "should reject malicious bounty_id `{malicious}`"
             );
         }
+    }
+
+    // ── VerifyBountyTool ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn verify_tool_metadata_is_well_formed() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/fake").unwrap();
+        let cache = Arc::new(RwLock::new(Vec::<RelayBounty>::new()));
+        let tool = VerifyBountyTool::new(pool, cache, "http://localhost:4100".into());
+        assert_eq!(tool.name(), "verify_bounty");
+        assert!(tool.description().len() >= 20);
+        let schema = tool.parameters_schema();
+        crate::tools::validate_tool_schema(&schema, tool.name())
+            .unwrap_or_else(|e| panic!("invalid schema: {e}"));
+        let required = schema["required"].as_array().expect("required array");
+        let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            names.contains(&"bounty_id"),
+            "verify_bounty must require bounty_id"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_tool_rejects_path_traversal() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/fake").unwrap();
+        let cache = Arc::new(RwLock::new(Vec::<RelayBounty>::new()));
+        let tool = VerifyBountyTool::new(pool, cache, "http://localhost:4100".into());
+        for malicious in ["../etc/passwd", "/etc/passwd", "..\\windows", "", "foo/bar"] {
+            let result = tool
+                .execute(json!({ "bounty_id": malicious }))
+                .await
+                .unwrap();
+            assert!(
+                !result.success,
+                "should reject malicious bounty_id `{malicious}`"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn verify_tool_caps_timeout_at_300s() {
+        // The schema declares the upper bound; the execute path also clamps.
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost/fake").unwrap();
+        let cache = Arc::new(RwLock::new(Vec::<RelayBounty>::new()));
+        let tool = VerifyBountyTool::new(pool, cache, "http://localhost:4100".into());
+        let schema = tool.parameters_schema();
+        let max = schema["properties"]["timeout_secs"]["maximum"]
+            .as_u64()
+            .expect("maximum on timeout_secs");
+        assert_eq!(max, 300, "verify_bounty timeout must cap at 300s");
     }
 }

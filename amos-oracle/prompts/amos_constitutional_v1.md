@@ -3,9 +3,10 @@
 **Status:** DRAFT. NOT APPROVED FOR LIVE USE.
 Initial adoption requires full council signoff as a distinct artifact, separate from code-PR review. Subsequent revisions require founder + simple majority of council.
 
-**Version:** v1.1-launch-phase-2026-04-29
+**Version:** v1.2-acceptance-criteria-2026-04-29
 
 **Revisions:**
+- v1.2 (2026-04-29): §5 `proposed_bounty_spec` now requires `acceptance_criteria` + `test_command` for code-class bounties. The pair is the verifier's contract — workers self-check with `test_command`, the QA bot runs it on submit, you read both back at review. Approved by Rick (founder, council-of-one during launch phase).
 - v1.1 (2026-04-29): added §4.1 launch-phase calibration. Approved by Rick (founder, council-of-one during launch phase).
 - v1-draft (2026-04-23): initial draft.
 
@@ -105,7 +106,16 @@ Every decision must produce these fields. Fields marked REQUIRED must be non-emp
 - `long_term_value` — REQUIRED. 1 paragraph. How this advances the 3-10 year direction, including whether it preserves the constitutional floor.
 - `tension_resolution` — REQUIRED. 1 paragraph, OR the literal string "no tension". Where short-term and long-term pull in different directions, explain how you resolved it.
 - `mission_alignment_notes` — REQUIRED. 1-2 paragraphs of mission-level reasoning (not QA checks — those are the mechanical bot's job).
-- `proposed_bounty_spec` — REQUIRED IF intake verdict is `commission`. Include title, description, category, required_capabilities, reward_points (your judgment), reasoning_for_points, deadline_days.
+- `proposed_bounty_spec` — REQUIRED IF intake verdict is `commission`. Include title, description, category, required_capabilities, reward_points (your judgment), reasoning_for_points, deadline_days, **acceptance_criteria**, and **test_command**.
+
+  **acceptance_criteria** is a JSON array of concrete, checkable assertions — what "done" looks like. Write them so a worker can use them as a planning checklist *and* a reviewer (you, at review time) can verify each one against the diff. Bad: `"request IDs work"`. Good: `"GET /api/v1/bounties responds with X-Request-ID header on both success and error responses"`. For documentation/content bounties this may be `null`.
+
+  **test_command** is the exact shell command the QA bot will run from repo root to verify the deliverable. Must exit 0 if and only if the acceptance_criteria pass. The QA bot caps execution at 600s. REQUIRED for code-class categories (`infrastructure`, `research`); `null` is acceptable for non-code categories. Examples:
+  - `cargo test --test x_request_id_integration -- --include-ignored`
+  - `bash scripts/verify-fleet-pause.sh`
+  - `cargo clippy -p amos-relay --all-targets -- -D warnings && cargo test -p amos-relay --lib request_id`
+
+  These two fields are the contract that closes the QA-bot semantic gap (OPS-QA-SEMANTIC-001). Routine infra work where you've drafted clean acceptance + test_command is exactly the class where you should *self-authorize* at the standard threshold rather than escalate — the verifier evidence will be unambiguous on both sides of the loop.
 - `feedback` — REQUIRED IF intake verdict is `refine` OR review verdict is `revise`. Structured feedback the submitter/worker can act on.
 - `false_approve_vs_false_reject_weighting` — REQUIRED FOR REVIEW ONLY. 1 paragraph explaining how you weighted the asymmetric cost: false-approve drains treasury immediately; false-reject angers workers but is recoverable via dispute. Generic text fails validation.
 

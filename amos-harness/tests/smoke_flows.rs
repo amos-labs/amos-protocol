@@ -8,9 +8,10 @@
 //! DB without stepping on each other. `DATABASE_URL` must be set; CI points
 //! it at the `services: postgres` container.
 
+use amos_harness::relay_sync::RelayBounty;
 use amos_harness::schema::{FieldDefinition, FieldType, SchemaEngine};
 use amos_harness::sites::SiteEngine;
-use amos_harness::tools::bounty_agent_tools::BountyWorkspaceTool;
+use amos_harness::tools::bounty_agent_tools::{BountyWorkspaceTool, VerifyBountyTool};
 use amos_harness::tools::site_tools::{
     CreateLandingPageTool, CreateSiteTool, ManagePageTool, PublishSiteTool,
 };
@@ -309,4 +310,143 @@ async fn bounty_workspace_rejects_unclaimed_bounty() {
         err.contains("No active claim"),
         "error should explain the missing-claim case, got: {err}"
     );
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Verify bounty — runs the bounty's test_command in the workspace.
+// ═════════════════════════════════════════════════════════════════════════
+
+async fn seed_claim(pool: &PgPool, bounty_id: &str) -> i32 {
+    let agent_id: i32 = sqlx::query_scalar(
+        "INSERT INTO openclaw_agents (name, display_name, role, capabilities) \
+         VALUES ($1, $2, 'worker', '[]'::jsonb) RETURNING id",
+    )
+    .bind(format!("verify-agent-{}", Uuid::new_v4().simple()))
+    .bind("Verify Agent")
+    .fetch_one(pool)
+    .await
+    .expect("seed agent");
+    sqlx::query(
+        "INSERT INTO bounty_claims (agent_id, bounty_id, status, fit_score, reward_tokens) \
+         VALUES ($1, $2, 'claimed', 0.9, 100)",
+    )
+    .bind(agent_id)
+    .bind(bounty_id)
+    .execute(pool)
+    .await
+    .expect("seed claim");
+    agent_id
+}
+
+fn fixture_bounty(bounty_id: &str, test_command: Option<&str>) -> RelayBounty {
+    let parsed_id = Uuid::parse_str(bounty_id).unwrap_or_else(|_| Uuid::new_v4());
+    RelayBounty {
+        id: parsed_id,
+        title: "verify-test".into(),
+        description: "smoke fixture".into(),
+        reward_tokens: 100,
+        deadline: "2099-01-01".into(),
+        required_capabilities: vec![],
+        category: "infrastructure".into(),
+        status: None,
+        pr_url: None,
+        poster_wallet: None,
+        revision_count: 0,
+        policy: None,
+        min_trust_level: None,
+        tier: None,
+        acceptance_criteria: None,
+        repo_url: None,
+        test_command: test_command.map(String::from),
+    }
+}
+
+#[tokio::test]
+async fn verify_bounty_passes_when_test_command_succeeds() {
+    let pool = pool().await;
+    let bounty_id = Uuid::new_v4().to_string();
+
+    let temp_root =
+        std::env::temp_dir().join(format!("amos-verify-pass-{}", Uuid::new_v4().simple()));
+    std::env::set_var("AMOS__BOUNTY_WORKSPACE_BASE", &temp_root);
+
+    seed_claim(&pool, &bounty_id).await;
+
+    // Allocate workspace + populate repo dir (mimics the agent doing work).
+    let workspace_tool = BountyWorkspaceTool::new(pool.clone());
+    workspace_tool
+        .execute(json!({ "bounty_id": bounty_id }))
+        .await
+        .expect("workspace ok");
+
+    // Cache a bounty whose test_command is trivially-passing.
+    let cache = std::sync::Arc::new(tokio::sync::RwLock::new(vec![fixture_bounty(
+        &bounty_id,
+        Some("true"),
+    )]));
+
+    let verify = VerifyBountyTool::new(pool.clone(), cache, "http://localhost:99999".into());
+    let result = verify
+        .execute(json!({ "bounty_id": bounty_id }))
+        .await
+        .expect("verify ok");
+    assert!(result.success, "verify_bounty: {:?}", result.error);
+    let data = result.data.expect("data");
+    assert_eq!(data["status"], json!("passed"));
+    assert_eq!(data["exit_code"], json!(0));
+
+    let _ = std::fs::remove_dir_all(&temp_root);
+}
+
+#[tokio::test]
+async fn verify_bounty_fails_when_test_command_exits_nonzero() {
+    let pool = pool().await;
+    let bounty_id = Uuid::new_v4().to_string();
+
+    let temp_root =
+        std::env::temp_dir().join(format!("amos-verify-fail-{}", Uuid::new_v4().simple()));
+    std::env::set_var("AMOS__BOUNTY_WORKSPACE_BASE", &temp_root);
+
+    seed_claim(&pool, &bounty_id).await;
+    BountyWorkspaceTool::new(pool.clone())
+        .execute(json!({ "bounty_id": bounty_id }))
+        .await
+        .expect("workspace ok");
+
+    let cache = std::sync::Arc::new(tokio::sync::RwLock::new(vec![fixture_bounty(
+        &bounty_id,
+        Some("exit 7"),
+    )]));
+
+    let verify = VerifyBountyTool::new(pool.clone(), cache, "http://localhost:99999".into());
+    let result = verify
+        .execute(json!({ "bounty_id": bounty_id }))
+        .await
+        .expect("verify ok");
+    assert!(result.success);
+    let data = result.data.expect("data");
+    assert_eq!(data["status"], json!("failed"));
+    assert_eq!(data["exit_code"], json!(7));
+
+    let _ = std::fs::remove_dir_all(&temp_root);
+}
+
+#[tokio::test]
+async fn verify_bounty_skips_when_no_test_command_set() {
+    let pool = pool().await;
+    let bounty_id = Uuid::new_v4().to_string();
+
+    seed_claim(&pool, &bounty_id).await;
+
+    let cache = std::sync::Arc::new(tokio::sync::RwLock::new(vec![fixture_bounty(
+        &bounty_id, None,
+    )]));
+
+    let verify = VerifyBountyTool::new(pool.clone(), cache, "http://localhost:99999".into());
+    let result = verify
+        .execute(json!({ "bounty_id": bounty_id }))
+        .await
+        .expect("verify ok");
+    assert!(result.success);
+    assert_eq!(result.data.unwrap()["status"], json!("skipped"));
 }

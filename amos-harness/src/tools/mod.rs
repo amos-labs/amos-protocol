@@ -512,7 +512,7 @@ impl ToolRegistry {
         ));
         registry.register(Arc::new(bounty_agent_tools::AssessBountyFitTool::new(
             db_pool.clone(),
-            bounty_cache,
+            bounty_cache.clone(),
         )));
         registry.register(Arc::new(bounty_agent_tools::ClaimBountyTool::new(
             config.relay.url.clone(),
@@ -528,6 +528,11 @@ impl ToolRegistry {
         )));
         registry.register(Arc::new(bounty_agent_tools::BountyWorkspaceTool::new(
             db_pool.clone(),
+        )));
+        registry.register(Arc::new(bounty_agent_tools::VerifyBountyTool::new(
+            db_pool.clone(),
+            bounty_cache,
+            config.relay.url.clone(),
         )));
 
         registry

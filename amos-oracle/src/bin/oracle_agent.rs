@@ -436,6 +436,12 @@ struct CreateBountyBody<'a> {
     /// future submissions can be judged against them.
     #[serde(skip_serializing_if = "Option::is_none")]
     policy: Option<JsonValue>,
+    /// OPS-QA-SEMANTIC-001: structured acceptance criteria + the exact
+    /// command the QA bot will run. Drafted by Oracle at commission time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    acceptance_criteria: Option<&'a JsonValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    test_command: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -491,6 +497,8 @@ impl RelayClient {
             poster_wallet: &cfg.poster_wallet,
             category: &spec.category,
             policy,
+            acceptance_criteria: spec.acceptance_criteria.as_ref(),
+            test_command: spec.test_command.as_deref(),
         };
 
         let url = format!("{}/api/v1/bounties", self.base);

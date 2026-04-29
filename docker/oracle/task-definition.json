@@ -16,7 +16,7 @@
         { "name": "ORACLE_RELAY_URL", "value": "https://relay.amoslabs.com" },
         { "name": "ORACLE_POSTER_WALLET", "value": "WxdXw1f1kFMRu8HDf1SE6yjgeWyf3Vb4T63QXMs4yij" },
         { "name": "ORACLE_REVIEWER_WALLET", "value": "5ik1JSm387xoEtzL5iNHc3wvVM12nzpPVJtaw4k1RHHY" },
-        { "name": "ORACLE_PROMPT_VERSION", "value": "v1.1-launch-phase-2026-04-29" },
+        { "name": "ORACLE_PROMPT_VERSION", "value": "v1.2-acceptance-criteria-2026-04-29" },
         { "name": "ORACLE_POLL_INTERVAL_SECS", "value": "60" },
         { "name": "ORACLE_PROJECT_ROOT", "value": "/app" },
         { "name": "RUST_LOG", "value": "info,amos_oracle=debug" },
