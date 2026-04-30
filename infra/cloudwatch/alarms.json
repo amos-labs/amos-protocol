@@ -63,5 +63,18 @@
     "ComparisonOperator": "GreaterThanThreshold",
     "TreatMissingData": "notBreaching",
     "AlarmActions": ["__AMOS_ALERT_TOPIC_ARN__"]
+  },
+  {
+    "AlarmName": "amos-bounty-settled-unmerged-backlog",
+    "AlarmDescription": "More than 5 bounties have settled on-chain but the auto-merge bot has not landed their PRs. The bot is either down, throwing on every cycle, or hitting per-PR mergeability issues. Investigate via the auto-merge-bot workflow run logs.",
+    "MetricName": "BountySettledUnmerged",
+    "Namespace": "AMOS/Relay",
+    "Statistic": "Maximum",
+    "Period": 900,
+    "EvaluationPeriods": 1,
+    "Threshold": 5,
+    "ComparisonOperator": "GreaterThanThreshold",
+    "TreatMissingData": "notBreaching",
+    "AlarmActions": ["__AMOS_ALERT_TOPIC_ARN__"]
   }
 ]

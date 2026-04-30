@@ -65,6 +65,32 @@
       "width": 12,
       "height": 6,
       "properties": {
+        "title": "Auto-merge backlog (settled but PR not merged)",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "stat": "Maximum",
+        "period": 300,
+        "metrics": [
+          ["AMOS/Relay", "BountySettledUnmerged", { "label": "settled-but-unmerged count", "color": "#9467bd" }]
+        ],
+        "yAxis": {
+          "left": { "min": 0 }
+        },
+        "annotations": {
+          "horizontal": [
+            { "label": "alarm threshold (5)", "value": 5, "color": "#d62728" }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 7,
+      "width": 12,
+      "height": 6,
+      "properties": {
         "title": "Errors — relay + oracle",
         "view": "timeSeries",
         "stacked": false,

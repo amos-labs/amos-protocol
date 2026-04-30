@@ -1,0 +1,49 @@
+name: Emit BountySettledUnmerged metric
+
+# 5-minute cron that publishes the count of bounties stuck in
+# settled-but-unmerged state to CloudWatch. Pairs with the
+# amos-bounty-settled-unmerged-backlog alarm — non-zero count for >15 min
+# means the auto-merge bot is broken or stuck.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: emit-stale-merge-metric
+  cancel-in-progress: false
+
+env:
+  RELAY_URL: https://relay.amoslabs.com
+  AWS_REGION: us-east-1
+
+jobs:
+  emit:
+    name: Emit metric
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::637423327454:role/github-actions-amos-deploy
+          aws-region: us-east-1
+
+      - name: Run emitter
+        env:
+          RELAY_API_KEY: ${{ secrets.QA_BOT_RELAY_API_KEY }}
+        run: |
+          if [ -z "$RELAY_API_KEY" ]; then
+            echo "::error::QA_BOT_RELAY_API_KEY is not set"
+            exit 1
+          fi
+          chmod +x scripts/emit-stale-merge-metric.sh
+          ./scripts/emit-stale-merge-metric.sh
