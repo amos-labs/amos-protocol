@@ -1,0 +1,148 @@
+{
+  "widgets": [
+    {
+      "type": "text",
+      "x": 0,
+      "y": 0,
+      "width": 24,
+      "height": 1,
+      "properties": {
+        "markdown": "# AMOS Protocol Health\n\nLifecycle health of the autonomous bounty loop. Custom metrics in `AMOS/Relay` and `AMOS/Oracle` namespaces are extracted via metric filters from `/ecs/amos-relay` and `/ecs/amos-oracle` log groups (see `infra/cloudwatch/metric-filters.json`)."
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 1,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Bounty lifecycle (per hour)",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "stat": "Sum",
+        "period": 3600,
+        "metrics": [
+          ["AMOS/Relay", "BountyCreatedCount", { "label": "Created" }],
+          [".", "BountyClaimedCount", { "label": "Claimed" }],
+          [".", "BountySettledCount", { "label": "Settled" }],
+          [".", "MergeRecordedCount", { "label": "Merged" }]
+        ],
+        "yAxis": {
+          "left": { "min": 0 }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 1,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Oracle activity (per hour)",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "stat": "Sum",
+        "period": 3600,
+        "metrics": [
+          ["AMOS/Oracle", "OracleDecisionCount", { "label": "Decisions made" }],
+          [".", "OracleEscalationCount", { "label": "Escalated to council" }],
+          [".", "OracleTickCount", { "label": "Daemon ticks", "yAxis": "right" }]
+        ],
+        "yAxis": {
+          "left": { "min": 0 },
+          "right": { "min": 0 }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 7,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "Errors — relay + oracle",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "stat": "Sum",
+        "period": 300,
+        "metrics": [
+          ["AMOS/Relay", "RelayErrorCount", { "label": "Relay errors", "color": "#d62728" }],
+          ["AMOS/Oracle", "OracleErrorCount", { "label": "Oracle errors", "color": "#ff7f0e" }],
+          ["AMOS/Relay", "SettlementFailedCount", { "label": "Settlement failures", "color": "#9467bd" }]
+        ],
+        "yAxis": {
+          "left": { "min": 0 }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 7,
+      "width": 12,
+      "height": 6,
+      "properties": {
+        "title": "ECS service health (CPU + memory)",
+        "view": "timeSeries",
+        "stacked": false,
+        "region": "us-east-1",
+        "stat": "Average",
+        "period": 300,
+        "metrics": [
+          ["AWS/ECS", "CPUUtilization", "ServiceName", "amos-relay-v2", "ClusterName", "swarm-infrastructure-cluster", { "label": "relay CPU%" }],
+          [".", "MemoryUtilization", ".", ".", ".", ".", { "label": "relay mem%" }],
+          [".", "CPUUtilization", ".", "amos-oracle", ".", ".", { "label": "oracle CPU%" }],
+          [".", "MemoryUtilization", ".", ".", ".", ".", { "label": "oracle mem%" }]
+        ],
+        "yAxis": {
+          "left": { "min": 0, "max": 100 }
+        }
+      }
+    },
+    {
+      "type": "log",
+      "x": 0,
+      "y": 13,
+      "width": 24,
+      "height": 8,
+      "properties": {
+        "title": "Recent escalations + council resolutions",
+        "region": "us-east-1",
+        "query": "SOURCE '/ecs/amos-relay' | fields @timestamp, fields.message, fields.bounty_id, fields.escalation_id, fields.council_verdict\n| filter fields.message like /escalat/ or fields.message like /council/\n| sort @timestamp desc\n| limit 50",
+        "view": "table"
+      }
+    },
+    {
+      "type": "log",
+      "x": 0,
+      "y": 21,
+      "width": 12,
+      "height": 8,
+      "properties": {
+        "title": "Settlement timeline",
+        "region": "us-east-1",
+        "query": "SOURCE '/ecs/amos-relay' | fields @timestamp, fields.bounty_id, fields.tx, fields.message\n| filter fields.message like /settlement/\n| sort @timestamp desc\n| limit 30",
+        "view": "table"
+      }
+    },
+    {
+      "type": "log",
+      "x": 12,
+      "y": 21,
+      "width": 12,
+      "height": 8,
+      "properties": {
+        "title": "Recent Oracle decisions",
+        "region": "us-east-1",
+        "query": "SOURCE '/ecs/amos-oracle' | fields @timestamp, fields.bounty_id, fields.submission_id, fields.verdict, fields.confidence\n| filter fields.message = \"intake: commissioned\" or fields.message like /review:/\n| sort @timestamp desc\n| limit 30",
+        "view": "table"
+      }
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+[
+  {
+    "filterName": "amos-relay-bounty-settled",
+    "logGroupName": "/ecs/amos-relay",
+    "filterPattern": "{ $.fields.message = \"On-chain settlement successful\" }",
+    "metricTransformations": [
+      {
+        "metricName": "BountySettledCount",
+        "metricNamespace": "AMOS/Relay",
+        "metricValue": "1",
+        "defaultValue": 0,
+        "unit": "Count"
+      }
+    ]
+  },
+  {
+    "filterName": "amos-relay-settlement-failed",
+    "logGroupName": "/ecs/amos-relay",
+    "filterPattern": "{ $.fields.message = \"On-chain settlement failed*\" }",
+    "metricTransformations": [
+      {
+        "metricName": "SettlementFailedCount",
+        "metricNamespace": "AMOS/Relay",
+        "metricValue": "1",
+        "defaultValue": 0,
+        "unit": "Count"
+      }
+    ]
+  },
+  {
+    "filterName": "amos-relay-bounty-created",
+    "logGroupName": "/ecs/amos-relay",
+    "filterPattern": "{ $.fields.message = \"Created bounty*\" }",
+    "metricTransformations": [
+      {
+        "metricName": "BountyCreatedCount",
+        "metricNamespace": "AMOS/Relay",
+        "metricValue": "1",
+        "defaultValue": 0,
+        "unit": "Count"
+      }
+    ]
+  },
+  {
+    "filterName": "amos-relay-bounty-claimed",
+    "logGroupName": "/ecs/amos-relay",
+    "filterPattern": "{ $.fields.message = \"*claimed by agent*\" }",
+    "metricTransformations": [
+      {
+        "metricName": "BountyClaimedCount",
+        "metricNamespace": "AMOS/Relay",
+        "metricValue": "1",
+        "defaultValue": 0,
+        "unit": "Count"
+      }
+    ]
+  },
+  {
+    "filterName": "amos-relay-merge-recorded",
+    "logGroupName": "/ecs/amos-relay",
+    "filterPattern": "{ $.fields.message = \"merge recorded\" }",
+    "metricTransformations": [
+      {
+        "metricName": "MergeRecordedCount",
+        "metricNamespace": "AMOS/Relay",
+        "metricValue": "1",
+        "defaultValue": 0,
+        "unit": "Count"
+      }
+    ]
+  },
+  {
+    "filterName": "amos-oracle-tick-completed",
+    "logGroupName": "/ecs/amos-oracle",
+    "filterPattern": "{ $.fields.message = \"tick: polling\" }",
+    "metricTransformations": [
+      {
+        "metricName": "OracleTickCount",
+        "metricNamespace": "AMOS/Oracle",
+        "metricValue": "1",
+        "defaultValue": 0,
+        "unit": "Count"
+      }
+    ]
+  },
+  {
+    "filterName": "amos-oracle-decision-made",
+    "logGroupName": "/ecs/amos-oracle",
+    "filterPattern": "{ $.fields.message = \"*decision made\" }",
+    "metricTransformations": [
+      {
+        "metricName": "OracleDecisionCount",
+        "metricNamespace": "AMOS/Oracle",
+        "metricValue": "1",
+        "defaultValue": 0,
+        "unit": "Count"
+      }
+    ]
+  },
+  {
+    "filterName": "amos-oracle-escalation",
+    "logGroupName": "/ecs/amos-oracle",
+    "filterPattern": "{ $.fields.message = \"*escalated to council\" }",
+    "metricTransformations": [
+      {
+        "metricName": "OracleEscalationCount",
+        "metricNamespace": "AMOS/Oracle",
+        "metricValue": "1",
+        "defaultValue": 0,
+        "unit": "Count"
+      }
+    ]
+  },
+  {
+    "filterName": "amos-oracle-fatal-error",
+    "logGroupName": "/ecs/amos-oracle",
+    "filterPattern": "{ $.level = \"ERROR\" }",
+    "metricTransformations": [
+      {
+        "metricName": "OracleErrorCount",
+        "metricNamespace": "AMOS/Oracle",
+        "metricValue": "1",
+        "defaultValue": 0,
+        "unit": "Count"
+      }
+    ]
+  },
+  {
+    "filterName": "amos-relay-error",
+    "logGroupName": "/ecs/amos-relay",
+    "filterPattern": "{ $.level = \"ERROR\" }",
+    "metricTransformations": [
+      {
+        "metricName": "RelayErrorCount",
+        "metricNamespace": "AMOS/Relay",
+        "metricValue": "1",
+        "defaultValue": 0,
+        "unit": "Count"
+      }
+    ]
+  }
+]

@@ -1,0 +1,62 @@
+[
+  {
+    "AlarmName": "amos-oracle-daemon-silent",
+    "AlarmDescription": "Oracle daemon hasn't logged a tick in 15 minutes — daemon likely crashed/stuck. Without it, intakes pile up unevaluated and reviews never approve.",
+    "MetricName": "OracleTickCount",
+    "Namespace": "AMOS/Oracle",
+    "Statistic": "Sum",
+    "Period": 900,
+    "EvaluationPeriods": 1,
+    "Threshold": 1,
+    "ComparisonOperator": "LessThanThreshold",
+    "TreatMissingData": "breaching"
+  },
+  {
+    "AlarmName": "amos-relay-error-burst",
+    "AlarmDescription": "Relay logging more than 10 ERROR-level lines in 5 minutes — likely an outage on a hot endpoint.",
+    "MetricName": "RelayErrorCount",
+    "Namespace": "AMOS/Relay",
+    "Statistic": "Sum",
+    "Period": 300,
+    "EvaluationPeriods": 1,
+    "Threshold": 10,
+    "ComparisonOperator": "GreaterThanThreshold",
+    "TreatMissingData": "notBreaching"
+  },
+  {
+    "AlarmName": "amos-oracle-error-burst",
+    "AlarmDescription": "Oracle logging more than 5 ERROR-level lines in 10 minutes — Bedrock/relay/parsing issues.",
+    "MetricName": "OracleErrorCount",
+    "Namespace": "AMOS/Oracle",
+    "Statistic": "Sum",
+    "Period": 600,
+    "EvaluationPeriods": 1,
+    "Threshold": 5,
+    "ComparisonOperator": "GreaterThanThreshold",
+    "TreatMissingData": "notBreaching"
+  },
+  {
+    "AlarmName": "amos-settlement-failures",
+    "AlarmDescription": "Any on-chain settlement failure means a worker's bounty is approved but tokens are stuck. settlement_retry will try, but each failure deserves a look.",
+    "MetricName": "SettlementFailedCount",
+    "Namespace": "AMOS/Relay",
+    "Statistic": "Sum",
+    "Period": 300,
+    "EvaluationPeriods": 1,
+    "Threshold": 0,
+    "ComparisonOperator": "GreaterThanThreshold",
+    "TreatMissingData": "notBreaching"
+  },
+  {
+    "AlarmName": "amos-oracle-escalation-flood",
+    "AlarmDescription": "Oracle escalating more than 20 times in an hour — calibration may be too conservative or input quality dropped. Council bandwidth is finite.",
+    "MetricName": "OracleEscalationCount",
+    "Namespace": "AMOS/Oracle",
+    "Statistic": "Sum",
+    "Period": 3600,
+    "EvaluationPeriods": 1,
+    "Threshold": 20,
+    "ComparisonOperator": "GreaterThanThreshold",
+    "TreatMissingData": "notBreaching"
+  }
+]
