@@ -95,9 +95,17 @@ for c in json.load(sys.stdin):
   log "→ ${BOUNTY_ID:0:8} | $TITLE"
   log "   PR: $PR_URL  receipt: ${RECEIPT_SHA:0:12}"
 
-  PR_NUMBER=$(echo "$PR_URL" | grep -oE '/pull/[0-9]+' | grep -oE '[0-9]+')
+  # Bash regex (rather than `grep -oE | grep -oE` piped substitution, which
+  # under `set -euo pipefail` exits the whole script on no-match and aborts
+  # the rest of the queue). Some bounties carry a /commit/<sha> URL instead
+  # of a /pull/<n> URL — those should be skipped gracefully so subsequent
+  # bounties in the same cycle still process.
+  PR_NUMBER=""
+  if [[ "$PR_URL" =~ /pull/([0-9]+) ]]; then
+    PR_NUMBER="${BASH_REMATCH[1]}"
+  fi
   if [ -z "$PR_NUMBER" ]; then
-    log "   SKIP: could not parse PR number from URL"
+    log "   SKIP: pr_url is not a /pull/<n> URL (probably /commit/<sha>) — bot has no PR to merge"
     continue
   fi
 
