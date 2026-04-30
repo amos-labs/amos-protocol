@@ -101,6 +101,11 @@ sha2 = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }
 
+# Unix syscalls — geteuid() to detect whether we have CAP_SETUID for the
+# shell sandbox subprocess. Without this check the bash tool fails with
+# EPERM in non-root containers (the ECS Fargate default).
+libc = "0.2"
+
 # Vector embeddings (pgvector)
 pgvector = { workspace = true }
 

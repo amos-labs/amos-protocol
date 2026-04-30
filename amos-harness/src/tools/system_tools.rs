@@ -700,22 +700,30 @@ impl Tool for BashTool {
         // Run the subprocess as the `sandbox` user (uid 1001) for process isolation.
         // This prevents the subprocess from reading /proc/1/environ (owned by uid 1000/amos)
         // even if they bypass the string-based command blocklist.
+        //
+        // The setuid() switch requires CAP_SETUID, which root containers have but
+        // unprivileged ones (the ECS Fargate default for this harness) do not. We
+        // detect at runtime: only attempt the switch when running as root. When the
+        // harness already runs as a non-root user, that *is* the sandbox — we'd be
+        // dropping from one unprivileged uid to another, with no security gain and
+        // a guaranteed EPERM. The string-based path/command blocklist, env scrub,
+        // destructive-command gate, timeout, and output truncation remain in place
+        // either way.
         let sandbox_uid = 1001u32;
         let sandbox_gid = 1001u32;
+        let running_as_root = unsafe { libc::geteuid() } == 0;
 
         let timeout = std::time::Duration::from_secs(timeout_secs);
         let output = match tokio::time::timeout(
             timeout,
             tokio::task::spawn_blocking(move || {
                 use std::os::unix::process::CommandExt;
-                Command::new("sh")
-                    .arg("-c")
-                    .arg(command)
-                    .env_clear()
-                    .envs(scrubbed_env)
-                    .uid(sandbox_uid)
-                    .gid(sandbox_gid)
-                    .output()
+                let mut cmd = Command::new("sh");
+                cmd.arg("-c").arg(command).env_clear().envs(scrubbed_env);
+                if running_as_root {
+                    cmd.uid(sandbox_uid).gid(sandbox_gid);
+                }
+                cmd.output()
             }),
         )
         .await
@@ -723,7 +731,21 @@ impl Tool for BashTool {
             Ok(join_result) => join_result
                 .map_err(|e| amos_core::AmosError::Internal(format!("Task join error: {}", e)))?
                 .map_err(|e| {
-                    amos_core::AmosError::Internal(format!("Command execution failed: {}", e))
+                    // Translate the cryptic EPERM the agent saw in prod into something
+                    // an agent (or operator) can act on.
+                    let raw = e.raw_os_error();
+                    if raw == Some(libc::EPERM) {
+                        amos_core::AmosError::Internal(format!(
+                            "shell unavailable in this harness (EPERM on subprocess spawn). \
+                             Running as euid={} — likely missing CAP_SETUID or seccomp-restricted. \
+                             Use file tools (read_file/write_file/edit_file), or delegate to \
+                             an external agent that has shell. Underlying: {}",
+                            unsafe { libc::geteuid() },
+                            e
+                        ))
+                    } else {
+                        amos_core::AmosError::Internal(format!("Command execution failed: {}", e))
+                    }
                 })?,
             Err(_) => {
                 return Ok(ToolResult::error(format!(
@@ -1006,6 +1028,39 @@ mod tests {
                 // the point is it got past the confirmation gate
             }
         }
+    }
+
+    /// Regression guard for the EPERM failure agents hit in production:
+    /// when the harness already runs as a non-root user, the bash tool
+    /// must NOT attempt the setuid(1001) switch (which would EPERM) and
+    /// must successfully run a trivial command. Pre-fix, this test failed
+    /// with `Operation not permitted` on every CI runner and macOS dev box.
+    #[tokio::test]
+    async fn bash_runs_echo_when_not_root() {
+        // Skip if we somehow are running as root (unusual outside of CI
+        // root containers). The check we're guarding against is the path
+        // where running_as_root == false.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let (tool, _store) = make_bash_tool();
+        let result = tool
+            .execute(json!({"command": "echo amos-shell-ok"}))
+            .await
+            .unwrap();
+        assert!(
+            result.success,
+            "bash should run echo without EPERM in non-root harness; got: {:?}",
+            result.error
+        );
+        let stdout = result.data.unwrap()["stdout"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        assert!(
+            stdout.contains("amos-shell-ok"),
+            "expected echo output in stdout, got: {stdout:?}"
+        );
     }
 
     #[tokio::test]
