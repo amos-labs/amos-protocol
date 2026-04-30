@@ -23,19 +23,39 @@ pub(crate) fn generate_csp_nonce() -> String {
 /// Build the canvas-iframe CSP string for use inside a
 /// `<meta http-equiv="Content-Security-Policy" content="...">` tag.
 ///
-/// The meta-tag CSP is the authoritative policy for canvas documents:
-/// - Blocks all inline scripts except those carrying the generated nonce,
-///   which disables `'unsafe-inline'` for attacker-injected scripts.
-/// - Allows the Bootstrap / Lucide / Chart.js CDNs used by
-///   `buildCanvasDocument` in `static/js/app.js`.
-/// - Restricts `connect-src`, `object-src`, `base-uri`, `form-action`,
-///   and `frame-ancestors` to the same values the middleware CSP uses
-///   on `/c/*` paths, so both defenses are consistent.
+/// The meta-tag CSP is the authoritative policy for canvas documents.
+///
+/// **Why `'unsafe-inline'` is allowed for both script-src and style-src:**
+///
+/// Pre-existing framework canvases (system-settings, login, register, the
+/// dynamic LLM-generated ones, etc.) and user-generated canvases written
+/// by agents both rely heavily on inline `onclick`/`onchange` event
+/// handlers and inline `style="..."` attributes. SECURE-005 (2026-04-29)
+/// removed `'unsafe-inline'`, which broke every interactive control on
+/// every existing canvas — confirmed in production 2026-04-30 when the
+/// BYOK↔Bedrock toggle and every other button stopped responding.
+///
+/// The primary defense is the iframe sandbox plus same-origin restriction
+/// plus ammonia HTML sanitization on user-submitted content. CSP is
+/// defense-in-depth. Relaxing CSP back to allow inline scripts/styles
+/// inside this sandbox keeps the iframe-bounded content interactive
+/// while not weakening the cross-origin protection.
+///
+/// **Follow-up (tracked):** rewrite framework canvases to be CSP-clean
+/// (use `addEventListener` + class-based styling), then tighten back
+/// to nonce-only. That's a multi-canvas refactor, not a one-liner.
+///
+/// What's still locked down:
+/// - `connect-src 'self'` blocks data exfiltration to attacker domains.
+/// - `object-src 'none'` blocks Flash/plugin embeds.
+/// - `base-uri 'self'` and `form-action 'self'` block base/form hijacks.
+/// - `frame-ancestors 'self'` blocks the canvas being embedded by foreign
+///   pages (clickjacking).
 pub(crate) fn canvas_meta_csp(nonce: &str) -> String {
     format!(
         "default-src 'self'; \
-         script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net https://unpkg.com; \
-         style-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; \
+         script-src 'self' 'unsafe-inline' 'nonce-{nonce}' https://cdn.jsdelivr.net https://unpkg.com; \
+         style-src 'self' 'unsafe-inline' 'nonce-{nonce}' https://cdn.jsdelivr.net; \
          img-src 'self' data: https:; \
          font-src 'self' data: https://cdn.jsdelivr.net; \
          connect-src 'self'; \
@@ -630,9 +650,17 @@ mod tests {
     }
 
     #[test]
-    fn test_freeform_csp_directive_blocks_unsafe_inline() {
-        // The in-document CSP must NOT include `'unsafe-inline'` (that's
-        // the whole point of using nonces). Regression guard.
+    fn test_freeform_csp_directive_keeps_real_protections() {
+        // SECURE-005's original assertion was "no 'unsafe-inline'". That
+        // turned out to break every interactive control on every existing
+        // framework canvas in production (BYOK toggle, login, settings —
+        // 2026-04-30 incident). We're allowing 'unsafe-inline' inside the
+        // sandboxed iframe again until a multi-canvas refactor lands.
+        //
+        // What MUST stay locked down is what actually limits cross-origin
+        // damage: object-src, frame-ancestors, connect-src, base-uri,
+        // form-action, and the absence of 'unsafe-eval'. This test guards
+        // those.
         let canvas = make_canvas("<p>ok</p>", "", "");
         let resp = CanvasResponse::freeform(&canvas);
         let marker = r#"Content-Security-Policy" content=""#;
@@ -640,17 +668,15 @@ mod tests {
         let end = resp.content[start..].find('"').unwrap() + start;
         let csp = &resp.content[start..end];
         assert!(
-            !csp.contains("'unsafe-inline'"),
-            "freeform meta CSP must not include 'unsafe-inline': {}",
-            csp
-        );
-        assert!(
             !csp.contains("'unsafe-eval'"),
             "freeform meta CSP must not include 'unsafe-eval': {}",
             csp
         );
         assert!(csp.contains("object-src 'none'"));
         assert!(csp.contains("frame-ancestors 'self'"));
+        assert!(csp.contains("connect-src 'self'"));
+        assert!(csp.contains("base-uri 'self'"));
+        assert!(csp.contains("form-action 'self'"));
     }
 
     #[test]
@@ -664,5 +690,28 @@ mod tests {
         let style_end = csp[style_idx..].find(';').unwrap() + style_idx;
         assert!(csp[script_idx..script_end].contains("'nonce-abc123'"));
         assert!(csp[style_idx..style_end].contains("'nonce-abc123'"));
+    }
+
+    #[test]
+    fn test_canvas_meta_csp_allows_inline_for_existing_canvases() {
+        // Regression guard: SECURE-005 removed 'unsafe-inline' which broke
+        // every interactive control on every existing framework canvas
+        // (BYOK toggle, login buttons, etc.) in production 2026-04-30.
+        // Re-allowed here while a multi-canvas refactor is underway. If
+        // someone tightens this back without rewriting the canvases, this
+        // test will fail loud rather than letting prod break silently.
+        let csp = canvas_meta_csp("abc123");
+        let script_idx = csp.find("script-src").expect("no script-src");
+        let script_end = csp[script_idx..].find(';').unwrap() + script_idx;
+        let style_idx = csp.find("style-src").expect("no style-src");
+        let style_end = csp[style_idx..].find(';').unwrap() + style_idx;
+        assert!(
+            csp[script_idx..script_end].contains("'unsafe-inline'"),
+            "script-src must allow 'unsafe-inline' until canvas refactor lands"
+        );
+        assert!(
+            csp[style_idx..style_end].contains("'unsafe-inline'"),
+            "style-src must allow 'unsafe-inline' until canvas refactor lands"
+        );
     }
 }
