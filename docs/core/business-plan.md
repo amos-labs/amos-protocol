@@ -1,17 +1,17 @@
-# AMOS Business Plan And Execution Playbook
+# AMOS Business And Ecosystem Playbook
 
 Status: working draft
 
-This document is the operating business plan for AMOS. The thesis explains why AMOS should exist. The architecture explains how the system works. This playbook explains how AMOS gets adopted in the real economy.
+This document is the commercial execution playbook for the AMOS ecosystem. The thesis explains why AMOS should exist. The architecture explains how the system works. The [Ecosystem Flywheel](ecosystem-flywheel.md) explains how commercial activity becomes relay volume and protocol value. This playbook explains how AMOS gets adopted in the real economy.
 
 ## Executive Summary
 
 AMOS is live infrastructure for the autonomous economy: a protocol and operating layer where humans and AI agents coordinate work through proof-carrying bounties, Oracle review, reputation, and on-chain settlement.
 
-The business plan is to turn that infrastructure into adoption through two practical paths:
+The business plan is to turn that infrastructure into adoption through two practical ecosystem paths:
 
-1. **Sell and automate**: sell AMOS-powered automation services to operating businesses that already have recurring work, administrative drag, and clear ROI pain.
-2. **Buy and automate**: acquire, partner with, or co-invest in service-heavy businesses, install AMOS as the operating layer, improve margins and throughput, and either hold for cash flow or exit at a higher multiple.
+1. **Sell and automate**: service providers sell AMOS-powered automation to operating businesses that already have recurring work, administrative drag, and clear ROI pain.
+2. **Buy and automate**: acquisition vehicles, operators, or investors acquire, partner with, or co-invest in service-heavy businesses, install AMOS as the operating layer, improve margins and throughput, and either hold for cash flow or exit at a higher multiple.
 
 The near-term wedge is deliberately practical. SMBs, agencies, law firms, construction companies, marketing agencies, and training businesses do not need the full language of bounded autonomous economic organisms. They need a direct promise:
 
@@ -26,13 +26,13 @@ Underneath that simple commercial promise, each deployment feeds the same AMOS p
 - Reusable packages emerge from repeated deployments.
 - Verified outcomes become network intelligence.
 
-## Company Structure
+## Ecosystem Structure
 
-AMOS should present different messages to different markets while preserving one underlying system.
+AMOS should present different messages to different markets while preserving one neutral protocol core.
 
 ### AMOS Labs
 
-AMOS Labs owns and advances the protocol, open-source infrastructure, agent harness, relay, Oracle, token economy, and long-term autonomous economy thesis.
+AMOS Labs maintains and advances the neutral core: open-source infrastructure, agent harness, relay, Oracle constitution, token mechanics, on-chain invariants, and long-term autonomous economy thesis.
 
 Primary audience:
 
@@ -49,7 +49,7 @@ Message:
 
 ### AMOS Services Co.
 
-AMOS Services Co. sells implementation, automation, managed operations, and business transformation services to SMBs and institutional customers.
+AMOS Services Co., if created, is one possible service provider on top of AMOS. It can sell implementation, automation, managed operations, and business transformation services to SMBs and institutional customers, but it should not be treated as the owner of the services layer.
 
 Primary audience:
 
@@ -65,9 +65,13 @@ Message:
 
 > We automate your business without taking judgment out of your hands.
 
+Design principle:
+
+> The services layer is permissionless. Any provider should be able to build, sell, specialize, and compete on top of AMOS.
+
 ### Acquisition / Operating Vehicles
 
-Separate acquisition vehicles can buy or partner with operating companies and use AMOS as the transformation layer.
+Separate acquisition vehicles can buy or partner with operating companies and use AMOS as the transformation layer. These vehicles may be created by AMOS-aligned operators, PE firms, family offices, independent sponsors, or other ecosystem participants.
 
 Primary audience:
 

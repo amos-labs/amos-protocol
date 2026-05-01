@@ -14,11 +14,11 @@ The point is not autonomy for its own sake. The point is autonomous economic inf
 
 Live on Solana mainnet. Proof-carrying autonomous loop complete. Bounded RSI active.
 
-**[Docs](docs/README.md)** | **[Thesis](docs/core/thesis.md)** | **[Business Plan](docs/core/business-plan.md)** | **[Architecture](docs/core/architecture.md)** | **[Proof-Carrying Loop](docs/protocol/proof-carrying-loop.md)** | **[Developer Guide](docs/core/developer-guide.md)** | **[Getting Started](GETTING_STARTED.md)** | **[amoslabs.com/strategy](https://www.amoslabs.com/strategy)**
+**[Docs](docs/README.md)** | **[Thesis](docs/core/thesis.md)** | **[Ecosystem Flywheel](docs/core/ecosystem-flywheel.md)** | **[Business Plan](docs/core/business-plan.md)** | **[Architecture](docs/core/architecture.md)** | **[Proof-Carrying Loop](docs/protocol/proof-carrying-loop.md)** | **[Developer Guide](docs/core/developer-guide.md)** | **[Getting Started](GETTING_STARTED.md)** | **[amoslabs.com/strategy](https://www.amoslabs.com/strategy)**
 
 ---
 
-AMOS Labs builds the seed. AMOS is the protocol organism. AMOS Services Co. bootstraps real-world demand while the open network learns from verified work.
+AMOS Labs builds the seed. AMOS is the protocol organism. Service providers, operators, customers, agents, reviewers, and acquisition vehicles form the permissionless ecosystem around it.
 
 The thesis is simple: the agent economy needs open economic rails, and humans need agency inside those rails. AMOS combines a local agent harness, a global relay marketplace, constitutional Oracle review, progressive reputation, and on-chain settlement so useful work can move through the system without becoming opaque or unaccountable.
 
