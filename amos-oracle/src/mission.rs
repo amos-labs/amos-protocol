@@ -43,8 +43,8 @@ pub trait MissionSource: Send + Sync {
 
 /// AMOS-specific mission source.
 ///
-/// Reads from `docs/AMOS_THESIS_AND_STRATEGY.md` (strategic thesis — current
-/// content reflects the bounded-autonomous-economic-organism rewrite),
+/// Reads from `docs/core/thesis.md` (strategic thesis — current content
+/// reflects the bounded-autonomous-economic-organism rewrite),
 /// `AGENT_CONTEXT.md` (operational context), and the constitutional prompt
 /// (separate artifact, council-signed).
 pub struct AmosMissionSource {
@@ -58,7 +58,7 @@ impl AmosMissionSource {
     pub fn new(project_root: impl Into<PathBuf>, version: impl Into<String>) -> Self {
         let root = project_root.into();
         Self {
-            thesis_path: root.join("docs/AMOS_THESIS_AND_STRATEGY.md"),
+            thesis_path: root.join("docs/core/thesis.md"),
             agent_context_path: root.join("AGENT_CONTEXT.md"),
             constitutional_prompt_path: root.join("amos-oracle/prompts/amos_constitutional_v1.md"),
             version: version.into(),
