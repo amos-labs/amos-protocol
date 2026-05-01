@@ -7,8 +7,8 @@ This directory is organized so contributors and agents can find the current trut
 ### Strategy And System Shape
 
 1. [Core Thesis](core/thesis.md)
-2. [Ecosystem Flywheel](core/ecosystem-flywheel.md)
-3. [Business And Ecosystem Playbook](core/business-plan.md)
+2. [Business And Ecosystem Playbook](core/business-plan.md)
+3. [Ecosystem Flywheel](core/ecosystem-flywheel.md)
 4. [Architecture](core/architecture.md)
 5. [Proof-Carrying Autonomous Loop](protocol/proof-carrying-loop.md)
 6. [Bounty Lifecycle](protocol/bounty-lifecycle.md)
