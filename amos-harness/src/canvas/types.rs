@@ -51,19 +51,37 @@ pub(crate) fn generate_csp_nonce() -> String {
 /// - `base-uri 'self'` and `form-action 'self'` block base/form hijacks.
 /// - `frame-ancestors 'self'` blocks the canvas being embedded by foreign
 ///   pages (clickjacking).
-pub(crate) fn canvas_meta_csp(nonce: &str) -> String {
-    format!(
-        "default-src 'self'; \
-         script-src 'self' 'unsafe-inline' 'nonce-{nonce}' https://cdn.jsdelivr.net https://unpkg.com; \
-         style-src 'self' 'unsafe-inline' 'nonce-{nonce}' https://cdn.jsdelivr.net; \
-         img-src 'self' data: https:; \
-         font-src 'self' data: https://cdn.jsdelivr.net; \
-         connect-src 'self'; \
-         object-src 'none'; \
-         base-uri 'self'; \
-         form-action 'self'; \
-         frame-ancestors 'self'"
-    )
+pub(crate) fn canvas_meta_csp(_nonce: &str) -> String {
+    // CRITICAL CSP gotcha (CSP3 §6.7.4.5): when BOTH a nonce-source AND
+    // 'unsafe-inline' appear in the same directive, browsers ignore
+    // 'unsafe-inline' entirely. PR #37 and #39 added 'unsafe-inline' but
+    // kept the nonce — net effect was zero, the nonce-only policy still
+    // applied and every inline handler/style stayed blocked. Confirmed
+    // 2026-05-01 via the live console message:
+    //   "'unsafe-inline' is ignored if either a hash or nonce value is
+    //    present in the source list."
+    //
+    // Fix: drop the nonce. With nonce absent, 'unsafe-inline' takes effect
+    // and legacy framework canvases (which can't carry nonce attributes on
+    // their inline `onclick=` / `style=`) are interactive again. Nonce
+    // attributes still emitted on bootstrap script tags are now harmless
+    // no-ops — they don't change behavior either way.
+    //
+    // Hardening returns when framework canvases are rewritten to be
+    // CSP-clean (addEventListener + class-based styling); at that point
+    // we can drop 'unsafe-inline' and bring nonces back.
+    let _ = _nonce;
+    "default-src 'self'; \
+     script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; \
+     style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; \
+     img-src 'self' data: https:; \
+     font-src 'self' data: https://cdn.jsdelivr.net; \
+     connect-src 'self'; \
+     object-src 'none'; \
+     base-uri 'self'; \
+     form-action 'self'; \
+     frame-ancestors 'self'"
+        .to_string()
 }
 
 /// Canvas type enumeration
@@ -609,12 +627,16 @@ mod tests {
     }
 
     #[test]
-    fn test_freeform_applies_same_nonce_to_style_and_script() {
+    fn test_freeform_emits_nonce_attributes_on_inline_blocks() {
+        // The CSP directive no longer carries the nonce (browsers ignore
+        // 'unsafe-inline' when a nonce is present — see
+        // test_canvas_meta_csp_omits_nonce_so_unsafe_inline_takes_effect).
+        // We still emit the same nonce on <style> and <script> tags so a
+        // future tightening (drop 'unsafe-inline', re-add the nonce to the
+        // CSP directive) is a one-line change rather than a structural one.
         let canvas = make_canvas("<p>ok</p>", "console.log(1)", "body{color:red}");
         let resp = CanvasResponse::freeform(&canvas);
         let nonce = extract_nonce(&resp.content).expect("nonce missing");
-        // Both the <style> (for css) and the <script> (for js) must
-        // carry the same nonce so the meta CSP permits them.
         assert!(
             resp.content
                 .contains(&format!(r#"<style nonce="{}">"#, nonce)),
@@ -625,13 +647,6 @@ mod tests {
             resp.content
                 .contains(&format!(r#"<script nonce="{}">"#, nonce)),
             "script nonce missing: {}",
-            resp.content
-        );
-        // And the CSP directive itself must authorise that exact nonce
-        assert!(
-            resp.content.contains(&format!("'nonce-{}'", nonce)),
-            "CSP directive missing 'nonce-{}': {}",
-            nonce,
             resp.content
         );
     }
@@ -680,38 +695,35 @@ mod tests {
     }
 
     #[test]
-    fn test_canvas_meta_csp_includes_nonce_in_script_and_style() {
-        let csp = canvas_meta_csp("abc123");
-        assert!(csp.contains("'nonce-abc123'"), "nonce missing: {}", csp);
-        let script_idx = csp.find("script-src").expect("no script-src");
-        let style_idx = csp.find("style-src").expect("no style-src");
-        let script_end = csp[script_idx..].find(';').unwrap() + script_idx;
-        // style-src is followed by ';' before any later directive
-        let style_end = csp[style_idx..].find(';').unwrap() + style_idx;
-        assert!(csp[script_idx..script_end].contains("'nonce-abc123'"));
-        assert!(csp[style_idx..style_end].contains("'nonce-abc123'"));
-    }
-
-    #[test]
-    fn test_canvas_meta_csp_allows_inline_for_existing_canvases() {
-        // Regression guard: SECURE-005 removed 'unsafe-inline' which broke
-        // every interactive control on every existing framework canvas
-        // (BYOK toggle, login buttons, etc.) in production 2026-04-30.
-        // Re-allowed here while a multi-canvas refactor is underway. If
-        // someone tightens this back without rewriting the canvases, this
-        // test will fail loud rather than letting prod break silently.
+    fn test_canvas_meta_csp_omits_nonce_so_unsafe_inline_takes_effect() {
+        // CSP3 §6.7.4.5: when a nonce-source AND 'unsafe-inline' are both
+        // in a directive, browsers IGNORE 'unsafe-inline'. PR #37 + #39
+        // shipped that combo and inline handlers stayed broken in prod.
+        // The fix: omit the nonce so 'unsafe-inline' actually takes effect.
+        // Regression guard: if the nonce is reintroduced without removing
+        // 'unsafe-inline' (or vice versa), this test fails before deploy.
         let csp = canvas_meta_csp("abc123");
         let script_idx = csp.find("script-src").expect("no script-src");
         let script_end = csp[script_idx..].find(';').unwrap() + script_idx;
         let style_idx = csp.find("style-src").expect("no style-src");
         let style_end = csp[style_idx..].find(';').unwrap() + style_idx;
+        let script_directive = &csp[script_idx..script_end];
+        let style_directive = &csp[style_idx..style_end];
         assert!(
-            csp[script_idx..script_end].contains("'unsafe-inline'"),
-            "script-src must allow 'unsafe-inline' until canvas refactor lands"
+            script_directive.contains("'unsafe-inline'"),
+            "script-src must allow 'unsafe-inline'"
         );
         assert!(
-            csp[style_idx..style_end].contains("'unsafe-inline'"),
-            "style-src must allow 'unsafe-inline' until canvas refactor lands"
+            style_directive.contains("'unsafe-inline'"),
+            "style-src must allow 'unsafe-inline'"
+        );
+        assert!(
+            !script_directive.contains("'nonce-"),
+            "script-src must NOT include a nonce — it would override 'unsafe-inline'"
+        );
+        assert!(
+            !style_directive.contains("'nonce-"),
+            "style-src must NOT include a nonce — it would override 'unsafe-inline'"
         );
     }
 }

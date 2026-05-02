@@ -1508,26 +1508,26 @@ function buildCanvasDocument(title, html, css, js) {
     const nonce = generateCanvasNonce();
     // CSP for the canvas iframe.
     //
-    // We allow 'unsafe-inline' for both script-src and style-src here for the
-    // same reason canvas_meta_csp() does on the server side: existing framework
-    // canvases (system-settings, login, register, etc.) and AI-authored
-    // canvases rely on inline event handlers (`onchange="…"`, `onclick="…"`)
-    // and inline `style="…"` attributes — neither can carry CSP nonces.
+    // CRITICAL CSP gotcha (CSP3 §6.7.4.5): when both a nonce-source AND
+    // 'unsafe-inline' appear in the same directive, browsers IGNORE
+    // 'unsafe-inline'. PR #37 + #39 shipped exactly that combo; net effect
+    // was zero. Confirmed via console message 2026-05-01:
+    //   "'unsafe-inline' is ignored if either a hash or nonce value is
+    //    present in the source list."
     //
-    // SECURE-005 dropped 'unsafe-inline' here AND in canvas_meta_csp(); PR #37
-    // restored it server-side but missed this client-side path, so the SPA
-    // (which is what app.js renders) was still serving the old strict CSP.
-    // Confirmed live 2026-05-01 — the BYOK toggle still wouldn't fire on a
-    // harness running the post-#37 image because this SPA function rebuilds
-    // the CSP fresh per-canvas and overwrites the server-supplied one.
+    // Existing framework canvases use inline `onclick=` / `style=` which
+    // can't carry nonces. To make those work we need 'unsafe-inline' to
+    // actually take effect, which means dropping the nonce. Hardening
+    // returns when canvases are rewritten to be CSP-clean.
     //
-    // Same security tradeoff as the server side: canvases run in a sandboxed
-    // iframe, ammonia-sanitized for user content. Rewriting every framework
-    // canvas to be CSP-clean is the proper follow-up.
+    // The `nonce` variable below is still computed and emitted on our
+    // bootstrap script tags — those nonces are now harmless leftovers
+    // (browsers don't enforce nonce when 'unsafe-inline' is the active
+    // policy). Left in place so a future tightening can reuse them.
     const csp =
         "default-src 'self'; " +
-        `script-src 'self' 'unsafe-inline' 'nonce-${nonce}' https://cdn.jsdelivr.net https://unpkg.com; ` +
-        `style-src 'self' 'unsafe-inline' 'nonce-${nonce}' https://cdn.jsdelivr.net; ` +
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://unpkg.com; " +
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
         "img-src 'self' data: https:; " +
         "font-src 'self' data: https://cdn.jsdelivr.net; " +
         "connect-src 'self'; " +
