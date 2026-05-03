@@ -890,6 +890,24 @@ fn sse_with_keepalive_and_persist(
         )
         .await;
 
+        // Stamp the assistant message we just inserted with model_id + token
+        // counts so the per-message audit trail reflects what actually ran.
+        // Pre-fix: every messages row had model_id=NULL, input/output=0 — the
+        // schema columns existed but nothing wrote to them.
+        if final_input_tokens > 0 || final_output_tokens > 0 || final_model_id.is_some() {
+            if let Err(e) = crate::sessions::stamp_last_assistant_message_usage(
+                &db_pool,
+                session_id,
+                final_model_id.as_deref(),
+                final_input_tokens,
+                final_output_tokens,
+            )
+            .await
+            {
+                tracing::warn!("Failed to stamp assistant message usage: {e}");
+            }
+        }
+
         if final_input_tokens > 0 || final_output_tokens > 0 {
             use std::sync::atomic::Ordering::Relaxed;
             activity_counters

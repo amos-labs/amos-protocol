@@ -156,6 +156,52 @@ pub async fn update_session_title(pool: &PgPool, session_id: Uuid, title: &str) 
 }
 
 /// Touch the session's last_activity_at and update message count / token stats.
+/// Stamp the most recent assistant message in a session with model id +
+/// per-call token usage. The agent emits these in its `agent_end` SSE event
+/// after the LLM stream finishes; we capture them in `agent_proxy` and call
+/// here to backfill the row that `save_messages` just inserted.
+///
+/// Why post-insert update instead of binding at insert time: `save_messages`
+/// takes a `&[Message]` from `amos_core::types`, which doesn't carry token
+/// fields (those are streaming-only signals). Adding them would ripple
+/// through every Message consumer. A targeted UPDATE on the most recent
+/// assistant row is surgical and keeps the Message type clean.
+///
+/// Without this, every row in `messages` ships with `model_id = NULL` and
+/// `input_tokens = output_tokens = 0` — confirmed in production
+/// 2026-05-02. Per-message audit trail, per-model usage breakdowns, and
+/// the activity-counter feeder all stayed empty.
+pub async fn stamp_last_assistant_message_usage(
+    pool: &PgPool,
+    session_id: Uuid,
+    model_id: Option<&str>,
+    input_tokens: i64,
+    output_tokens: i64,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE messages
+        SET model_id = $2, input_tokens = $3, output_tokens = $4
+        WHERE id = (
+            SELECT id FROM messages
+            WHERE session_id = $1 AND role = 'assistant'
+            ORDER BY sequence_number DESC
+            LIMIT 1
+        )
+        "#,
+    )
+    .bind(session_id)
+    .bind(model_id)
+    .bind(input_tokens)
+    .bind(output_tokens)
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        amos_core::AmosError::Internal(format!("stamp_last_assistant_message_usage: {e}"))
+    })?;
+    Ok(())
+}
+
 pub async fn touch_session(
     pool: &PgPool,
     session_id: Uuid,

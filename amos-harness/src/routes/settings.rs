@@ -82,14 +82,15 @@ const AVAILABLE_MODELS: &[ModelInfo] = &[
         id: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
         display_name: "Claude Haiku 4.5",
         tier: "fast",
-        // Base: $0.80 / $4.00
-        input_price_per_mtok: 0.824,
-        output_price_per_mtok: 4.12,
-        batch_input_price_per_mtok: Some(0.412),
-        batch_output_price_per_mtok: Some(2.06),
-        cache_write_5m_price_per_mtok: 1.03,
-        cache_write_1h_price_per_mtok: 1.648,
-        cache_read_price_per_mtok: 0.0824,
+        // AWS Bedrock pricing 2026-05-02: base $1.00 / $5.00, repriced
+        // up from $0.80 / $4.00 since the catalog was last touched.
+        input_price_per_mtok: 1.03,
+        output_price_per_mtok: 5.15,
+        batch_input_price_per_mtok: Some(0.515),
+        batch_output_price_per_mtok: Some(2.575),
+        cache_write_5m_price_per_mtok: 1.2875,
+        cache_write_1h_price_per_mtok: 2.06,
+        cache_read_price_per_mtok: 0.103,
     },
     ModelInfo {
         id: "us.anthropic.claude-sonnet-4-6",
@@ -108,14 +109,16 @@ const AVAILABLE_MODELS: &[ModelInfo] = &[
         id: "us.anthropic.claude-opus-4-6-v1",
         display_name: "Claude Opus 4.6",
         tier: "powerful",
-        // Base: $15.00 / $75.00
-        input_price_per_mtok: 15.45,
-        output_price_per_mtok: 77.25,
-        batch_input_price_per_mtok: Some(7.725),
-        batch_output_price_per_mtok: Some(38.625),
-        cache_write_5m_price_per_mtok: 19.3125,
-        cache_write_1h_price_per_mtok: 30.90,
-        cache_read_price_per_mtok: 1.545,
+        // AWS Bedrock pricing 2026-05-02: base $5.00 / $25.00. Anthropic
+        // dropped Opus 4.6 to match 4.7 — was $15.00 / $75.00 at launch.
+        // Customers were being overcharged 3x until this fix.
+        input_price_per_mtok: 5.15,
+        output_price_per_mtok: 25.75,
+        batch_input_price_per_mtok: Some(2.575),
+        batch_output_price_per_mtok: Some(12.875),
+        cache_write_5m_price_per_mtok: 6.4375,
+        cache_write_1h_price_per_mtok: 10.30,
+        cache_read_price_per_mtok: 0.515,
     },
     ModelInfo {
         id: "us.anthropic.claude-opus-4-7",

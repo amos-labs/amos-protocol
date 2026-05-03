@@ -273,6 +273,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "jsonwebtoken",
+ "libc",
  "lopdf 0.38.0",
  "mockall",
  "parking_lot",
