@@ -20,7 +20,12 @@ impl IntoResponse for ErrorResponse {
     fn into_response(self) -> Response {
         let status_code =
             StatusCode::from_u16(self.0.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let message = self.0.to_string();
+        // Log the full error server-side; respond with a client-safe message
+        // so SQL fragments, paths, and upstream URLs never leak to clients.
+        if status_code.is_server_error() {
+            tracing::error!(error = %self.0, "relay request failed");
+        }
+        let message = self.0.client_message();
 
         let body = Json(json!({
             "error": message,

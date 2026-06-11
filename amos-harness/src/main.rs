@@ -42,6 +42,16 @@ async fn main() -> Result<()> {
     info!("Connecting to PostgreSQL");
     let db_pool = PgPoolOptions::new()
         .max_connections(config.database.pool_size)
+        .min_connections(config.database.min_connections)
+        .acquire_timeout(std::time::Duration::from_secs(
+            config.database.acquire_timeout_secs,
+        ))
+        .idle_timeout(std::time::Duration::from_secs(
+            config.database.idle_timeout_secs,
+        ))
+        .max_lifetime(std::time::Duration::from_secs(
+            config.database.max_lifetime_secs,
+        ))
         .connect(config.database.url.expose_secret())
         .await
         .map_err(|e| {
@@ -105,19 +115,39 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Initialize tracing with configured log level and formatting
+/// Initialize tracing with configured log level and formatting.
+///
+/// In production (`AMOS__ENV=production`) logs are emitted as JSON lines so
+/// they can be ingested by structured log pipelines (CloudWatch, Loki, etc.),
+/// matching the relay's logging format. In development the human-readable
+/// ANSI formatter is kept.
 fn init_tracing() {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,amos_harness=debug,amos_core=debug"));
 
-    tracing_subscriber::registry()
-        .with(env_filter)
-        .with(
-            fmt::layer()
-                .with_target(true)
-                .with_thread_ids(true)
-                .with_level(true)
-                .with_ansi(true),
-        )
-        .init();
+    if AppConfig::is_production_env() {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(
+                fmt::layer()
+                    .with_target(true)
+                    .with_thread_ids(true)
+                    .with_level(true)
+                    .with_file(true)
+                    .with_line_number(true)
+                    .json(),
+            )
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(
+                fmt::layer()
+                    .with_target(true)
+                    .with_thread_ids(true)
+                    .with_level(true)
+                    .with_ansi(true),
+            )
+            .init();
+    }
 }

@@ -93,8 +93,23 @@ impl Default for ServerConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct DatabaseConfig {
     pub url: SecretString,
-    #[serde(default = "default_pool_size")]
+    /// Maximum number of connections in the pool.
+    /// `max_connections` is accepted as an alias so existing
+    /// `AMOS__DATABASE__MAX_CONNECTIONS` deployments keep working.
+    #[serde(default = "default_pool_size", alias = "max_connections")]
     pub pool_size: u32,
+    /// Minimum number of idle connections the pool keeps warm.
+    #[serde(default = "default_min_connections")]
+    pub min_connections: u32,
+    /// Seconds to wait for a connection from the pool before failing.
+    #[serde(default = "default_acquire_timeout_secs")]
+    pub acquire_timeout_secs: u64,
+    /// Seconds an idle connection may sit in the pool before being closed.
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
+    /// Maximum lifetime of any pooled connection, in seconds.
+    #[serde(default = "default_max_lifetime_secs")]
+    pub max_lifetime_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -687,7 +702,19 @@ fn default_rails_url() -> String {
     "http://localhost:5001".into()
 }
 fn default_pool_size() -> u32 {
-    20
+    40
+}
+fn default_min_connections() -> u32 {
+    5
+}
+fn default_acquire_timeout_secs() -> u64 {
+    10
+}
+fn default_idle_timeout_secs() -> u64 {
+    600
+}
+fn default_max_lifetime_secs() -> u64 {
+    1800
 }
 fn default_redis_url() -> String {
     "redis://127.0.0.1:6379".into()
@@ -931,6 +958,31 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn database_config_defaults() {
+        let config: DatabaseConfig =
+            serde_json::from_value(serde_json::json!({ "url": "postgres://localhost/db" }))
+                .expect("minimal database config should deserialize");
+        assert_eq!(config.pool_size, 40);
+        assert_eq!(config.min_connections, 5);
+        assert_eq!(config.acquire_timeout_secs, 10);
+        assert_eq!(config.idle_timeout_secs, 600);
+        assert_eq!(config.max_lifetime_secs, 1800);
+    }
+
+    #[test]
+    fn database_config_accepts_max_connections_alias() {
+        // Existing deployments set AMOS__DATABASE__MAX_CONNECTIONS; the
+        // config crate surfaces that as a `max_connections` key which must
+        // keep mapping onto `pool_size`.
+        let config: DatabaseConfig = serde_json::from_value(serde_json::json!({
+            "url": "postgres://localhost/db",
+            "max_connections": 50
+        }))
+        .expect("max_connections alias should deserialize");
+        assert_eq!(config.pool_size, 50);
+    }
 
     #[test]
     fn local_model_config_defaults() {

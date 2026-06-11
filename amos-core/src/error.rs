@@ -118,6 +118,27 @@ pub enum AmosError {
 }
 
 impl AmosError {
+    /// Client-safe message for API response bodies.
+    ///
+    /// Infrastructure errors (database, HTTP, Solana RPC, config, internal)
+    /// wrap raw lower-level errors whose `Display` output can leak SQL
+    /// fragments, schema names, file paths, or upstream URLs. Those map to
+    /// generic messages here; the full error must still be logged
+    /// server-side by the caller. Domain errors carry messages written for
+    /// API consumers and pass through unchanged.
+    pub fn client_message(&self) -> String {
+        match self {
+            Self::Database(_) => "A database error occurred".to_string(),
+            Self::Http(_) => "An upstream request failed".to_string(),
+            Self::SolanaRpc(_) => "A blockchain RPC error occurred".to_string(),
+            Self::Config(_) | Self::MissingEnvVar(_) => {
+                "A server configuration error occurred".to_string()
+            }
+            Self::Internal(_) | Self::Other(_) => "An internal error occurred".to_string(),
+            other => other.to_string(),
+        }
+    }
+
     /// HTTP-style status code for API layer mapping.
     pub fn status_code(&self) -> u16 {
         match self {
@@ -135,5 +156,69 @@ impl AmosError {
             Self::NoRevenueToClaim | Self::TreasuryExhausted { .. } => 409,
             _ => 500,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_message_hides_internal_detail() {
+        let err = AmosError::Internal("disk full at /var/lib/postgresql/data".to_string());
+        let msg = err.client_message();
+        assert_eq!(msg, "An internal error occurred");
+        assert!(!msg.contains("/var/lib"));
+    }
+
+    #[test]
+    fn client_message_hides_anyhow_detail() {
+        let err = AmosError::Other(anyhow::anyhow!(
+            "SELECT * FROM secrets failed: relation does not exist"
+        ));
+        let msg = err.client_message();
+        assert_eq!(msg, "An internal error occurred");
+        assert!(!msg.contains("SELECT"));
+    }
+
+    #[test]
+    fn client_message_hides_rpc_and_config_detail() {
+        let rpc = AmosError::SolanaRpc("https://internal-rpc:8899 connection refused".to_string());
+        assert!(!rpc.client_message().contains("internal-rpc"));
+
+        let cfg = AmosError::Config("missing key solana.oracle_keypair_path".to_string());
+        assert!(!cfg.client_message().contains("oracle_keypair_path"));
+
+        let env = AmosError::MissingEnvVar("AMOS__DATABASE__URL".to_string());
+        assert!(!env.client_message().contains("AMOS__DATABASE__URL"));
+    }
+
+    #[cfg(not(feature = "db"))]
+    #[test]
+    fn client_message_hides_database_detail() {
+        let err = AmosError::Database("duplicate key violates unique constraint".to_string());
+        assert_eq!(err.client_message(), "A database error occurred");
+    }
+
+    #[cfg(feature = "db")]
+    #[test]
+    fn client_message_hides_database_detail() {
+        let err = AmosError::Database(sqlx::Error::PoolTimedOut);
+        assert_eq!(err.client_message(), "A database error occurred");
+    }
+
+    #[test]
+    fn client_message_passes_domain_errors_through() {
+        let not_found = AmosError::NotFound {
+            entity: "collection".to_string(),
+            id: "leads".to_string(),
+        };
+        assert_eq!(not_found.client_message(), not_found.to_string());
+
+        let validation = AmosError::Validation("field 'email' is required".to_string());
+        assert_eq!(validation.client_message(), validation.to_string());
+
+        let unauthorized = AmosError::Unauthorized("missing bearer token".to_string());
+        assert_eq!(unauthorized.client_message(), unauthorized.to_string());
     }
 }

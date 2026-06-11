@@ -104,6 +104,21 @@ pub async fn upload_file(
         ));
     }
 
+    // Validate the declared MIME type against the allowlist and verify it
+    // matches the actual file content where a magic-byte signature exists.
+    if let Err(reason) = validate_upload_mime(&content_type, &data) {
+        tracing::warn!(
+            "Rejected upload '{}' with content type '{}': {}",
+            original_filename,
+            content_type,
+            reason
+        );
+        return Err((
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Json(json!({"error": reason})),
+        ));
+    }
+
     let size_bytes = data.len() as i64;
     let id = Uuid::new_v4();
 
@@ -342,6 +357,137 @@ pub async fn serve_file(
     Ok((headers, Body::from(data)))
 }
 
+/// MIME types accepted for upload.
+///
+/// Deliberately excludes `text/html`, `image/svg+xml`, and other
+/// script-capable types: uploaded files are served back inline with their
+/// stored content type (see `serve_file`), so allowing them would enable
+/// stored XSS on the harness origin.
+const ALLOWED_MIME_TYPES: &[&str] = &[
+    // Images
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    // Documents
+    "application/pdf",
+    "application/json",
+    "text/plain",
+    "text/csv",
+    "text/markdown",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/zip",
+    // Audio / video
+    "audio/mpeg",
+    "audio/wav",
+    "audio/ogg",
+    "video/mp4",
+    "video/webm",
+    // Fallback when the client omits a content type. Browsers always
+    // download octet-stream rather than rendering it, so it is inert.
+    "application/octet-stream",
+];
+
+/// Magic-byte signature for a MIME type, checked at the given offset.
+struct MagicSignature {
+    mime: &'static str,
+    offset: usize,
+    bytes: &'static [u8],
+}
+
+/// Known content signatures. A declared MIME type listed here must match
+/// at least one of its signatures.
+const MAGIC_SIGNATURES: &[MagicSignature] = &[
+    MagicSignature {
+        mime: "image/png",
+        offset: 0,
+        bytes: &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+    },
+    MagicSignature {
+        mime: "image/jpeg",
+        offset: 0,
+        bytes: &[0xFF, 0xD8, 0xFF],
+    },
+    MagicSignature {
+        mime: "image/gif",
+        offset: 0,
+        bytes: b"GIF8",
+    },
+    // WebP: RIFF container with WEBP fourcc at offset 8
+    MagicSignature {
+        mime: "image/webp",
+        offset: 0,
+        bytes: b"RIFF",
+    },
+    MagicSignature {
+        mime: "application/pdf",
+        offset: 0,
+        bytes: b"%PDF",
+    },
+    // OOXML formats (docx/xlsx/pptx) and zip share the PK zip header
+    MagicSignature {
+        mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        offset: 0,
+        bytes: &[0x50, 0x4B, 0x03, 0x04],
+    },
+    MagicSignature {
+        mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        offset: 0,
+        bytes: &[0x50, 0x4B, 0x03, 0x04],
+    },
+    MagicSignature {
+        mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        offset: 0,
+        bytes: &[0x50, 0x4B, 0x03, 0x04],
+    },
+    MagicSignature {
+        mime: "application/zip",
+        offset: 0,
+        bytes: &[0x50, 0x4B, 0x03, 0x04],
+    },
+];
+
+/// Validate a declared MIME type against the allowlist, and verify the file
+/// content matches the declared type for formats with known signatures.
+///
+/// Returns a client-safe rejection reason on failure.
+fn validate_upload_mime(declared: &str, data: &[u8]) -> Result<(), String> {
+    // Strip any parameters ("text/plain; charset=utf-8") and normalize case.
+    let mime = declared
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+
+    if !ALLOWED_MIME_TYPES.contains(&mime.as_str()) {
+        return Err(format!("Unsupported content type: {}", mime));
+    }
+
+    // Verify magic bytes for types that have a registered signature.
+    let signatures: Vec<&MagicSignature> =
+        MAGIC_SIGNATURES.iter().filter(|s| s.mime == mime).collect();
+    if !signatures.is_empty() {
+        let matches = signatures.iter().any(|s| {
+            data.len() >= s.offset + s.bytes.len()
+                && &data[s.offset..s.offset + s.bytes.len()] == s.bytes
+        });
+        if !matches {
+            return Err("File content does not match declared content type".to_string());
+        }
+        // WebP needs the fourcc check past the RIFF chunk size field.
+        if mime == "image/webp" && (data.len() < 12 || &data[8..12] != b"WEBP") {
+            return Err("File content does not match declared content type".to_string());
+        }
+    }
+
+    Ok(())
+}
+
 /// Sanitize a filename for use in Content-Disposition header.
 /// Strips characters that could enable header injection.
 fn sanitize_content_disposition_filename(filename: &str) -> String {
@@ -379,4 +525,79 @@ pub async fn load_upload_data(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok((content_type, filename, data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PNG: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00];
+    const JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0, 0x00];
+    const PDF: &[u8] = b"%PDF-1.7 rest";
+    const ZIP: &[u8] = &[0x50, 0x4B, 0x03, 0x04, 0x00];
+
+    #[test]
+    fn accepts_valid_image_uploads() {
+        assert!(validate_upload_mime("image/png", PNG).is_ok());
+        assert!(validate_upload_mime("image/jpeg", JPEG).is_ok());
+        assert!(
+            validate_upload_mime("IMAGE/PNG", PNG).is_ok(),
+            "case-insensitive"
+        );
+    }
+
+    #[test]
+    fn accepts_content_type_with_parameters() {
+        assert!(validate_upload_mime("text/plain; charset=utf-8", b"hello").is_ok());
+    }
+
+    #[test]
+    fn accepts_documents_and_octet_stream() {
+        assert!(validate_upload_mime("application/pdf", PDF).is_ok());
+        assert!(validate_upload_mime(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ZIP
+        )
+        .is_ok());
+        assert!(validate_upload_mime("application/octet-stream", b"anything").is_ok());
+        assert!(validate_upload_mime("text/csv", b"a,b,c").is_ok());
+    }
+
+    #[test]
+    fn rejects_script_capable_types() {
+        assert!(validate_upload_mime("text/html", b"<html>").is_err());
+        assert!(validate_upload_mime("image/svg+xml", b"<svg/>").is_err());
+        assert!(validate_upload_mime("application/xhtml+xml", b"<html/>").is_err());
+        assert!(validate_upload_mime("application/javascript", b"alert(1)").is_err());
+    }
+
+    #[test]
+    fn rejects_content_type_spoofing() {
+        // HTML masquerading as PNG must be rejected by the magic-byte check.
+        assert!(validate_upload_mime("image/png", b"<html><script>").is_err());
+        assert!(validate_upload_mime("application/pdf", b"<html>").is_err());
+        assert!(validate_upload_mime("image/jpeg", PNG).is_err());
+    }
+
+    #[test]
+    fn rejects_truncated_and_invalid_webp() {
+        // RIFF header without WEBP fourcc (e.g. a WAV file) is not webp.
+        assert!(validate_upload_mime("image/webp", b"RIFF\x00\x00\x00\x00WAVE").is_err());
+        assert!(validate_upload_mime("image/webp", b"RIFF\x00\x00\x00\x00WEBP").is_ok());
+        assert!(validate_upload_mime("image/webp", b"RI").is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_types() {
+        assert!(validate_upload_mime("application/x-msdownload", &[0x4D, 0x5A]).is_err());
+        assert!(validate_upload_mime("", b"data").is_err());
+    }
+
+    #[test]
+    fn content_disposition_filename_is_sanitized() {
+        assert_eq!(
+            sanitize_content_disposition_filename("report\r\nSet-Cookie: x.pdf"),
+            "reportSet-Cookie x.pdf"
+        );
+    }
 }

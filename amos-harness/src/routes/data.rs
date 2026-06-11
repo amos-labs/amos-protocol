@@ -25,7 +25,12 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let status =
             StatusCode::from_u16(self.0.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let body = json!({ "error": self.0.to_string() });
+        // Log the full error server-side; respond with a client-safe message
+        // so SQL fragments, paths, and upstream URLs never leak to clients.
+        if status.is_server_error() {
+            tracing::error!(error = %self.0, "data API request failed");
+        }
+        let body = json!({ "error": self.0.client_message() });
         (status, Json(body)).into_response()
     }
 }

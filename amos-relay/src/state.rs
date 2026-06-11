@@ -32,6 +32,16 @@ impl RelayState {
         info!("Connecting to PostgreSQL...");
         let db = PgPoolOptions::new()
             .max_connections(config.database.pool_size)
+            .min_connections(config.database.min_connections)
+            .acquire_timeout(std::time::Duration::from_secs(
+                config.database.acquire_timeout_secs,
+            ))
+            .idle_timeout(std::time::Duration::from_secs(
+                config.database.idle_timeout_secs,
+            ))
+            .max_lifetime(std::time::Duration::from_secs(
+                config.database.max_lifetime_secs,
+            ))
             .connect(config.database.url.expose_secret())
             .await
             .map_err(AmosError::Database)?;

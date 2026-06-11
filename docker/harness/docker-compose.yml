@@ -66,7 +66,7 @@ services:
 
       # Database
       AMOS__DATABASE__URL: postgresql://${POSTGRES_USER:-amos}:${POSTGRES_PASSWORD:-amos_dev_password}@postgres:5432/${POSTGRES_DB:-amos_harness}
-      AMOS__DATABASE__MAX_CONNECTIONS: ${DB_POOL_SIZE:-20}
+      AMOS__DATABASE__MAX_CONNECTIONS: ${DB_POOL_SIZE:-40}
 
       # Redis
       AMOS__REDIS__URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
@@ -143,7 +143,7 @@ networks:
 # - REDIS_PASSWORD= (empty, no auth in dev)
 # - PLATFORM_URL=https://platform.amos.io
 # - AWS_REGION=us-west-2
-# - DB_POOL_SIZE=20
+# - DB_POOL_SIZE=40
 # - REDIS_POOL_SIZE=10
 #
 # Usage:

@@ -27,6 +27,7 @@ This directory is organized so contributors and agents can find the current trut
 - [Token Economy](protocol/token-economy.md)
 - [Solana Settlement](protocol/solana-settlement.md)
 - [Security And Threat Model](features/security.md)
+- [Database Backup And Recovery](core/backup-and-recovery.md)
 - [Grand Challenge Protocol](features/grand-challenge.md)
 - [Network Intelligence](features/network-intelligence.md)
 - [Test Harness](features/test-harness.md)
