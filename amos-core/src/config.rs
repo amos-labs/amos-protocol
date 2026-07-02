@@ -744,13 +744,13 @@ fn default_aws_region() -> String {
     "us-west-2".into()
 }
 fn default_model() -> String {
-    "us.anthropic.claude-sonnet-4-20250514-v1:0".into()
+    "us.anthropic.claude-sonnet-4-6".into()
 }
 fn default_chat_model() -> String {
-    "us.anthropic.claude-sonnet-4-20250514-v1:0".into()
+    "us.anthropic.claude-sonnet-4-6".into()
 }
 fn default_voice_model() -> String {
-    "us.anthropic.claude-3-5-haiku-20241022-v1:0".into()
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0".into()
 }
 fn default_max_iterations() -> usize {
     25

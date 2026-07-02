@@ -1,5 +1,7 @@
 # AMOS
 
+> **⚠️ Protocol-era documentation (April 2026).** AMOS Labs' current direction is the **company brain** — an AI-native business platform where real businesses run on AMOS and their AI operates them, proof-carried. The **receipt / Oracle / trust** concepts here live on as the platform's governance layer; the **token, bounty marketplace, and relay mechanisms are dormant** (reopen triggers in [`docs/NORTH-STAR.md`](docs/NORTH-STAR.md)). Current product + direction: **amoslabs.com**.
+
 **A bounded autonomous economic organism for human-aligned agent work.**
 
 ---
