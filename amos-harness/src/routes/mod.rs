@@ -20,6 +20,7 @@ pub mod packages;
 pub mod revisions;
 pub mod settings;
 pub mod sites;
+pub mod templates;
 pub mod uploads;
 pub mod wallet;
 
@@ -115,6 +116,8 @@ pub fn build_routes(state: Arc<AppState>) -> Router {
         .nest("/api/v1", revisions::routes(state.clone()))
         // Data API routes (collection/record CRUD for canvas components)
         .nest("/api/v1/data", data::routes(state.clone()))
+        // Template apply routes (compose components into this environment)
+        .nest("/api/v1/templates", templates::routes(state.clone()))
         // Harness info route (multi-harness discovery)
         .nest("/api/v1/harness", harness_info::routes(state.clone()))
         // Bounty proxy routes (forwards to AMOS Network Relay)

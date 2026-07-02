@@ -70,6 +70,7 @@ pub mod sites;
 pub mod state;
 pub mod storage;
 pub mod task_queue;
+pub mod templates;
 pub mod tools;
 
 // Re-export commonly used types

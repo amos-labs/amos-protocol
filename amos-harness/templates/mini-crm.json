@@ -1,0 +1,48 @@
+{
+  "name": "mini-crm",
+  "version": "1",
+  "components": [
+    {
+      "name": "contacts",
+      "version": "1",
+      "collections": [
+        {
+          "name": "contacts",
+          "display_name": "Contacts",
+          "description": "People and companies you work with.",
+          "fields": [
+            { "name": "name", "display_name": "Name", "field_type": "text", "required": true },
+            { "name": "email", "display_name": "Email", "field_type": "email" },
+            { "name": "phone", "display_name": "Phone", "field_type": "phone" },
+            { "name": "company", "display_name": "Company", "field_type": "text" }
+          ]
+        }
+      ],
+      "canvases": [
+        {
+          "name": "Contacts",
+          "description": "All contacts.",
+          "canvas_type": "datagrid",
+          "data_sources": [{ "collection": "contacts" }]
+        }
+      ]
+    },
+    {
+      "name": "pipeline",
+      "version": "1",
+      "collections": [
+        {
+          "name": "deals",
+          "display_name": "Deals",
+          "description": "Sales opportunities.",
+          "fields": [
+            { "name": "title", "display_name": "Title", "field_type": "text", "required": true },
+            { "name": "amount", "display_name": "Amount", "field_type": "number" },
+            { "name": "stage", "display_name": "Stage", "field_type": "enum", "options": { "choices": ["lead", "won", "lost"] } },
+            { "name": "contact", "display_name": "Contact", "field_type": "reference", "options": { "collection": "contacts" } }
+          ]
+        }
+      ]
+    }
+  ]
+}

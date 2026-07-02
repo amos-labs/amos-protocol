@@ -25,6 +25,7 @@ pub mod schema_tools;
 pub mod site_tools;
 pub mod system_tools;
 pub mod task_tools;
+pub mod template_tools;
 pub mod web_tools;
 pub mod workspace_tools;
 
@@ -386,6 +387,12 @@ impl ToolRegistry {
         registry.register(Arc::new(schema_tools::DeleteRecordTool::new(
             db_pool.clone(),
             Some(event_tx),
+        )));
+
+        // Register template tool (apply_template = compose components into this env)
+        registry.register(Arc::new(template_tools::ApplyTemplateTool::new(
+            db_pool.clone(),
+            config.clone(),
         )));
 
         // Register automation tools (manage_automation = CRUD, test_automation = dry-run)
