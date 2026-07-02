@@ -255,6 +255,9 @@ mod tests {
     // The shipped proof artifact — two composed components.
     const MINI_CRM: &str = include_str!("../../templates/mini-crm.json");
 
+    // The generic CRM component library (P1 slice 2, BOM Phase 1).
+    const GENERIC_CRM: &str = include_str!("../../templates/generic-crm.json");
+
     #[test]
     fn mini_crm_parses_as_two_components() {
         let t: Template = serde_json::from_str(MINI_CRM).expect("mini-crm.json should parse");
@@ -281,6 +284,86 @@ mod tests {
                 .any(|f| matches!(f.field_type, FieldType::Reference)),
             "deals should carry a reference field to contacts"
         );
+    }
+
+    #[test]
+    fn generic_crm_has_six_named_components() {
+        let t: Template = serde_json::from_str(GENERIC_CRM).expect("generic-crm.json should parse");
+        assert_eq!(t.name, "generic-crm");
+        let comp_names: Vec<&str> = t.components.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(
+            comp_names,
+            vec![
+                "contacts",
+                "pipeline",
+                "activities",
+                "documents",
+                "comms_log",
+                "dashboards"
+            ]
+        );
+    }
+
+    #[test]
+    fn generic_crm_structural_invariants() {
+        let t: Template = serde_json::from_str(GENERIC_CRM).unwrap();
+
+        // pipeline.deals carries references (to people + companies).
+        let pipeline = t.components.iter().find(|c| c.name == "pipeline").unwrap();
+        let deals = pipeline
+            .collections
+            .iter()
+            .find(|c| c.name == "deals")
+            .unwrap();
+        assert!(
+            deals
+                .fields
+                .iter()
+                .any(|f| matches!(f.field_type, FieldType::Reference)),
+            "deals should carry a reference field"
+        );
+
+        // dashboards is canvas-only: 0 collections, >= 2 canvases.
+        let dashboards = t
+            .components
+            .iter()
+            .find(|c| c.name == "dashboards")
+            .unwrap();
+        assert!(dashboards.collections.is_empty());
+        assert!(dashboards.canvases.len() >= 2);
+    }
+
+    #[test]
+    fn generic_crm_uses_only_valid_type_strings() {
+        // Parsing already enforces valid `field_type`s (serde rejects unknown
+        // FieldType variants), so a successful parse validates every field.
+        let t: Template = serde_json::from_str(GENERIC_CRM).unwrap();
+        for c in &t.components {
+            for cv in &c.canvases {
+                // No canvas should silently fall through to Custom — that would
+                // mean a mistyped canvas_type slug.
+                assert!(
+                    !matches!(CanvasType::from_str(&cv.canvas_type), CanvasType::Custom),
+                    "canvas '{}' has an unrecognized canvas_type '{}'",
+                    cv.name,
+                    cv.canvas_type
+                );
+            }
+            for a in &c.automations {
+                assert!(
+                    TriggerType::from_str(&a.trigger_type).is_some(),
+                    "automation '{}' has invalid trigger_type '{}'",
+                    a.name,
+                    a.trigger_type
+                );
+                assert!(
+                    ActionType::from_str(&a.action_type).is_some(),
+                    "automation '{}' has invalid action_type '{}'",
+                    a.name,
+                    a.action_type
+                );
+            }
+        }
     }
 
     #[test]
