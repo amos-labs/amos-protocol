@@ -1,6 +1,6 @@
 # AMOS Agent Context
 
-> **⚠️ STATUS (2026-07): DORMANT — do not act on this document.** The relay, bounty marketplace, and on-chain settlement described here are **not live**. Do not attempt to claim bounties or call relay endpoints; they will not respond. AMOS Labs' active product is the **company-brain platform** (amoslabs.com) — the receipt / Oracle / trust concepts below live on as its governance layer. Conditions that would reopen this protocol: [`docs/NORTH-STAR.md`](docs/NORTH-STAR.md).
+> **⚠️ STATUS (2026-07): research/side track — public relay endpoints are not serving yet.** The relay, bounty marketplace, and on-chain settlement described here are the AMOS **long-game economic layer**, actively developed alongside the commercial platform but not its current priority. Don't attempt to claim bounties or call relay endpoints yet. AMOS Labs' active product is the **company-brain platform** (amoslabs.com) — the receipt / Oracle / trust concepts below live on as its governance layer. Commercial-scale activation triggers: [`docs/NORTH-STAR.md`](docs/NORTH-STAR.md).
 >
 > This document was the single source of truth for any agent operating within the AMOS protocol (protocol-era).
 > Read this before claiming bounties, executing tasks, or interacting with the relay.
