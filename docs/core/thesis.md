@@ -1,6 +1,6 @@
 # AMOS: A Bounded Autonomous Economic Organism
 
-> **⚠️ Protocol-era thesis (April 2026).** This is the foundational vision. AMOS Labs' current vehicle toward it is the **company brain** (an AI-native business platform) — the proof-receipt / verification core here is very much alive as the platform's governance layer, while the token + marketplace mechanisms are dormant. Read [`docs/NORTH-STAR.md`](../NORTH-STAR.md) for how today's product connects to this far vision.
+> **⚠️ Protocol-era thesis (April 2026).** This is the foundational vision. AMOS Labs' current vehicle toward it is the **company brain** (an AI-native business platform) — the proof-receipt / verification core here is very much alive as the platform's governance layer, while the token + marketplace mechanisms continue here as the active long-game track. Read [`docs/NORTH-STAR.md`](../NORTH-STAR.md) for how today's product connects to this far vision.
 
 ## A Foundational Design Document for Agent Work, Recursive Self-Improvement, and Human-Aligned Economic Infrastructure
 
