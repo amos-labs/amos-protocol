@@ -1,14 +1,9 @@
 [workspace]
 members = [
     "amos-core",
-    "amos-harness",
     "amos-relay",
-    "amos-cli",
     "amos-agent",
     "amos-oracle",
-    "amos-packages/amos-education",
-    "amos-packages/amos-autoresearch",
-    "amos-packages/amos-social",
     # Solana programs are built separately via Anchor (not part of cargo workspace)
 ]
 resolver = "2"
@@ -17,7 +12,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/amos-labs/amos-platform-2.0"
+repository = "https://github.com/amos-labs/amos-protocol"
 rust-version = "1.88"
 
 [workspace.dependencies]
