@@ -18,7 +18,7 @@
   "receipt_version": "1.0",
   "task_id": "ci-add-ci-and-plumbline",
   "agent_id": "claude-opus-4-8",
-  "intent": "This repo (amos-labs/amos-protocol) had no CI at all. Add a green, meaningful CI pipeline plus the Plumbline proof-carrying gate. ci.yml adds a 'Lint & Unit Tests' job (cargo fmt --check, cargo check --all-targets, cargo clippy -D warnings, cargo test --lib and --doc) scoped to the cargo workspace (amos-core, amos-relay, amos-agent, amos-oracle), and an advisory 'Anchor Build' job for the amos-solana on-chain programs, which are a separate workspace requiring the Solana BPF + Anchor toolchains and so cannot build in the plain Rust job. plumbline.yml adds the 'Plumbline Gate' check (full semantic review since ANTHROPIC_API_KEY is set), with .plumbline/ scaffolding (policy.json, MISSION.md grounded in the protocol layer: bounty relay, Oracle semantic review, agent, on-chain programs).",
+  "intent": "This repo (amos-labs/amos-protocol) had no CI at all. Add a green, meaningful CI pipeline plus the Plumbline proof-carrying gate. ci.yml adds a 'Lint & Unit Tests' job (cargo fmt --check, cargo check --all-targets, cargo clippy -D warnings, cargo test --lib and --doc) scoped to the cargo workspace (amos-core, amos-relay, amos-agent, amos-oracle), and a separate 'Anchor Build' job for the amos-solana on-chain programs (a separate cargo workspace requiring the Solana + Anchor toolchains, kept out of the fast fmt/clippy/test path and run advisory/continue-on-error). The Anchor job installs the exact anchor_version pinned in amos-solana/Anchor.toml (0.31.1) so `anchor build` resolves and succeeds. plumbline.yml adds the 'Plumbline Gate' check (full semantic review since ANTHROPIC_API_KEY is set), with .plumbline/ scaffolding (policy.json, MISSION.md grounded in the protocol layer: bounty relay, Oracle semantic review, agent, on-chain programs).",
   "self_modifying": true,
   "policy_refs": [
     ".plumbline/MISSION.md",
@@ -76,6 +76,11 @@
       "command": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml')); yaml.safe_load(open('.github/workflows/plumbline.yml'))\"",
       "status": "passed",
       "output_ref": "both workflows parse; policy.json is valid JSON"
+    },
+    {
+      "command": "gh run view <ci-run> --json jobs (both CI jobs on PR head)",
+      "status": "passed",
+      "output_ref": "Lint & Unit Tests: success; Anchor Build: success (after pinning Anchor to Anchor.toml's 0.31.1) on PR head"
     }
   ],
   "changed_files": [
@@ -84,6 +89,6 @@
     ".plumbline/MISSION.md",
     ".plumbline/policy.json"
   ],
-  "diff_sha256": "deca92ccfb35118dcee2f25621c702cbd48475591dda3d9315279ddfdd4c9744",
-  "result_summary": "Added .github/workflows/ci.yml (jobs 'Lint & Unit Tests' and 'Anchor Build (on-chain programs)') and .github/workflows/plumbline.yml (check 'Plumbline Gate'), plus .plumbline/policy.json and MISSION.md. The cargo workspace (amos-core, amos-relay, amos-agent, amos-oracle) was verified green locally: fmt --check clean, clippy -D warnings clean, cargo check --all-targets OK offline (no DB needed — runtime sqlx only), and cargo test --lib = 177 passed / 0 failed. The amos-solana Anchor programs are a separate workspace built via `anchor build` under the Solana BPF toolchain, so they are handled by a dedicated advisory job (continue-on-error) rather than dragged into the plain fmt/clippy/test path where they would fail on the missing BPF target — keeping the required CI green and meaningful. Touches .github/workflows/** and .plumbline/** (protected paths) so self_modifying:true; the gate escalates to human review by design."
+  "diff_sha256": "e259784cc8753dcee837038047db9b5612db241eaccf3f979d96904cddd7f497",
+  "result_summary": "Added .github/workflows/ci.yml (jobs 'Lint & Unit Tests' and 'Anchor Build (on-chain programs)') and .github/workflows/plumbline.yml (check 'Plumbline Gate'), plus .plumbline/policy.json and MISSION.md. The cargo workspace (amos-core, amos-relay, amos-agent, amos-oracle) was verified green locally: fmt --check clean, clippy -D warnings clean, cargo check --all-targets OK offline (no DB needed — runtime sqlx only), and cargo test --lib = 177 passed / 0 failed. The amos-solana Anchor programs are a separate cargo workspace built via `anchor build` under the Solana + Anchor toolchains, so they are handled by a dedicated advisory job (continue-on-error) rather than dragged into the plain fmt/clippy/test path — keeping the required 'Lint & Unit Tests' check fast, green and meaningful. That Anchor job initially failed because it installed Anchor 0.30.1 while amos-solana/Anchor.toml pins anchor_version 0.31.1; pinning the install to the Anchor.toml version makes `anchor build` resolve and pass on CI. Touches .github/workflows/** and .plumbline/** (protected paths) so self_modifying:true; the gate escalates to human review by design."
 }
