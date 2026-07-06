@@ -1,0 +1,47 @@
+# Plumbline — proof-carrying gate on every PR.
+#
+# PR-only by design: this job never runs on main pushes, so it can never block
+# a merge/deploy path. It verifies the PR's receipt: shape + diff-hash integrity
+# always; full semantic review + PR comment when ANTHROPIC_API_KEY is configured
+# as a repo secret (this repo has it set), otherwise it falls back to
+# `plumb check`.
+#
+# Follow-up (tracked): pin to a released tag (plumbline@v1) instead of #master.
+name: Plumbline Gate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+
+jobs:
+  plumbline:
+    name: Plumbline Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for base diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect semantic-review key
+        id: key
+        run: echo "present=${{ secrets.ANTHROPIC_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Plumbline gate — full (shape + semantic review + PR comment)
+        if: steps.key.outputs.present == 'true'
+        uses: amos-labs/plumbline@master
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github-token: ${{ github.token }}
+
+      - name: Plumbline gate — shape + diff integrity (no review key configured)
+        if: steps.key.outputs.present != 'true'
+        run: npx -y github:amos-labs/plumbline#master check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
