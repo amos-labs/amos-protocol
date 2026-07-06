@@ -28,6 +28,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The gate's ci-evidence check reads the required CI check's conclusion.
+      # Plumbline finishes in seconds but the Rust CI takes minutes, so without
+      # this wait the gate races ahead and reports ci-evidence FAIL
+      # (status=in_progress) on every first run. Poll the required check to a
+      # terminal state first so the gate evaluates real evidence exactly once.
+      - name: Wait for required CI check (Lint & Unit Tests)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          for i in $(seq 1 60); do
+            line=$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
+              --jq '.check_runs[] | select(.name=="Lint & Unit Tests") | "\(.status)/\(.conclusion)"' 2>/dev/null | head -1 || true)
+            echo "attempt $i: Lint & Unit Tests = ${line:-<not-reported-yet>}"
+            case "$line" in
+              completed/*) echo "required check reached terminal state"; exit 0;;
+            esac
+            sleep 20
+          done
+          echo "::warning::Lint & Unit Tests did not reach a terminal state in time; the gate will evaluate current evidence."
+
       - name: Detect semantic-review key
         id: key
         run: echo "present=${{ secrets.ANTHROPIC_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
