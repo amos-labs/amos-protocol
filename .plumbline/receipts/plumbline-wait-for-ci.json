@@ -1,0 +1,56 @@
+{
+  "_help": {
+    "_note": "Allowed values + requirements per field (this _help block is ignored by the gate — keep or delete). Run `plumb schema` for the full reference.",
+    "receipt_version": "one of: 1.0 — required — schema version",
+    "task_id": "required — ticket/issue/branch id (also the receipt filename)",
+    "agent_id": "required — which agent or human did the work",
+    "intent": "required — what + why, plain language — the semantic review reads this",
+    "self_modifying": "one of: true | false — required — MUST be true if changed_files touch policy.protected_paths; touching one with false is a hard fail; true escalates to human review",
+    "policy_refs": "required — policy/mission docs you read",
+    "validation_plan": "required — each: { command, reason, required }",
+    "validation_plan[].required": "one of: true | false — required — is this check mandatory",
+    "execution_evidence": "required — each: { command, status, output_ref?, skip_reason? }",
+    "execution_evidence[].status": "one of: passed | failed | skipped — required — required steps must be 'passed'; use skip_reason when 'skipped'",
+    "changed_files": "required — set by `plumb receipt --write` — don't hand-edit",
+    "diff_sha256": "required — set by `plumb receipt --write` — never hand-edit",
+    "result_summary": "required — what changed + how it was verified"
+  },
+  "receipt_version": "1.0",
+  "task_id": "plumbline-wait-for-ci",
+  "agent_id": "claude-opus-4-8",
+  "intent": "Follow-up to the merged CI + Plumbline gate (PR #1). The Plumbline Gate finishes in ~15s while the Rust CI (Lint & Unit Tests) takes minutes, so on every first PR run the gate's ci-evidence check raced ahead and reported FAIL (required check 'Lint & Unit Tests' status=in_progress), forcing a manual re-run. This adds a step to plumbline.yml that polls the required 'Lint & Unit Tests' check-run to a terminal state (up to 20 min) before invoking the gate, so it evaluates real CI evidence exactly once and no longer flaps. Pure workflow ergonomics; no change to the gate's judgment logic.",
+  "self_modifying": true,
+  "policy_refs": [
+    ".plumbline/MISSION.md",
+    ".plumbline/policy.json"
+  ],
+  "validation_plan": [
+    {
+      "command": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/plumbline.yml'))\"",
+      "reason": "the change is YAML-only; confirm the workflow still parses",
+      "required": true
+    },
+    {
+      "command": "Plumbline Gate on this PR reaches ci-evidence PASS without a manual re-run",
+      "reason": "the whole point of the wait step is that the gate no longer races the Rust CI on first run",
+      "required": true
+    }
+  ],
+  "execution_evidence": [
+    {
+      "command": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/plumbline.yml'))\"",
+      "status": "passed",
+      "output_ref": "plumbline.yml parses OK"
+    },
+    {
+      "command": "Plumbline Gate on this PR reaches ci-evidence PASS without a manual re-run",
+      "status": "passed",
+      "output_ref": "gate waited for 'Lint & Unit Tests' to finish, then shape+ci-evidence PASS; semantic review escalate (self_modifying) — see PR gate comment"
+    }
+  ],
+  "changed_files": [
+    ".github/workflows/plumbline.yml"
+  ],
+  "diff_sha256": "4522df553ea6a1762919248caac6150fb6dbe604bb26e3d39ef68659983b71d5",
+  "result_summary": "Added a 'Wait for required CI check' step to .github/workflows/plumbline.yml that polls the 'Lint & Unit Tests' check-run to a terminal state before the gate runs, eliminating the ci-evidence race seen on PR #1 (gate finished in ~15s and reported FAIL while the Rust build was still in_progress). YAML verified to parse; behavior verified on this PR's own gate run. Touches .github/workflows/** (protected) so self_modifying:true; the gate escalates to human review by design. Do not auto-merge."
+}
