@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      # Doc-only commits don't need a full Rust build. Touch any code path
+      # alongside the doc to force a build.
+      - 'docs/**'
+      - '*.md'
+      - '.gitignore'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - '.gitignore'
+      - 'LICENSE'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # amos-relay uses runtime sqlx (no compile-checked query! macros), so no
+  # live DB or .sqlx cache is needed — but set offline mode defensively so a
+  # future query! never turns CI red without a DATABASE_URL.
+  SQLX_OFFLINE: true
+
+jobs:
+  # ============================================================================
+  # GATE 1: Format, Lint, Unit Tests
+  #
+  # Scope: the cargo workspace defined in the root Cargo.toml —
+  # amos-core, amos-relay, amos-agent, amos-oracle.
+  #
+  # The Anchor on-chain programs under amos-solana/ are a SEPARATE cargo
+  # workspace, deliberately excluded from the root workspace, and only build
+  # under the Solana BPF toolchain via `anchor build`. They are covered by the
+  # dedicated `anchor-build` job below rather than by `cargo fmt/clippy/test`
+  # here — running plain clippy/test against them would fail on the missing
+  # solana-program BPF target, not on any real defect.
+  # ============================================================================
+  check:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Check code formatting
+        run: cargo fmt --all -- --check
+
+      - name: Cargo check
+        run: cargo check --all-targets
+
+      - name: Run Clippy (warnings as errors)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run unit tests
+        run: cargo test --lib
+
+      - name: Run doc tests
+        run: cargo test --doc
+
+  # ============================================================================
+  # GATE 2: Anchor build — on-chain programs (treasury, governance, bounty)
+  #
+  # The amos-solana/ programs live outside the cargo workspace and require the
+  # Solana + Anchor toolchains (BPF target). This job installs both and runs
+  # `anchor build` so a change that breaks the on-chain programs is caught,
+  # without dragging the BPF target into the fast fmt/clippy/test path above.
+  #
+  # Advisory for now (continue-on-error): the Anchor toolchain install is the
+  # slow/flaky part of this pipeline, and the program IDs are frozen
+  # (mainnet/devnet unchanged). Flip continue-on-error off once the on-chain
+  # programs re-enter active change.
+  # ============================================================================
+  anchor-build:
+    name: Anchor Build (on-chain programs)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: amos-solana
+          cache-on-failure: true
+
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor (AVM 0.30.1)
+        run: |
+          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
+          avm install 0.30.1
+          avm use 0.30.1
+
+      - name: Anchor build
+        working-directory: amos-solana
+        run: anchor build

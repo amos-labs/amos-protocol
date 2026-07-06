@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "mission_file": ".plumbline/MISSION.md",
+  "strictness": "standard",
+  "required_checks": [],
+  "ci_evidence_checks": [
+    "Lint & Unit Tests"
+  ],
+  "protected_paths": [
+    "amos-solana/programs/**",
+    "amos-relay/src/routes/bounties.rs",
+    "amos-relay/src/routes/webhooks.rs",
+    "amos-relay/src/solana.rs",
+    "amos-relay/src/settlement_retry.rs",
+    "amos-relay/src/proof_receipt.rs",
+    "amos-relay/src/reputation.rs",
+    "amos-relay/src/protocol_fees.rs",
+    "amos-relay/src/middleware.rs",
+    "amos-oracle/src/review.rs",
+    "amos-oracle/src/prompt.rs",
+    "amos-oracle/prompts/**",
+    "amos-core/src/token/**",
+    "AGENT_CONTEXT.md",
+    ".github/workflows/**",
+    ".plumbline/**"
+  ],
+  "min_review_confidence": 0.8,
+  "human_review_level": "balanced",
+  "max_receipt_bytes": 262144
+}
