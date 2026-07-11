@@ -1,0 +1,52 @@
+{
+  "receipt_version": "1.0",
+  "task_id": "chore-pin-plumbline-v0.3.0",
+  "agent_id": "claude-opus-4-8",
+  "intent": "Pin the Plumbline gate action in .github/workflows/plumbline.yml from the floating ref amos-labs/plumbline@master to the released tag amos-labs/plumbline@v0.3.0. This closes the 'consumers float on @master' security finding: floating on a mutable branch means any push to plumbline's master silently changes what governs this repo's merges, with no review and no way to reason about which gate version actually ran. Pinning to an immutable released tag makes the gate version explicit, auditable, and reproducible. v0.3.0 ships a BREAKING safe-default (require_semantic_review: true) that fails the gate closed when semantic review cannot run; this is safe here because this repo's gate already runs semantic review with a working ANTHROPIC_API_KEY (the workflow's full gate step is guarded by `if: steps.key.outputs.present == 'true'` and that key resolves), so the fail-closed default only hardens an already-running review path rather than newly blocking anything.",
+  "self_modifying": true,
+  "policy_refs": [
+    ".plumbline/MISSION.md",
+    ".plumbline/policy.json"
+  ],
+  "validation_plan": [
+    {
+      "command": "grep -n 'uses: amos-labs/plumbline@' .github/workflows/plumbline.yml",
+      "reason": "Confirm the gate action ref is now the pinned released tag v0.3.0 and that no floating @master ref remains in the workflow.",
+      "required": true
+    },
+    {
+      "command": "git diff origin/main -- .github/workflows/plumbline.yml",
+      "reason": "Confirm the diff is exactly the one-line ref bump (master -> v0.3.0) and nothing else in the workflow (steps, key guard, secrets wiring) was touched.",
+      "required": true
+    },
+    {
+      "command": "note: this PR's own Plumbline gate run executes on the PR head and exercises the semantic review path with the repo's ANTHROPIC_API_KEY",
+      "reason": "The PR's own gate is the runtime proof that the review key resolves; a fail-closed verdict here would signal the key does not actually resolve. ci-evidence corroborates the gate outcome; not a manually-run step.",
+      "required": false,
+      "ci_covered": true
+    }
+  ],
+  "execution_evidence": [
+    {
+      "command": "grep -n 'uses: amos-labs/plumbline@' .github/workflows/plumbline.yml",
+      "status": "passed",
+      "output_ref": "single match: 'uses: amos-labs/plumbline@v0.3.0' (line 58); no @master ref remains"
+    },
+    {
+      "command": "git diff origin/main -- .github/workflows/plumbline.yml",
+      "status": "passed",
+      "output_ref": "one-line change: '- uses: amos-labs/plumbline@master' / '+ uses: amos-labs/plumbline@v0.3.0'; no other lines changed"
+    },
+    {
+      "command": "note: this PR's own Plumbline gate run executes on the PR head and exercises the semantic review path with the repo's ANTHROPIC_API_KEY",
+      "status": "skipped",
+      "skip_reason": "CI-covered: the PR's own Plumbline gate run is the corroborating evidence; a passing verdict confirms the ANTHROPIC_API_KEY resolves and the fail-closed default is satisfied."
+    }
+  ],
+  "changed_files": [
+    ".github/workflows/plumbline.yml"
+  ],
+  "diff_sha256": "3235ba6235d4571c7bbeeaf32bf46ee7bcd7905933c9c52bae40b84cc9c60f12",
+  "result_summary": "Pinned the Plumbline gate action from amos-labs/plumbline@master to the released tag amos-labs/plumbline@v0.3.0 in .github/workflows/plumbline.yml — a single-line ref bump, no other workflow content changed. Closes the 'consumers float on @master' security finding by making the gate version immutable and auditable. Verified: grep confirms the ref is now @v0.3.0 with no @master remaining; git diff confirms the change is exactly the one line. The v0.3.0 require_semantic_review fail-closed default is safe here because the repo's gate already runs semantic review under a working ANTHROPIC_API_KEY (guarded by the workflow's key-present check), so this PR's own gate run on the PR head is the corroborating proof the key resolves.",
+  "self_modifying_justification": "Touches a policy.protected_paths entry (.github/workflows/**), so the gate correctly escalates to human REVIEW. The change only pins the gate action to an immutable released tag — it does not weaken any check, alter the key guard, change secrets wiring, or modify any auth/billing/RBAC/migration/proof path. It strictly hardens the gate by removing the float-on-master exposure."
+}
