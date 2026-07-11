@@ -81,10 +81,21 @@ jobs:
   # `anchor build` so a change that breaks the on-chain programs is caught,
   # without dragging the BPF target into the fast fmt/clippy/test path above.
   #
-  # Advisory for now (continue-on-error): the Anchor toolchain install is the
-  # slow/flaky part of this pipeline, and the program IDs are frozen
-  # (mainnet/devnet unchanged). Flip continue-on-error off once the on-chain
-  # programs re-enter active change.
+  # ADVISORY, NOT GATING — the protocol is public ALPHA.
+  #
+  # While the protocol repo is in alpha, on-chain CI is informational only: an
+  # Anchor/BPF compile (or a flaky Anchor toolchain install) must never block an
+  # ordinary docs/relay/agent change. This job still RUNS on every PR so we can
+  # see on-chain breakage, but it does not gate merges in two ways:
+  #   1. `continue-on-error: true` — a failure here never fails the CI workflow.
+  #   2. This check ("Anchor Build (on-chain programs)") is deliberately absent
+  #      from `.plumbline/policy.json` -> `ci_evidence_checks`, so the Plumbline
+  #      gate never requires it to certify. Only "Lint & Unit Tests" gates.
+  #
+  # Program IDs are frozen (mainnet/devnet unchanged), which is why alpha =
+  # advisory on-chain. Flip `continue-on-error` off AND add this check to
+  # `ci_evidence_checks` once the on-chain programs re-enter active change and
+  # the alpha posture moves to "active".
   # ============================================================================
   anchor-build:
     name: Anchor Build (on-chain programs)

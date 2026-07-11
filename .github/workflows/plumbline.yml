@@ -6,7 +6,11 @@
 # as a repo secret (this repo has it set), otherwise it falls back to
 # `plumb check`.
 #
-# Follow-up (tracked): pin to a released tag (plumbline@v1) instead of #master.
+# Pinned to the released tag amos-labs/plumbline@v0.3.0 (immutable) rather than
+# floating on @master, so the gate version that governs this repo's merges is
+# explicit and auditable. v0.3.0 ships a fail-closed safe default
+# (require_semantic_review: true); safe here since this repo runs semantic review
+# under a configured ANTHROPIC_API_KEY.
 name: Plumbline Gate
 
 on:
@@ -55,14 +59,14 @@ jobs:
 
       - name: Plumbline gate — full (shape + semantic review + PR comment)
         if: steps.key.outputs.present == 'true'
-        uses: amos-labs/plumbline@master
+        uses: amos-labs/plumbline@v0.3.0
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           github-token: ${{ github.token }}
 
       - name: Plumbline gate — shape + diff integrity (no review key configured)
         if: steps.key.outputs.present != 'true'
-        run: npx -y github:amos-labs/plumbline#master check
+        run: npx -y github:amos-labs/plumbline#v0.3.0 check
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}

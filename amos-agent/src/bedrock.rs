@@ -121,7 +121,7 @@ impl BedrockProvider {
 
         // Step 2: Create string to sign
         let canonical_request_hash = hex::encode(Sha256::digest(canonical_request.as_bytes()));
-        let credential_scope = format!("{}/{}/{}/aws4_request", date, &self.region, service);
+        let credential_scope = format!("{}/{}/{}/aws4_request", date, self.region, service);
         let string_to_sign = format!(
             "AWS4-HMAC-SHA256\n{}\n{}\n{}",
             timestamp, credential_scope, canonical_request_hash
@@ -131,7 +131,7 @@ impl BedrockProvider {
 
         // Step 3: Calculate signature
         let k_date = hmac_sha256(
-            format!("AWS4{}", &self.secret_access_key).as_bytes(),
+            format!("AWS4{}", self.secret_access_key).as_bytes(),
             date.as_bytes(),
         )?;
         let k_region = hmac_sha256(&k_date, self.region.as_bytes())?;
@@ -142,7 +142,7 @@ impl BedrockProvider {
         // Step 4: Create authorization header
         let authorization = format!(
             "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-            &self.access_key_id, credential_scope, signed_headers, signature
+            self.access_key_id, credential_scope, signed_headers, signature
         );
 
         Ok(authorization)

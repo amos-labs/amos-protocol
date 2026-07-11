@@ -1,0 +1,64 @@
+{
+  "receipt_version": "1.0",
+  "task_id": "alpha-advisory-onchain-and-pin",
+  "agent_id": "claude-opus-4-8",
+  "intent": "amos-protocol is public ALPHA, so an on-chain Anchor compile must not gate ordinary docs/relay/agent changes. This PR does three things so main becomes greenable for ordinary work and the plumbline pin can land: (1) On-chain CI is advisory, not gating. The Anchor Build job already has continue-on-error:true and the 'Anchor Build (on-chain programs)' check is deliberately NOT in .plumbline/policy.json ci_evidence_checks, so the Plumbline gate never requires it. I strengthened the ci.yml comment to state the alpha=advisory-on-chain posture explicitly and record how to flip it back to gating (add to ci_evidence_checks + drop continue-on-error) when the on-chain programs re-enter active change. Program IDs are frozen, so nothing of value is unguarded. (2) Greened the real 'Lint & Unit Tests' failure: three clippy useless_borrows_in_formatting errors in amos-agent/src/bedrock.rs (lines 124/134/145) that failed under -D warnings. Minimal fix — dropped the redundant & on Display args inside format!; no logic change (the AWS SigV4 canonical request/signature output is byte-identical). This is the same class as the 2.0 clippy baseline, not a refactor. (3) Pinned the Plumbline gate from amos-labs/plumbline@master to the immutable released tag @v0.3.0 in both the full-gate 'uses:' step and the no-key 'npx' fallback, closing the 'consumers float on master' finding; v0.3.0's fail-closed require_semantic_review default is safe here since this repo runs review under a configured ANTHROPIC_API_KEY.",
+  "self_modifying": true,
+  "policy_refs": [
+    ".plumbline/MISSION.md",
+    ".plumbline/policy.json"
+  ],
+  "validation_plan": [
+    {
+      "command": "cargo clippy --all-targets -- -D warnings",
+      "reason": "the Lint & Unit Tests failure was three real clippy errors in amos-agent; the whole workspace must lint clean under -D warnings for that check to go green",
+      "required": true
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "reason": "CI's Lint & Unit Tests runs a formatting check; confirm the bedrock.rs edits keep the tree formatted",
+      "required": true
+    },
+    {
+      "command": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml')); yaml.safe_load(open('.github/workflows/plumbline.yml'))\"",
+      "reason": "the workflow edits (advisory comment, v0.3.0 pin) are YAML-only; confirm both workflows still parse",
+      "required": true
+    },
+    {
+      "command": "Lint & Unit Tests check on this PR reaches conclusion=success, so the Plumbline gate's ci-evidence passes",
+      "reason": "the gate's ci_evidence_checks requires 'Lint & Unit Tests'; a green run is what unblocks the ci-evidence gate that put PR #3 into REWORK",
+      "required": true,
+      "ci_covered": true
+    }
+  ],
+  "execution_evidence": [
+    {
+      "command": "cargo clippy --all-targets -- -D warnings",
+      "status": "passed",
+      "output_ref": "full workspace (amos-core/relay/agent/oracle) finished clean, exit 0; the three useless_borrows_in_formatting errors in amos-agent/src/bedrock.rs are gone"
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "passed",
+      "output_ref": "exit 0, no formatting diff"
+    },
+    {
+      "command": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/ci.yml')); yaml.safe_load(open('.github/workflows/plumbline.yml'))\"",
+      "status": "passed",
+      "output_ref": "both workflows parse OK"
+    },
+    {
+      "command": "Lint & Unit Tests check on this PR reaches conclusion=success, so the Plumbline gate's ci-evidence passes",
+      "status": "skipped",
+      "skip_reason": "CI-covered — corroborated by the ci-evidence gate on this PR's own Lint & Unit Tests run, not by local evidence",
+      "step": "ci-evidence"
+    }
+  ],
+  "changed_files": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/plumbline.yml",
+    "amos-agent/src/bedrock.rs"
+  ],
+  "diff_sha256": "8645702d843634e2d0a32eba8f092b9eea82d8d063e2f67fbd3fec24f7abb99d",
+  "result_summary": "Three files changed. amos-agent/src/bedrock.rs: removed redundant & on three format! Display args (clippy useless_borrows_in_formatting under -D warnings) — the real cause of the red 'Lint & Unit Tests', no behavior change to SigV4 signing. .github/workflows/ci.yml: strengthened the Anchor Build job comment to state on-chain CI is advisory (not gating) while the protocol is alpha — the job keeps continue-on-error:true and the check stays out of ci_evidence_checks, so it runs informationally but never blocks a merge; documented how to re-arm it. .github/workflows/plumbline.yml: pinned the gate from @master to immutable @v0.3.0 (full 'uses:' step + npx fallback). Verified locally: full-workspace clippy clean, fmt clean, both workflows parse. Ci-evidence for the greened Lint check is corroborated by this PR's own gate run. Touches .github/workflows/** and .plumbline/** (both protected) so self_modifying:true; the gate escalates to human REVIEW by design — expected, do not auto-merge."
+}
