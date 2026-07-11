@@ -55,7 +55,7 @@ jobs:
 
       - name: Plumbline gate — full (shape + semantic review + PR comment)
         if: steps.key.outputs.present == 'true'
-        uses: amos-labs/plumbline@master
+        uses: amos-labs/plumbline@v0.3.0
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
           github-token: ${{ github.token }}
