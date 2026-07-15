@@ -1,0 +1,46 @@
+{
+  "receipt_version": "1.0",
+  "task_id": "plumbline-v0.4.1",
+  "agent_id": "claude",
+  "intent": "Upgrade the plumbline CI gate pin from v0.3.0 to the latest release v0.4.1 in .github/workflows/plumbline.yml. v0.4.1 pins the diff base_sha AND accepts a rederived merge-base, which ends the stale-base re-stamp (REWORK) tax on clean rebases; it is back-compat with the existing receipt directory. Version-string change only — the gate logic lives in the plumbline package, not here. Touches .github/workflows/** (protected) so self_modifying=true and it routes to human review, correct for an enforcement-pipeline change.",
+  "self_modifying": true,
+  "policy_refs": [
+    ".plumbline/MISSION.md",
+    ".plumbline/policy.json"
+  ],
+  "validation_plan": [
+    {
+      "id": "pin",
+      "command": "grep plumbline@v0.4.1 .github/workflows/plumbline.yml",
+      "reason": "Pin resolves to the explicit v0.4.1 tag.",
+      "required": true
+    },
+    {
+      "id": "gate",
+      "command": "Plumbline Gate CI runs on this PR",
+      "reason": "Live proof the gate resolves + runs.",
+      "required": true,
+      "ci_covered": true
+    }
+  ],
+  "execution_evidence": [
+    {
+      "step": "pin",
+      "command": "grep",
+      "status": "passed",
+      "output_ref": "workflow now references amos-labs/plumbline@v0.4.1 (was @v0.3.0)."
+    },
+    {
+      "step": "gate",
+      "command": "Plumbline Gate CI",
+      "status": "passed",
+      "output_ref": "Corroborated by the Plumbline Gate check on this PR head."
+    }
+  ],
+  "result_summary": "Pinned the plumbline gate v0.3.0 -> v0.4.1 in .github/workflows/plumbline.yml. Version bump only; no repo logic changed. self_modifying=true (workflows protected) -> human review.",
+  "diff_sha256": "60d68c752c95e8e83a9dc24272c1c1b172e8453609497a294b13efa30498335d",
+  "base_sha": "cb48936ec9959339d490e22fd22097758afe1d74",
+  "changed_files": [
+    ".github/workflows/plumbline.yml"
+  ]
+}
