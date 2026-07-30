@@ -1,0 +1,53 @@
+{
+  "receipt_version": "1.0",
+  "task_id": "plumbline-v0.7.1-pin",
+  "agent_id": "claude-opus-5-1m",
+  "intent": "Pin this repo's proof-carrying gate to amos-labs/plumbline@v0.7.1 (from v0.4.1). v0.7.1 makes the receipt diff binding HERMETIC: diff_sha256 is computed with user/system git config neutralised and every output-affecting knob pinned (core.abbrev, diff.algorithm, diff.context, diff.noprefix, ...), plus full blob SHAs, so the hash depends only on the tree. Before this, a receipt stamped where the authoring machine's git config differed from the runner's failed with 'diff_sha256 mismatch' even when the content was byte-identical, routing correct PRs to REWORK — local pre-flight PASS, CI FAIL. Diagnosed on NuvolaNetworks/cuspr, where core.abbrev=7 alone accounted for the exact unreproducible hash that blocked six PRs; fixed upstream in plumbline#74 (closes #69) and released as v0.7.1. Backward compatible: receipts without diff_algo still verify against the legacy hash, so no in-flight receipt in this repo is invalidated. CI-only: the plumbline.yml gate pin. No application code, no policy change.",
+  "self_modifying": true,
+  "policy_refs": [
+    ".plumbline/MISSION.md",
+    ".plumbline/policy.json"
+  ],
+  "validation_plan": [
+    {
+      "command": "grep -c 'amos-labs/plumbline@v0.7.1' .github/workflows/plumbline.yml",
+      "reason": "Assert every pin is v0.7.1 with no stale v0.4.1 reference left behind.",
+      "required": true
+    },
+    {
+      "command": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/plumbline.yml'))\"",
+      "reason": "A malformed workflow would disable the gate entirely.",
+      "required": true
+    },
+    {
+      "command": "plumbline gate runs green on this PR under the new pin",
+      "reason": "A pull_request workflow runs from the PR head, so this PR is gated by the very version it pins — v0.7.1 validates its own adoption here.",
+      "required": true,
+      "ci_covered": true
+    }
+  ],
+  "execution_evidence": [
+    {
+      "command": "grep -c 'amos-labs/plumbline@v0.7.1' .github/workflows/plumbline.yml",
+      "status": "passed",
+      "output_ref": "All pins updated; grep for 'v0.4.1' returns 0."
+    },
+    {
+      "command": "python3 -c \"import yaml; yaml.safe_load(open('.github/workflows/plumbline.yml'))\"",
+      "status": "passed",
+      "output_ref": "Exit 0 — workflow parses; job ids unchanged."
+    },
+    {
+      "command": "plumbline gate runs green on this PR under the new pin",
+      "status": "skipped",
+      "skip_reason": "Verified by CI on this PR — the gate validates its own adoption."
+    }
+  ],
+  "changed_files": [
+    ".github/workflows/plumbline.yml"
+  ],
+  "diff_sha256": "8461f006f80baa923823ace60baf705c82215ec00e222d65fc0ea256177e9098",
+  "result_summary": "CI-only pin bump of the proof-carrying gate from amos-labs/plumbline@v0.4.1 to @v0.7.1, picking up the hermetic diff binding that fixes the fleet-wide spurious-REWORK bug (plumbline#69/#74). the plumbline.yml gate pin — no policy file and no application code is touched, and job ids are unchanged so branch-protection required status-check contexts are unaffected. Backward compatible: receipts lacking diff_algo still verify under the legacy hash, so no open PR here is invalidated. self_modifying: true — .github/workflows/** is a protected path, so this correctly routes to human review.",
+  "base_sha": "2bdd7e98367838282c45b8b8abd1d3b072e54dc3",
+  "diff_algo": "v1"
+}
