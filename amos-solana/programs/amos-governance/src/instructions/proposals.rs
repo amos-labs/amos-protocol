@@ -5,7 +5,7 @@ use crate::constants::*;
 use crate::errors::GovernanceError;
 use crate::state::*;
 use anchor_lang::prelude::*;
-use anchor_spl::token::{transfer, Token, TokenAccount, Transfer};
+use anchor_spl::token::TokenAccount;
 
 // ============================================================================
 // Submit Feature Proposal
@@ -86,6 +86,7 @@ pub fn submit_feature_proposal(
     proposal.steward_approval_result = None;
     proposal.bump = ctx.bumps.feature_proposal;
     proposal.reserved = [0; 128];
+    proposal.reserved[..8].copy_from_slice(CUSTODIED_VOTING_MARKER);
 
     // Increment total proposals counter
     governance.total_proposals = governance
@@ -108,7 +109,7 @@ pub fn submit_feature_proposal(
 // Vote for Feature
 // ============================================================================
 
-/// Casts a weighted vote for a feature proposal
+/// Preserved legacy account ABI; handler fails closed without custody.
 #[derive(Accounts)]
 #[instruction(proposal_id: u64)]
 pub struct VoteForFeature<'info> {
@@ -153,82 +154,20 @@ pub struct VoteForFeature<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Legacy instruction cannot accept votes without transferring custody.
 pub fn vote_for_feature(
-    ctx: Context<VoteForFeature>,
-    proposal_id: u64,
-    vote_amount: u64,
+    _ctx: Context<VoteForFeature>,
+    _proposal_id: u64,
+    _vote_amount: u64,
 ) -> Result<()> {
-    let proposal = &mut ctx.accounts.feature_proposal;
-    let vote_record = &mut ctx.accounts.vote_record;
-    let governance = &mut ctx.accounts.governance_config;
-    let voter_balance = ctx.accounts.voter_token_account.amount;
-
-    // Validate vote amount
-    require!(
-        vote_amount >= MIN_VOTE_AMOUNT,
-        GovernanceError::VoteAmountTooLow
-    );
-    require!(
-        vote_amount <= voter_balance,
-        GovernanceError::InsufficientBalance
-    );
-
-    // Cannot vote on own proposal
-    require!(
-        ctx.accounts.voter.key() != proposal.proposer,
-        GovernanceError::CannotVoteOnOwnProposal
-    );
-
-    let clock = Clock::get()?;
-
-    // Check if proposal has expired
-    let age = clock
-        .unix_timestamp
-        .checked_sub(proposal.created_at)
-        .ok_or(GovernanceError::ArithmeticUnderflow)?;
-    require!(
-        age <= PROPOSAL_EXPIRATION_SECONDS,
-        GovernanceError::ProposalExpired
-    );
-
-    // Record vote
-    vote_record.voter = ctx.accounts.voter.key();
-    vote_record.proposal_id = proposal_id;
-    vote_record.amount = vote_amount;
-    vote_record.voted_at = clock.unix_timestamp;
-    vote_record.withdrawn_at = None;
-    vote_record.bump = ctx.bumps.vote_record;
-    vote_record.reserved = [0; 64];
-
-    // Update proposal vote count
-    proposal.total_votes = proposal
-        .total_votes
-        .checked_add(vote_amount)
-        .ok_or(GovernanceError::ArithmeticOverflow)?;
-    proposal.updated_at = clock.unix_timestamp;
-
-    // Update governance totals
-    governance.total_votes = governance
-        .total_votes
-        .checked_add(1)
-        .ok_or(GovernanceError::ArithmeticOverflow)?;
-
-    msg!(
-        "Vote cast: {} tokens for proposal {} by {}",
-        vote_amount,
-        proposal_id,
-        vote_record.voter
-    );
-    msg!("Proposal total votes: {}", proposal.total_votes);
-
-    Ok(())
+    Err(GovernanceError::CustodiedVotingRequired.into())
 }
 
 // ============================================================================
 // Withdraw Vote
 // ============================================================================
 
-/// Withdraws a vote from a proposal (if not locked)
+/// Preserved legacy withdrawal ABI; no escrow exists for these records.
 #[derive(Accounts)]
 #[instruction(proposal_id: u64)]
 pub struct WithdrawVote<'info> {
@@ -255,46 +194,9 @@ pub struct WithdrawVote<'info> {
     pub voter: Signer<'info>,
 }
 
-pub fn withdraw_vote(ctx: Context<WithdrawVote>, proposal_id: u64) -> Result<()> {
-    let proposal = &mut ctx.accounts.feature_proposal;
-    let vote_record = &mut ctx.accounts.vote_record;
-    let clock = Clock::get()?;
-
-    // Check if vote is locked
-    let time_since_vote = clock
-        .unix_timestamp
-        .checked_sub(vote_record.voted_at)
-        .ok_or(GovernanceError::ArithmeticUnderflow)?;
-
-    require!(
-        time_since_vote >= VOTE_LOCK_SECONDS,
-        GovernanceError::VoteLocked
-    );
-
-    // Cannot withdraw if proposal is beyond active status
-    require!(
-        proposal.status == ProposalStatus::Active,
-        GovernanceError::InvalidProposalStatus
-    );
-
-    // Update vote record
-    vote_record.withdrawn_at = Some(clock.unix_timestamp);
-
-    // Update proposal vote count
-    proposal.total_votes = proposal
-        .total_votes
-        .checked_sub(vote_record.amount)
-        .ok_or(GovernanceError::ArithmeticUnderflow)?;
-    proposal.updated_at = clock.unix_timestamp;
-
-    msg!(
-        "Vote withdrawn: {} tokens from proposal {} by {}",
-        vote_record.amount,
-        proposal_id,
-        vote_record.voter
-    );
-
-    Ok(())
+/// Legacy records never held tokens. Do not reinterpret them as V2 deposits.
+pub fn withdraw_vote(_ctx: Context<WithdrawVote>, _proposal_id: u64) -> Result<()> {
+    Err(GovernanceError::CustodiedVotingRequired.into())
 }
 
 // ============================================================================
@@ -332,18 +234,11 @@ pub fn update_proposal_status(
     let proposal = &mut ctx.accounts.feature_proposal;
     let clock = Clock::get()?;
 
-    // Validate status transition
-    match (proposal.status, new_status) {
-        // Valid transitions
-        (ProposalStatus::Active, ProposalStatus::InDevelopment) => {}
-        (ProposalStatus::InDevelopment, ProposalStatus::AwaitingGates) => {
-            proposal.completed_at = Some(clock.unix_timestamp);
-        }
-        (ProposalStatus::AwaitingGates, ProposalStatus::RewardsDistribution) => {}
-        (ProposalStatus::RewardsDistribution, ProposalStatus::Finalized) => {}
-        (_, ProposalStatus::Cancelled) => {}
-        // Invalid transition
-        _ => return Err(GovernanceError::InvalidProposalStatus.into()),
+    validate_status_transition(proposal, new_status, clock.unix_timestamp)?;
+    if proposal.status == ProposalStatus::InDevelopment
+        && new_status == ProposalStatus::AwaitingGates
+    {
+        proposal.completed_at = Some(clock.unix_timestamp);
     }
 
     let old_status = proposal.status;
@@ -358,4 +253,32 @@ pub fn update_proposal_status(
     );
 
     Ok(())
+}
+
+/// The oracle remains the only status authority. Returned custody must never
+/// re-enter a live tally through a terminal-to-active transition.
+pub(crate) fn validate_status_transition(
+    proposal: &FeatureProposal,
+    new_status: ProposalStatus,
+    now: i64,
+) -> Result<()> {
+    match (proposal.status, new_status) {
+        (ProposalStatus::Active, ProposalStatus::InDevelopment) => {
+            require!(
+                proposal.has_custodied_voting(),
+                GovernanceError::LegacyProposalRequiresResubmission
+            );
+            super::voting_v2::require_open_vote_window(proposal, now)
+        }
+        (ProposalStatus::InDevelopment, ProposalStatus::AwaitingGates)
+        | (ProposalStatus::AwaitingGates, ProposalStatus::RewardsDistribution)
+        | (ProposalStatus::RewardsDistribution, ProposalStatus::Finalized) => Ok(()),
+        // Finalized remains finalized; cancelled remains cancelled. Historical
+        // terminal identity is stable as well as the tally.
+        (ProposalStatus::Finalized | ProposalStatus::Cancelled, _) => {
+            Err(GovernanceError::InvalidProposalStatus.into())
+        }
+        (_, ProposalStatus::Cancelled) => Ok(()),
+        _ => Err(GovernanceError::InvalidProposalStatus.into()),
+    }
 }

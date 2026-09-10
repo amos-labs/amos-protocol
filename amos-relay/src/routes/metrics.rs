@@ -1,12 +1,10 @@
 //! Metrics snapshot — the Oracle's view of relay state.
 //!
 //! Composes on-chain pool state with DB aggregations to produce
-//! `amos_oracle::metrics::RelaySnapshot`. Zeroed fields where the underlying
-//! data isn't available (e.g. if the Solana client is unconfigured) —
-//! degrading gracefully so the Oracle's constitutional §4 zero-signal
-//! weighting kicks in rather than a hard error.
+//! `amos_oracle::metrics::RelaySnapshot`. Unknown economic measurements are
+//! null; contribution points are never reported as settled AMOS revenue.
 
-use crate::{solana::DailyPoolState, state::RelayState};
+use crate::{solana::new_daily_pool, state::RelayState};
 use axum::{extract::State, response::Json, routing::get, Router};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -22,9 +20,9 @@ struct RelaySnapshotResponse {
     taken_at: DateTime<Utc>,
 
     // Pool state
-    daily_emission_remaining_points: u64,
-    daily_pool_points_distributed: u64,
-    growth_pool_cap_bps: u16,
+    daily_emission_remaining_points: Option<u64>,
+    daily_pool_points_distributed: Option<u64>,
+    growth_pool_cap_bps: Option<u16>,
 
     // Bounty lifecycle counts (rolling 7d)
     bounties_posted_7d: u32,
@@ -33,8 +31,8 @@ struct RelaySnapshotResponse {
     bounties_rejected_7d: u32,
 
     // Value flow (rolling 7d, in AMOS atomic units)
-    commercial_volume_7d: u64,
-    system_emission_7d: u64,
+    commercial_volume_7d: Option<u64>,
+    system_emission_7d: Option<u64>,
 
     // Agent activity
     active_agents_7d: u32,
@@ -48,39 +46,25 @@ async fn snapshot(State(state): State<RelayState>) -> Json<RelaySnapshotResponse
     let taken_at = Utc::now();
 
     // ── Pool state (on-chain) ──────────────────────────────────────────
-    let (remaining_points, distributed_points) = match &state.solana {
-        Some(solana) => {
-            let day_index = solana
-                .read_config_timing()
-                .await
-                .map(|(_, idx)| idx)
-                .unwrap_or(0);
-            let pool = solana
-                .read_daily_pool(day_index)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or(DailyPoolState {
-                    day_index,
-                    daily_emission: 0,
-                    tokens_distributed: 0,
-                    total_points: 0,
-                    proof_count: 0,
-                });
-            // `total_points` is the accumulated pool denominator; the remaining
-            // pool in points is approximated by daily_emission - distributed
-            // (in lamports), which isn't directly "points." For the Oracle's
-            // purposes we expose the points figures it cares about.
-            let distributed = pool.total_points;
-            // Remaining is budget-available; we don't have an authoritative
-            // "points remaining" on-chain. Report 0 when we can't compute and
-            // let Oracle's §4 weighting handle it.
-            (0u64, distributed)
+    let (distributed_points, growth_cap) = if let Some(solana) = &state.solana {
+        match solana.read_config_timing().await {
+            Ok((_, day)) => match solana.read_daily_pool(day).await {
+                Ok(pool) => (
+                    Some(pool.unwrap_or_else(|| new_daily_pool(day)).total_points),
+                    Some(amos_protocol_math::growth_cap_bps(day as u64)),
+                ),
+                Err(error) => {
+                    warn!(%error, "Economic pool measurement unavailable");
+                    (None, None)
+                }
+            },
+            Err(error) => {
+                warn!(%error, "Economic clock measurement unavailable");
+                (None, None)
+            }
         }
-        None => {
-            warn!("metrics/snapshot: Solana client unconfigured; pool fields = 0");
-            (0, 0)
-        }
+    } else {
+        (None, None)
     };
 
     // ── Bounty lifecycle counts over the last 7 days ───────────────────
@@ -103,30 +87,11 @@ async fn snapshot(State(state): State<RelayState>) -> Json<RelaySnapshotResponse
     )
     .await;
 
-    // Commercial volume = total reward_tokens on settled bounties in window.
-    // "Commercial" here means all user-funded bounties (vs. system/treasury).
-    // The relay doesn't currently distinguish commercial from system in a
-    // dedicated column — we approximate via approved in window as proxy.
-    // This is tracked as a follow-up refinement (real commercial tagging).
-    let commercial_volume_7d: u64 = sqlx::query_scalar::<_, Option<i64>>(
-        r#"
-        SELECT COALESCE(SUM(reward_tokens), 0)::bigint
-        FROM relay_bounties
-        WHERE approved_at >= $1
-          AND status = 'approved'
-        "#,
-    )
-    .bind(seven_days_ago)
-    .fetch_one(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(0)
-    .max(0) as u64;
-
-    // System emission proxy: same for now; real split requires a
-    // `bounty_source` column (tracked as follow-up).
-    let system_emission_7d = commercial_volume_7d;
+    // No authoritative source-tagged settlement ledger is available here.
+    // reward_tokens are contribution points, not paid AMOS. Never duplicate
+    // those points into both commercial revenue and system emission.
+    let commercial_volume_7d = None;
+    let system_emission_7d = None;
 
     // Active agents = distinct agents that claimed OR submitted in window.
     let active_agents_7d: u32 = sqlx::query_scalar::<_, Option<i64>>(
@@ -167,9 +132,9 @@ async fn snapshot(State(state): State<RelayState>) -> Json<RelaySnapshotResponse
 
     Json(RelaySnapshotResponse {
         taken_at,
-        daily_emission_remaining_points: remaining_points,
+        daily_emission_remaining_points: None,
         daily_pool_points_distributed: distributed_points,
-        growth_pool_cap_bps: 2000, // sigmoid ceiling; real on-chain read is follow-up
+        growth_pool_cap_bps: growth_cap,
         bounties_posted_7d: posted_7d,
         bounties_claimed_7d: claimed_7d,
         bounties_settled_7d: settled_7d,

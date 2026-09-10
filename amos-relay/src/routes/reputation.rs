@@ -1,6 +1,8 @@
 //! Cross-harness reputation oracle routes.
 
+use crate::identity::Principal;
 use crate::{reputation::ReputationEngine, state::RelayState};
+use axum::Extension;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -34,7 +36,7 @@ pub struct ReportOutcomeRequest {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(type_name = "task_outcome", rename_all = "lowercase")]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum TaskOutcome {
     Completed,
@@ -82,10 +84,10 @@ async fn get_reputation(
     let reports = sqlx::query_as::<_, OutcomeRow>(
         r#"
         SELECT
-            outcome,
+            outcome::text AS outcome,
             quality_score
         FROM relay_reputation_reports
-        WHERE agent_id = $1
+        WHERE agent_id = $1 AND authenticated_reporter IS NOT NULL
         "#,
     )
     .bind(agent_id)
@@ -123,7 +125,7 @@ async fn get_reputation(
         .collect();
 
     let avg_quality = if !quality_scores.is_empty() {
-        quality_scores.iter().sum::<i16>() as f64 / quality_scores.len() as f64
+        quality_scores.iter().map(|s| *s as i64).sum::<i64>() as f64 / quality_scores.len() as f64
     } else {
         0.0
     };
@@ -149,8 +151,10 @@ async fn get_reputation(
 /// Report a task outcome from a harness.
 async fn report_outcome(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Json(req): Json<ReportOutcomeRequest>,
 ) -> Result<(StatusCode, Json<OutcomeReportResponse>), StatusCode> {
+    let reporter = principal.require_scope("reputation:write")?;
     // Input validation
     if req.harness_id.is_empty() || req.harness_id.len() > 255 {
         warn!(
@@ -175,7 +179,7 @@ async fn report_outcome(
 
     // Anti-farming: verify the agent exists and the harness is registered
     let agent_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM relay_agents WHERE id = $1 AND status = 'active')",
+        "SELECT EXISTS(SELECT 1 FROM relay_agents WHERE id = $1 AND wallet_verified AND status = 'active')",
     )
     .bind(req.agent_id)
     .fetch_one(&state.db)
@@ -190,29 +194,43 @@ async fn report_outcome(
         return Err(StatusCode::NOT_FOUND);
     }
 
+    let harness: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM relay_harnesses WHERE harness_id=$1 AND status='active'",
+    )
+    .bind(&req.harness_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let harness = harness.ok_or(StatusCode::NOT_FOUND)?;
     let report_id = Uuid::new_v4();
     let now = Utc::now();
 
     let report = sqlx::query_as::<_, OutcomeReportResponse>(
         r#"
-        INSERT INTO relay_reputation_reports (
-            id, harness_id, agent_id, task_id, outcome,
-            quality_score, reported_at
+        WITH report AS (
+            INSERT INTO relay_reputation_reports (
+                id, harness_id, agent_id, task_id, outcome,
+                quality_score, reported_at, authenticated_reporter
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING
-            id, harness_id, agent_id, task_id,
-            outcome,
-            quality_score, reported_at
+        SELECT report.id, h.harness_id, report.agent_id, report.task_id,
+               report.outcome::text AS outcome, report.quality_score, report.reported_at
+        FROM report JOIN relay_harnesses h ON h.id=report.harness_id
         "#,
     )
     .bind(report_id)
-    .bind(&req.harness_id)
+    .bind(harness)
     .bind(req.agent_id)
     .bind(&req.task_id)
-    .bind(req.outcome)
+    .bind(match req.outcome {
+        TaskOutcome::Completed => "completed",
+        TaskOutcome::Failed => "failed",
+    })
     .bind(req.quality_score.map(|s| s as i16))
     .bind(now)
+    .bind(reporter)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
@@ -237,10 +255,10 @@ async fn update_agent_stats(state: &RelayState, agent_id: Uuid) -> Result<(), St
     let reports = sqlx::query_as::<_, OutcomeRow>(
         r#"
         SELECT
-            outcome,
+            outcome::text AS outcome,
             quality_score
         FROM relay_reputation_reports
-        WHERE agent_id = $1
+        WHERE agent_id = $1 AND authenticated_reporter IS NOT NULL
         "#,
     )
     .bind(agent_id)
@@ -265,7 +283,10 @@ async fn update_agent_stats(state: &RelayState, agent_id: Uuid) -> Result<(), St
         .collect();
 
     let avg_quality = if !quality_scores.is_empty() {
-        Some(quality_scores.iter().sum::<i16>() as f64 / quality_scores.len() as f64)
+        Some(
+            quality_scores.iter().map(|s| *s as i64).sum::<i64>() as f64
+                / quality_scores.len() as f64,
+        )
     } else {
         None
     };
@@ -284,14 +305,22 @@ async fn update_agent_stats(state: &RelayState, agent_id: Uuid) -> Result<(), St
         SET
             total_bounties_completed = $1,
             avg_quality_score = $2,
-            trust_level = $3
+            trust_level = $3,
+            total_bounties_failed = $5,
+            completion_rate = $6
         WHERE id = $4
         "#,
     )
     .bind(total_completed)
-    .bind(avg_quality)
+    .bind(avg_quality.unwrap_or(0.0))
     .bind(trust_level as i16)
     .bind(agent_id)
+    .bind(total_failed)
+    .bind(if total_completed + total_failed == 0 {
+        0.0
+    } else {
+        total_completed as f64 / (total_completed + total_failed) as f64
+    })
     .execute(&state.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

@@ -4,7 +4,8 @@
 //! Fee split must match on-chain constants in:
 //!   - `amos-solana/programs/amos-treasury/src/constants.rs`
 //!   - `amos-solana/programs/amos-bounty/src/constants.rs`
-//!   - `amos-core/src/token/economics.rs`
+//!
+//! Frozen amos-core previews are historical; docs/protocol/ECONOMIC_CONTRACT.md governs.
 
 use serde::{Deserialize, Serialize};
 
@@ -57,11 +58,12 @@ pub struct ProtocolFee {
 /// ```
 pub fn calculate_fee(reward_tokens: u64) -> ProtocolFee {
     // Calculate total protocol fee (3%)
-    let total_fee = (reward_tokens * PROTOCOL_FEE_BPS) / TOTAL_BPS;
+    let total_fee = (reward_tokens as u128 * PROTOCOL_FEE_BPS as u128 / TOTAL_BPS as u128) as u64;
 
     // Distribute the fee according to shares
-    let holder_share = (total_fee * FEE_HOLDER_SHARE_BPS) / TOTAL_BPS;
-    let burn_share = (total_fee * FEE_BURN_SHARE_BPS) / TOTAL_BPS;
+    let holder_share =
+        (total_fee as u128 * FEE_HOLDER_SHARE_BPS as u128 / TOTAL_BPS as u128) as u64;
+    let burn_share = (total_fee as u128 * FEE_BURN_SHARE_BPS as u128 / TOTAL_BPS as u128) as u64;
     // Labs gets remainder to handle rounding
     let labs_share = total_fee - holder_share - burn_share;
 
@@ -76,6 +78,16 @@ pub fn calculate_fee(reward_tokens: u64) -> ProtocolFee {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn largest_amount_preserves_accounting() {
+        let fee = calculate_fee(u64::MAX);
+        assert_eq!(
+            fee.holder_share + fee.burn_share + fee.labs_share,
+            fee.total_fee
+        );
+        assert_eq!(fee.total_fee, (u64::MAX as u128 * 300 / 10_000) as u64);
+    }
 
     #[test]
     fn test_fee_shares_sum_to_100_percent() {

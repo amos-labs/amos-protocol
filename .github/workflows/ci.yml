@@ -35,14 +35,31 @@ jobs:
   #
   # The Anchor on-chain programs under amos-solana/ are a SEPARATE cargo
   # workspace, deliberately excluded from the root workspace, and only build
-  # under the Solana BPF toolchain via `anchor build`. They are covered by the
-  # dedicated `anchor-build` job below rather than by `cargo fmt/clippy/test`
-  # here — running plain clippy/test against them would fail on the missing
-  # solana-program BPF target, not on any real defect.
+  # under the Solana SBF toolchain via `anchor build`. The dedicated job below
+  # also runs their host regression tests; the root cargo commands do not include
+  # that separate workspace.
   # ============================================================================
   check:
     name: Lint & Unit Tests
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: protocol_identity_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["127.0.0.1:5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U runner -d protocol_identity_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["127.0.0.1:6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
 
     steps:
       - name: Checkout code
@@ -73,6 +90,12 @@ jobs:
       - name: Run doc tests
         run: cargo test --doc
 
+      - name: Relay identity HTTP and SQL migration regression
+        env:
+          PROTOCOL_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/protocol_identity_test
+          PROTOCOL_TEST_REDIS_URL: redis://127.0.0.1:6379/
+        run: cargo test -p amos-relay --test identity_integration -- --ignored --nocapture
+
   # ============================================================================
   # GATE 2: Anchor build — on-chain programs (treasury, governance, bounty)
   #
@@ -81,26 +104,13 @@ jobs:
   # `anchor build` so a change that breaks the on-chain programs is caught,
   # without dragging the BPF target into the fast fmt/clippy/test path above.
   #
-  # ADVISORY, NOT GATING — the protocol is public ALPHA.
-  #
-  # While the protocol repo is in alpha, on-chain CI is informational only: an
-  # Anchor/BPF compile (or a flaky Anchor toolchain install) must never block an
-  # ordinary docs/relay/agent change. This job still RUNS on every PR so we can
-  # see on-chain breakage, but it does not gate merges in two ways:
-  #   1. `continue-on-error: true` — a failure here never fails the CI workflow.
-  #   2. This check ("Anchor Build (on-chain programs)") is deliberately absent
-  #      from `.plumbline/policy.json` -> `ci_evidence_checks`, so the Plumbline
-  #      gate never requires it to certify. Only "Lint & Unit Tests" gates.
-  #
-  # Program IDs are frozen (mainnet/devnet unchanged), which is why alpha =
-  # advisory on-chain. Flip `continue-on-error` off AND add this check to
-  # `ci_evidence_checks` once the on-chain programs re-enter active change and
-  # the alpha posture moves to "active".
+  # Required for this active revision of on-chain custody and accounting.
+  # Host tests exercise invariants; the SBF build verifies deployable compilation.
+  # Neither substitutes for a validator migration rehearsal before deployment.
   # ============================================================================
   anchor-build:
     name: Anchor Build (on-chain programs)
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     steps:
       - name: Checkout code
@@ -131,6 +141,18 @@ jobs:
           avm install "$ANCHOR_VERSION"
           avm use "$ANCHOR_VERSION"
 
+      - name: On-chain host regression tests
+        run: cargo test --manifest-path amos-solana/Cargo.toml --lib --locked
+
+      - name: Offline fee-recipient builder tests
+        run: node --test amos-solana/programs/amos-treasury/tests/fee-recipient-builder.test.mjs
+
       - name: Anchor build
         working-directory: amos-solana
-        run: anchor build
+        run: |
+          set -o pipefail
+          anchor build 2>&1 | tee /tmp/amos-anchor-build.log
+          if grep -E 'Stack offset.*exceeded|stack frame.*exceed' /tmp/amos-anchor-build.log; then
+            echo "::error::SBF stack diagnostic is a build failure even if the compiler returned zero."
+            exit 1
+          fi

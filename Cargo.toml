@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "protocol-math",
     "amos-core",
     "amos-relay",
     "amos-agent",

@@ -181,3 +181,10 @@ pub const STEWARD_VOTE_SIZE: usize = 8 + 32 + 8 + 1 + 1 + 8 + 1 + 64;
 /// Space for StewardRecord account
 /// 8 (discriminator) + 32 (steward) + 8 (registered_at) + 1 (active) + 1 (bump) + 64 (reserved)
 pub const STEWARD_RECORD_SIZE: usize = 8 + 32 + 8 + 1 + 1 + 64;
+
+// Custodied voting uses new account discriminators and seed namespaces.
+pub const VOTE_RECORD_V2_SEED: &[u8] = b"vote_record_v2";
+pub const VOTE_VAULT_V2_SEED: &[u8] = b"vote_vault_v2";
+/// Marker in existing FeatureProposal.reserved; legacy accounts remain all-zero.
+pub const CUSTODIED_VOTING_MARKER: &[u8; 8] = b"AMOSVOT2";
+pub const VOTE_RECORD_V2_SIZE: usize = 8 + 1 + 32 + 32 + 8 + 32 + 8 + 8 + 9 + 1 + 1;

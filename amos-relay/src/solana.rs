@@ -33,11 +33,9 @@ const AGENT_TRUST_SEED: &[u8] = b"agent_trust";
 const BOUNTY_LISTING_SEED: &[u8] = b"bounty_listing";
 
 // ── Dynamic payout constants ─────────────────────────────────────────
-/// Virtual points added to the denominator so no single submission can drain the pool.
-const VIRTUAL_POINTS_BASE: u64 = 10_000;
-
 /// One whole AMOS token in lamports (10^9).
-const ONE_TOKEN: u64 = 1_000_000_000;
+#[cfg(test)]
+const ONE_TOKEN: u64 = amos_protocol_math::TOKEN_UNIT;
 
 /// Wrapper around Solana RPC client for relay operations.
 pub struct SolanaClient {
@@ -85,7 +83,7 @@ pub struct SettlementParams {
     pub agent_id: [u8; 32],
     /// SHA-256 hash of the submission evidence
     pub evidence_hash: [u8; 32],
-    /// Maximum token payout in lamports (reward_tokens * 10^9). 0 = no cap.
+    /// Maximum token payout in lamports (reward_tokens * 10^9). 0 = no authorized payout.
     pub max_reward: u64,
 }
 
@@ -123,40 +121,17 @@ pub fn compute_dynamic_max_reward(
     start_time: i64,
     now: i64,
 ) -> u64 {
-    if points == 0 || pool.daily_emission == 0 {
+    let Some(day_start) = start_time.checked_add(pool.day_index as i64 * 86400) else {
         return 0;
-    }
-
-    // When did this day start?
-    let day_start = start_time + (pool.day_index as i64) * 86400;
-    let seconds_elapsed = (now - day_start).max(0) as u64;
-    let seconds_in_day: u64 = 86400;
-
-    // Time-drip: only the fraction of emission that has "dripped" so far is available
-    // Use u128 to avoid overflow: daily_emission (up to ~16000 * 10^9) × seconds_elapsed
-    let emission_so_far = ((pool.daily_emission as u128) * (seconds_elapsed as u128)
-        / (seconds_in_day as u128)) as u64;
-
-    // Available pool = what has dripped minus what's already been paid out
-    let available = emission_so_far.saturating_sub(pool.tokens_distributed);
-    if available == 0 {
-        return 0;
-    }
-
-    // Virtual-points-adjusted proportional share
-    // denominator = total_points_today + VIRTUAL_BASE + my_points
-    let denominator = pool.total_points + VIRTUAL_POINTS_BASE + points;
-    if denominator == 0 {
-        return 0;
-    }
-
-    // max_reward = (points / denominator) × available
-    // Use u128 to prevent overflow
-    let max_reward = ((points as u128) * (available as u128) / (denominator as u128)) as u64;
-
-    // Safety floor: at least 1 token (10^9 lamports) if any emission is available,
-    // so dust submissions still get something.
-    max_reward.max(ONE_TOKEN.min(available))
+    };
+    amos_protocol_math::reward_cap(
+        points,
+        pool.daily_emission,
+        pool.tokens_distributed,
+        pool.total_points,
+        day_start,
+        now,
+    )
 }
 
 /// Minimum size in bytes of a valid on-chain `BountyConfig` account payload.
@@ -207,6 +182,14 @@ fn decode_daily_pool(data: &[u8], day_index: u32) -> Result<DailyPoolState> {
             data.len(),
             DAILY_POOL_ACCOUNT_MIN_LEN
         )));
+    }
+    let stored_day = u32::from_le_bytes(
+        data[8..12]
+            .try_into()
+            .map_err(|_| AmosError::Validation("Invalid pool day".into()))?,
+    );
+    if stored_day != day_index {
+        return Err(AmosError::Validation("DailyPool day mismatch".into()));
     }
     let off = 8; // skip discriminator
     let daily_emission = u64::from_le_bytes(data[off + 4..off + 12].try_into().map_err(|_| {
@@ -262,18 +245,47 @@ fn validate_trust_level(trust_level: u8) -> Result<()> {
     Ok(())
 }
 
-/// Compute a fallback max_reward when the on-chain pool cannot be read
-/// (e.g., pool not created yet, RPC error). Uses a conservative estimate
-/// based on the sigmoid emission schedule.
-pub fn fallback_max_reward(points: u64) -> u64 {
-    // Conservative: assume day 0 emission (16,000 AMOS), full day elapsed,
-    // 10,000 total_points already accumulated. This underestimates payout
-    // which is the safe direction (on-chain proportional formula still runs).
-    let daily_emission: u64 = 16_000 * ONE_TOKEN;
-    let assumed_total_points: u64 = 10_000;
-    let denominator = assumed_total_points + VIRTUAL_POINTS_BASE + points;
-    let max_reward = ((points as u128) * (daily_emission as u128) / (denominator as u128)) as u64;
-    max_reward.max(ONE_TOKEN)
+/// Unknown chain state authorizes no payout. The caller must retry the read.
+pub fn fallback_max_reward(_points: u64) -> u64 {
+    0
+}
+
+/// A confirmed absent daily account can be prepared in the payout transaction.
+/// Use only after a successful config read and an RPC response proving absence.
+pub fn new_daily_pool(day_index: u32) -> DailyPoolState {
+    DailyPoolState {
+        day_index,
+        daily_emission: amos_protocol_math::daily_emission(day_index as u64),
+        tokens_distributed: 0,
+        total_points: 0,
+        proof_count: 0,
+    }
+}
+
+fn checked_day_index(start_time: i64, now: i64) -> Result<u32> {
+    let elapsed = now as i128 - start_time as i128;
+    if elapsed < 0 {
+        return Err(AmosError::Validation(
+            "Program start is in the future".into(),
+        ));
+    }
+    u32::try_from(elapsed / 86400)
+        .map_err(|_| AmosError::Validation("Day index out of range".into()))
+}
+
+fn validate_account_identity(
+    owner: &Pubkey,
+    data: &[u8],
+    program_id: &Pubkey,
+    name: &str,
+) -> Result<()> {
+    let discriminator = Sha256::digest(format!("account:{name}").as_bytes());
+    if owner != program_id || data.get(..8) != Some(&discriminator[..8]) {
+        return Err(AmosError::Validation(format!(
+            "Invalid {name} account identity"
+        )));
+    }
+    Ok(())
 }
 
 impl SolanaClient {
@@ -400,6 +412,11 @@ impl SolanaClient {
         &self,
         params: &SettlementParams,
     ) -> Result<SettlementResult> {
+        if params.max_reward == 0 {
+            return Err(AmosError::Validation(
+                "Zero payout cap: retry with verified chain state".into(),
+            ));
+        }
         let oracle = self.oracle_keypair.as_ref().ok_or_else(|| {
             AmosError::Internal("Oracle keypair not configured — cannot settle bounties".into())
         })?;
@@ -423,28 +440,7 @@ impl SolanaClient {
         // Derive all PDAs
         let (config_pda, _) = Pubkey::find_program_address(&[BOUNTY_CONFIG_SEED], &program_id);
 
-        // Fetch config account to read start_time for correct day_index calculation
-        let rpc_for_config = self.rpc.clone();
-        let config_pda_copy = config_pda;
-        let start_time = tokio::task::spawn_blocking(move || {
-            let account = rpc_for_config
-                .get_account(&config_pda_copy)
-                .map_err(|e| AmosError::SolanaRpc(format!("Failed to fetch config: {}", e)))?;
-            // Layout: 8 (discriminator) + 32 (oracle) + 32 (mint) + 32 (treasury) + 8 (start_time)
-            let data = account.data;
-            if data.len() < 8 + 32 + 32 + 32 + 8 {
-                return Err(AmosError::Internal("Config account too small".into()));
-            }
-            let ts = i64::from_le_bytes(data[104..112].try_into().map_err(|_| {
-                AmosError::Internal("Config account data slice conversion failed".into())
-            })?);
-            Ok::<i64, AmosError>(ts)
-        })
-        .await
-        .map_err(|e| AmosError::Internal(format!("Tokio join error: {}", e)))??;
-
-        let now = chrono::Utc::now().timestamp();
-        let day_index = ((now - start_time) / 86400) as u32;
+        let (_, day_index) = self.read_config_timing().await?;
 
         let (daily_pool_pda, _) =
             Pubkey::find_program_address(&[DAILY_POOL_SEED, &day_index.to_le_bytes()], &program_id);
@@ -702,6 +698,12 @@ impl SolanaClient {
             for attempt in 0..3 {
                 match rpc.get_account(&config_pda) {
                     Ok(account) => {
+                        validate_account_identity(
+                            &account.owner,
+                            &account.data,
+                            &program_id,
+                            "BountyConfig",
+                        )?;
                         let ts = decode_config_start_time(&account.data)?;
                         let now = chrono::Utc::now().timestamp();
                         return Ok::<(i64, i64), AmosError>((ts, now));
@@ -724,7 +726,7 @@ impl SolanaClient {
         .await
         .map_err(|e| AmosError::Internal(format!("Tokio join error: {}", e)))??;
 
-        let day_index = ((now - start_time) / 86400) as u32;
+        let day_index = checked_day_index(start_time, now)?;
         Ok((start_time, day_index))
     }
 
@@ -739,17 +741,22 @@ impl SolanaClient {
         let result = tokio::task::spawn_blocking(move || {
             let mut last_err = None;
             for attempt in 0..3 {
-                match rpc.get_account(&daily_pool_pda) {
-                    Ok(account) => {
-                        return Ok(Some(decode_daily_pool(&account.data, day_index)?));
-                    }
-                    Err(e) => {
-                        let err_str = e.to_string();
-                        if err_str.contains("AccountNotFound")
-                            || err_str.contains("could not find account")
-                        {
-                            return Ok(None); // Pool not created yet today
+                match rpc
+                    .get_account_with_commitment(&daily_pool_pda, CommitmentConfig::confirmed())
+                {
+                    Ok(response) => match response.value {
+                        Some(account) => {
+                            validate_account_identity(
+                                &account.owner,
+                                &account.data,
+                                &program_id,
+                                "DailyPool",
+                            )?;
+                            return Ok(Some(decode_daily_pool(&account.data, day_index)?));
                         }
+                        None => return Ok(None),
+                    },
+                    Err(e) => {
                         last_err = Some(e);
                         if attempt < 2 {
                             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -2398,15 +2405,11 @@ mod tests {
     }
 
     #[test]
-    fn test_dynamic_max_reward_minimum_floor() {
-        // Very small points, should still get at least 1 AMOS (the floor)
+    fn tiny_submissions_do_not_receive_a_whole_token_bonus() {
         let pool = make_pool(16_000 * ONE_TOKEN, 0, 100_000);
         let reward = compute_dynamic_max_reward(1, &pool, 0, 43200);
-        assert!(
-            reward >= ONE_TOKEN,
-            "Minimum floor should be 1 AMOS, got {}",
-            reward
-        );
+        assert!(reward > 0 && reward < ONE_TOKEN);
+        assert_eq!(compute_dynamic_max_reward(1, &pool, i64::MAX, i64::MIN), 0);
     }
 
     #[test]
@@ -2426,20 +2429,39 @@ mod tests {
     }
 
     #[test]
-    fn test_fallback_max_reward() {
-        let reward = fallback_max_reward(1000);
-        // 1000 / (10000 + 10000 + 1000) * 16000 AMOS ≈ 762 AMOS
-        let expected = ((1000u128 * 16_000 * ONE_TOKEN as u128) / 21_000u128) as u64;
-        assert_eq!(reward, expected);
+    fn unreadable_state_never_authorizes_payment() {
+        for points in [0, 1, 1000, u64::MAX] {
+            assert_eq!(fallback_max_reward(points), 0);
+        }
+        let pool = new_daily_pool(1460);
+        assert_eq!(pool.daily_emission, 8050 * ONE_TOKEN);
+        assert_eq!(pool.tokens_distributed, 0);
+        assert_eq!(
+            compute_dynamic_max_reward(1000, &pool, 0, 1460 * 86400 + 43200),
+            amos_protocol_math::reward_cap(
+                1000,
+                pool.daily_emission,
+                0,
+                0,
+                1460 * 86400,
+                1460 * 86400 + 43200
+            )
+        );
     }
 
     #[test]
-    fn test_fallback_max_reward_minimum() {
-        let reward = fallback_max_reward(1);
+    fn rpc_identity_and_clock_are_validated() {
+        let program = Pubkey::new_unique();
+        let mut data = Sha256::digest(b"account:DailyPool").to_vec();
+        assert!(validate_account_identity(&program, &data, &program, "DailyPool").is_ok());
         assert!(
-            reward >= ONE_TOKEN,
-            "Fallback should return at least 1 AMOS"
+            validate_account_identity(&Pubkey::new_unique(), &data, &program, "DailyPool").is_err()
         );
+        data[0] ^= 1;
+        assert!(validate_account_identity(&program, &data, &program, "DailyPool").is_err());
+        assert!(checked_day_index(1, 0).is_err());
+        assert!(checked_day_index(i64::MIN, i64::MAX).is_err());
+        assert_eq!(checked_day_index(100, 86500).unwrap(), 1);
     }
 
     // ── Malformed-input / fuzz tests ───────────────────────────────────
@@ -2886,7 +2908,7 @@ mod tests {
 
     #[test]
     fn test_decode_daily_pool_accepts_exact_min_size() {
-        let payload = vec![0u8; DAILY_POOL_ACCOUNT_MIN_LEN];
+        let payload = build_daily_pool_payload(99, 0, 0, 0, 0);
         let pool = decode_daily_pool(&payload, 99).unwrap();
         assert_eq!(pool.day_index, 99);
         assert_eq!(pool.daily_emission, 0);
@@ -2935,13 +2957,9 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_daily_pool_preserves_caller_day_index() {
-        // The caller passes day_index explicitly — the decoder should echo
-        // it regardless of what's in the payload. This guards against
-        // silent drift if the on-chain layout changes.
+    fn test_decode_daily_pool_rejects_wrong_day_index() {
         let payload = build_daily_pool_payload(7, 0, 0, 0, 0);
-        let pool = decode_daily_pool(&payload, 999).unwrap();
-        assert_eq!(pool.day_index, 999);
+        assert!(decode_daily_pool(&payload, 999).is_err());
     }
 
     #[test]

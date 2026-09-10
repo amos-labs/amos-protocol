@@ -1,8 +1,12 @@
 //! Global agent directory routes.
 
-use crate::state::RelayState;
+use crate::{
+    identity::Principal,
+    middleware::{generate_api_key, hash_api_key},
+    state::RelayState,
+};
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
@@ -17,6 +21,7 @@ use uuid::Uuid;
 /// Build agent routes.
 pub fn routes() -> Router<RelayState> {
     Router::new()
+        .route("/challenge", post(registration_challenge))
         .route("/register", post(register_agent))
         .route("/", get(list_agents))
         .route("/{id}", get(get_agent))
@@ -36,6 +41,73 @@ pub struct RegisterAgentRequest {
     pub description: Option<String>,
     pub wallet_address: String,
     pub harness_id: Option<Uuid>,
+    pub wallet_proof: WalletProof,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WalletProof {
+    pub challenge_id: Uuid,
+    /// Base58 Ed25519 signature over the exact UTF-8 challenge message.
+    pub signature: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChallengeRequest {
+    wallet_address: String,
+}
+
+#[derive(Serialize)]
+struct ChallengeResponse {
+    challenge_id: Uuid,
+    message: String,
+    expires_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+struct RegisteredAgent {
+    #[serde(flatten)]
+    agent: AgentResponse,
+    /// Returned once. Never part of the public directory response.
+    api_key: String,
+}
+
+fn challenge_message(id: Uuid, wallet: &str, nonce: &str, expires: DateTime<Utc>) -> String {
+    format!("AMOS Relay agent registration v1\nchallenge:{id}\nwallet:{wallet}\nnonce:{nonce}\nexpires:{}", expires.timestamp())
+}
+
+fn verify_wallet_signature(wallet: &str, message: &str, signature: &str) -> bool {
+    use std::str::FromStr;
+    let (Ok(key), Ok(sig)) = (
+        solana_sdk::pubkey::Pubkey::from_str(wallet),
+        solana_sdk::signature::Signature::from_str(signature),
+    ) else {
+        return false;
+    };
+    sig.verify(key.as_ref(), message.as_bytes())
+}
+
+async fn registration_challenge(
+    State(state): State<RelayState>,
+    Json(req): Json<ChallengeRequest>,
+) -> Result<Json<ChallengeResponse>, StatusCode> {
+    if !crate::validate_wallet_address(&req.wallet_address) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let id = Uuid::new_v4();
+    let expires = Utc::now() + chrono::Duration::minutes(5);
+    let message = challenge_message(id, &req.wallet_address, &generate_api_key("nonce"), expires);
+    sqlx::query("DELETE FROM relay_identity_challenges WHERE expires_at < now()")
+        .execute(&state.db)
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    sqlx::query("INSERT INTO relay_identity_challenges (id, wallet_address, message, expires_at) VALUES ($1, $2, $3, $4)")
+        .bind(id).bind(&req.wallet_address).bind(&message).bind(expires)
+        .execute(&state.db).await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(Json(ChallengeResponse {
+        challenge_id: id,
+        message,
+        expires_at: expires,
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,8 +178,9 @@ fn agent_from_row(row: sqlx::postgres::PgRow) -> Result<AgentResponse, sqlx::Err
 /// Register a new agent in the global directory.
 async fn register_agent(
     State(state): State<RelayState>,
+    principal: Option<Extension<Principal>>,
     Json(req): Json<RegisterAgentRequest>,
-) -> Result<(StatusCode, Json<AgentResponse>), StatusCode> {
+) -> Result<(StatusCode, Json<RegisteredAgent>), StatusCode> {
     // Validate wallet address format
     if !crate::validate_wallet_address(&req.wallet_address) {
         warn!(
@@ -154,15 +227,53 @@ async fn register_agent(
     let agent_id = Uuid::new_v4();
     let now = Utc::now();
     let caps_json = serde_json::to_value(&req.capabilities).unwrap_or_default();
+    // A caller cannot attach itself to somebody else's reporting harness.
+    if let Some(harness_id) = req.harness_id {
+        let name: Option<String> = sqlx::query_scalar(
+            "SELECT harness_id FROM relay_harnesses WHERE id = $1 AND status = 'active'",
+        )
+        .bind(harness_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        let name = name.ok_or(StatusCode::FORBIDDEN)?;
+        principal
+            .as_ref()
+            .ok_or(StatusCode::FORBIDDEN)?
+            .0
+            .require_harness(&name)?;
+    }
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    // Consume inside the registration transaction: expired, wrong-wallet, and
+    // replayed proofs fail closed, including concurrent copies of a signature.
+    let challenge: Option<(String,)> = sqlx::query_as("DELETE FROM relay_identity_challenges WHERE id = $1 AND wallet_address = $2 AND expires_at > now() RETURNING message")
+        .bind(req.wallet_proof.challenge_id).bind(&req.wallet_address)
+        .fetch_optional(&mut *tx).await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let (message,) = challenge.ok_or(StatusCode::UNAUTHORIZED)?;
+    if !verify_wallet_signature(&req.wallet_address, &message, &req.wallet_proof.signature) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let api_key = generate_api_key("agent");
 
     let row = sqlx::query(&format!(
         "INSERT INTO relay_agents (
                 id, name, display_name, endpoint_url, capabilities,
                 description, wallet_address, harness_id, trust_level,
                 status, total_bounties_completed, avg_quality_score,
-                registered_at, last_heartbeat
+                registered_at, last_heartbeat, api_key_hash, wallet_verified
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, true)
+            ON CONFLICT (wallet_address) WHERE wallet_address IS NOT NULL DO UPDATE SET
+                name = EXCLUDED.name, display_name = EXCLUDED.display_name,
+                endpoint_url = EXCLUDED.endpoint_url, capabilities = EXCLUDED.capabilities,
+                description = EXCLUDED.description, harness_id = EXCLUDED.harness_id,
+                api_key_hash = EXCLUDED.api_key_hash, wallet_verified = true,
+                last_heartbeat = EXCLUDED.last_heartbeat
+            WHERE relay_agents.status IN ('active', 'inactive')
             RETURNING {AGENT_SELECT}"
     ))
     .bind(agent_id)
@@ -179,17 +290,23 @@ async fn register_agent(
     .bind(0.0f64)
     .bind(now)
     .bind(now)
-    .fetch_one(&state.db)
+    .bind(hash_api_key(&api_key))
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|e| {
         warn!("Failed to register agent: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    })?
+    .ok_or(StatusCode::FORBIDDEN)?;
     let agent = agent_from_row(row).map_err(|e| {
         warn!("Failed to map agent row: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    tx.commit()
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let agent_id = agent.id;
     info!(
         "Registered agent {} ({}) on harness {:?}",
         agent_id, req.name, req.harness_id
@@ -219,7 +336,10 @@ async fn register_agent(
         });
     }
 
-    Ok((StatusCode::CREATED, Json(agent)))
+    Ok((
+        StatusCode::CREATED,
+        Json(RegisteredAgent { agent, api_key }),
+    ))
 }
 
 /// List agents with optional filters.
@@ -277,9 +397,11 @@ const VALID_AGENT_STATUSES: &[&str] = &["active", "inactive", "suspended"];
 /// Agent heartbeat to indicate it's still active.
 async fn agent_heartbeat(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
     Json(req): Json<HeartbeatRequest>,
 ) -> Result<Json<AgentResponse>, StatusCode> {
+    principal.require_agent(id)?;
     // Validate status if provided
     if let Some(ref status) = req.status {
         if !VALID_AGENT_STATUSES.contains(&status.as_str()) {
@@ -316,4 +438,43 @@ async fn agent_heartbeat(
     let agent = agent_from_row(row).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(agent))
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use solana_sdk::signature::{Keypair, Signer};
+
+    #[test]
+    fn wallet_proof_binds_wallet_and_exact_challenge_bytes() {
+        let signer = Keypair::new();
+        let other = Keypair::new();
+        let wallet = signer.pubkey().to_string();
+        let message = challenge_message(Uuid::new_v4(), &wallet, "nonce", Utc::now());
+        let signature = signer.sign_message(message.as_bytes()).to_string();
+        assert!(verify_wallet_signature(&wallet, &message, &signature));
+        assert!(!verify_wallet_signature(
+            &other.pubkey().to_string(),
+            &message,
+            &signature
+        ));
+        assert!(!verify_wallet_signature(
+            &wallet,
+            &(message.clone() + "changed"),
+            &signature
+        ));
+        assert!(!verify_wallet_signature(
+            &wallet,
+            &message,
+            &other.sign_message(message.as_bytes()).to_string()
+        ));
+        assert!(!verify_wallet_signature(&wallet, &message, "invalid"));
+    }
+
+    #[test]
+    fn registration_requires_proof_and_directory_shape_has_no_credential() {
+        let req = serde_json::json!({"name":"a","display_name":"A","endpoint_url":"https://example.test","capabilities":[],"wallet_address":Keypair::new().pubkey().to_string()});
+        assert!(serde_json::from_value::<RegisterAgentRequest>(req).is_err());
+        assert!(!AGENT_SELECT.contains("api_key"));
+    }
 }

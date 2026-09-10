@@ -2,29 +2,29 @@
 ///
 /// This module defines all the constants that govern the trustless token distribution
 /// system. These values are hardcoded on-chain and ensure predictable, transparent
-/// operation without any centralized control beyond the oracle's role in validation.
+/// operation subject to the oracle and configured administrative authorities.
 use anchor_lang::prelude::*;
 
 // ============================================================================
 // Token Economics Constants
 // ============================================================================
 
-/// Total supply of AMOS tokens (100 million)
-pub const TOTAL_SUPPLY: u64 = 100_000_000;
+/// Intended total supply in raw units (100 million AMOS)
+pub const TOTAL_SUPPLY: u64 = 100_000_000 * ONE_TOKEN;
 
-/// Bounty Treasury allocation (95% of total supply = 95 million tokens)
+/// Bounty treasury allocation in raw units (95 million AMOS)
 /// This is the pool from which bounties are distributed
-pub const TREASURY_ALLOCATION: u64 = 95_000_000;
+pub const TREASURY_ALLOCATION: u64 = 95_000_000 * ONE_TOKEN;
 
 // ============================================================================
 // Sigmoid Emission Schedule
 //
 // emission(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
 //
-// Smooth, ungameable decay from 16,000 AMOS/day at launch to 100 AMOS/day
+// Smooth decay from a ceiling of 16,000 AMOS/day at launch to 100 AMOS/day
 // floor. No discrete halving events. No epochs. Emission is computed directly
 // from elapsed time since launch using the same integer sigmoid math
-// (EXP_LOOKUP table) used for pool separation.
+// (shared fixed-point kernel) used for pool separation.
 // ============================================================================
 
 /// Token decimal places (must match SPL mint)
@@ -37,7 +37,7 @@ pub const ONE_TOKEN: u64 = 10u64.pow(TOKEN_DECIMALS);
 pub const EMISSION_CEILING: u64 = 16_000 * ONE_TOKEN;
 
 /// Minimum daily emission floor (100 whole AMOS tokens per day)
-/// Emission never drops below this, ensuring perpetual rewards
+/// Scheduled floor; payouts still require a funded treasury
 pub const EMISSION_FLOOR: u64 = 100 * ONE_TOKEN;
 
 /// Sigmoid midpoint in days (~4 years)
@@ -165,12 +165,11 @@ pub const MIN_QUALITY_SCORE: u8 = 30;
 /// Maximum points that can be awarded for a single bounty
 pub const MAX_BOUNTY_POINTS: u16 = 2000;
 
-/// Minimum escrow amount for commercial bounties (100 tokens, assuming 6 decimals)
+/// Minimum escrow amount for commercial bounties (100 AMOS, nine decimals)
 /// Prevents dust bounties that waste compute and bloat account space
-pub const MIN_COMMERCIAL_ESCROW: u64 = 100_000_000;
+pub const MIN_COMMERCIAL_ESCROW: u64 = 100 * amos_protocol_math::TOKEN_UNIT;
 
-/// Maximum number of bounties an operator can submit per day
-/// Prevents spam and ensures fair distribution
+/// Legacy unused global limit; active agent quotas use TRUST_LEVEL_DAILY_LIMITS.
 pub const MAX_DAILY_BOUNTIES_PER_OPERATOR: u16 = 50;
 
 // ============================================================================
@@ -197,7 +196,7 @@ pub const TRUST_LEVEL_5_MIN_REPUTATION: u32 = 8500;
 pub const TRUST_LEVEL_MAX_POINTS: [u16; 5] = [100, 200, 500, 1000, 2000];
 
 /// Daily bounty limits for each trust level
-pub const TRUST_LEVEL_DAILY_LIMITS: [u16; 5] = [10, 20, 40, 75, 100];
+pub const TRUST_LEVEL_DAILY_LIMITS: [u16; 5] = [3, 5, 10, 15, 25];
 
 // ============================================================================
 // Contribution Type Multipliers
@@ -439,21 +438,15 @@ pub const CONTRIBUTION_REGISTRY_SEED: &[u8] = b"contribution_registry";
 ///
 /// Constitutional guarantee: always returns >= DISCOVERY_MULTIPLIER_FLOOR_BPS.
 pub fn discovery_multiplier_bps(elapsed_days: u64) -> u16 {
-    let t = elapsed_days as i64;
-    let mid = DISCOVERY_SIGMOID_MIDPOINT_DAYS as i64;
-
-    // Negative sign: this sigmoid RISES (opposite of emission/growth sigmoids)
-    let x_hundredths = -((DISCOVERY_SIGMOID_K_SCALED as i64) * (t - mid)) / 100;
-
-    let exp_x = exp_scaled(x_hundredths);
-    let sigmoid_scaled = 100_000_000u64 / (10_000u64 + exp_x).max(1);
-
-    let range = (DISCOVERY_MULTIPLIER_CEILING_BPS - DISCOVERY_MULTIPLIER_FLOOR_BPS) as u64;
-    let result = DISCOVERY_MULTIPLIER_FLOOR_BPS as u64 + (range * sigmoid_scaled) / 10000;
-
-    result
-        .max(DISCOVERY_MULTIPLIER_FLOOR_BPS as u64)
-        .min(DISCOVERY_MULTIPLIER_CEILING_BPS as u64) as u16
+    let descending = amos_protocol_math::sigmoid(
+        elapsed_days,
+        DISCOVERY_MULTIPLIER_CEILING_BPS as u64,
+        DISCOVERY_MULTIPLIER_FLOOR_BPS as u64,
+        DISCOVERY_SIGMOID_MIDPOINT_DAYS,
+        DISCOVERY_SIGMOID_K_SCALED,
+    );
+    (DISCOVERY_MULTIPLIER_CEILING_BPS as u64 + DISCOVERY_MULTIPLIER_FLOOR_BPS as u64 - descending)
+        as u16
 }
 
 /// Get the contribution type multiplier in basis points.
@@ -503,67 +496,6 @@ pub fn is_growth_contribution(contribution_type: u8) -> bool {
 // Sigmoid Growth Cap Computation
 // ============================================================================
 
-/// Lookup table for e^(x/10) where x is the table index (0..=60).
-/// Each value is e^(index/10) scaled by 10000.
-/// Covers the range [0.0, 6.0] which is sufficient since sigmoid saturates
-/// beyond ~3 standard deviations from midpoint.
-///
-/// Generated: (0..=60).map(|i| (f64::exp(i as f64 / 10.0) * 10000.0).round() as u64)
-const EXP_LOOKUP: [u64; 61] = [
-    10000, 11052, 12214, 13499, 14918, 16487, 18221, 20138, 22255, 24596, // 0.0 - 0.9
-    27183, 30042, 33201, 36693, 40552, 44817, 49530, 54739, 60496, 66859, // 1.0 - 1.9
-    73891, 81662, 90250, 99741, 110232, 121825, 134637, 148797, 164446, 181741, // 2.0 - 2.9
-    200855, 221979, 245325, 271126, 299641, 331155, 365982, 404473, 447012,
-    494024, // 3.0 - 3.9
-    545982, 603403, 666863, 737095, 814509, 900171, 995303, 1100317, 1215810,
-    1343600, // 4.0 - 4.9
-    1484132, 1640029, 1812118, 2002581, 2213643, 2447647, 2707083, 2995545, 3316723,
-    3674497, // 5.0 - 5.9
-    4034288, // 6.0
-];
-
-/// Compute e^x using the lookup table with linear interpolation.
-/// Input: x scaled by 100 (e.g., x=150 means e^1.5)
-/// Output: e^x scaled by 10000
-/// For negative x, returns 10000/e^|x| (reciprocal).
-fn exp_scaled(x_hundredths: i64) -> u64 {
-    if x_hundredths >= 600 {
-        return EXP_LOOKUP[60]; // e^6.0 ≈ 403.4
-    }
-    if x_hundredths <= -600 {
-        return 1; // e^-6.0 ≈ 0.0025, rounds to ~0 at our scale
-    }
-
-    let (abs_x, is_negative) = if x_hundredths < 0 {
-        ((-x_hundredths) as u64, true)
-    } else {
-        (x_hundredths as u64, false)
-    };
-
-    // Map x (in hundredths) to table index (in tenths)
-    // abs_x=150 (1.50) → table index 15 (1.5), remainder 0
-    let idx = (abs_x / 10) as usize;
-    let remainder = abs_x % 10; // 0-9, represents 0.00-0.09
-
-    let val = if idx >= 60 {
-        EXP_LOOKUP[60]
-    } else if remainder == 0 {
-        EXP_LOOKUP[idx]
-    } else {
-        // Linear interpolation between table[idx] and table[idx+1]
-        let lo = EXP_LOOKUP[idx];
-        let hi = EXP_LOOKUP[idx + 1];
-        lo + (hi - lo) * remainder / 10
-    };
-
-    if is_negative {
-        // e^(-x) = 1/e^x → scaled: 10000 * 10000 / val
-        10000u64.saturating_mul(10000) / val.max(1)
-    } else {
-        val
-    }
-}
-
 /// Compute the growth pool cap in BPS using sigmoid decay.
 ///
 /// Formula: growth_cap(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
@@ -572,7 +504,7 @@ fn exp_scaled(x_hundredths: i64) -> u64 {
 /// At t=midpoint: cap = (ceiling + floor) / 2 ≈ 11.5%
 /// At t→∞: cap → floor (3%)
 ///
-/// All integer math, no floating point. Uses lookup table for e^x.
+/// All integer math, no floating point. Uses the shared fixed-point kernel.
 pub fn sigmoid_growth_cap_bps(elapsed_days: u64) -> u16 {
     sigmoid_growth_cap_bps_params(
         elapsed_days,
@@ -591,25 +523,13 @@ pub fn sigmoid_growth_cap_bps_params(
     midpoint_days: u64,
     k_scaled: u64,
 ) -> u16 {
-    let t = elapsed_days as i64;
-    let mid = midpoint_days as i64;
-
-    // x = k * (t - midpoint), in hundredths
-    // k_scaled=100 means k=0.01, so k*(t-mid) in hundredths = k_scaled * (t-mid) / 100
-    let x_hundredths = (k_scaled as i64) * (t - mid) / 100;
-
-    // e^x from lookup table
-    let exp_x = exp_scaled(x_hundredths);
-
-    // sigmoid = 1 / (1 + e^x), scaled by 10000
-    // = 10000 * 10000 / (10000 + exp_x)
-    let sigmoid_scaled = 100_000_000u64 / (10000u64 + exp_x).max(1);
-
-    // growth_cap = floor + (ceiling - floor) * sigmoid / 10000
-    let range = (ceiling_bps - floor_bps) as u64;
-    let result = floor_bps as u64 + (range * sigmoid_scaled) / 10000;
-
-    result.min(ceiling_bps as u64) as u16
+    amos_protocol_math::sigmoid(
+        elapsed_days,
+        ceiling_bps as u64,
+        floor_bps as u64,
+        midpoint_days,
+        k_scaled,
+    ) as u16
 }
 
 // ============================================================================
@@ -620,8 +540,8 @@ pub fn sigmoid_growth_cap_bps_params(
 ///
 /// Formula: emission(t) = floor + (ceiling - floor) / (1 + e^(k × (t - midpoint)))
 ///
-/// Uses the same EXP_LOOKUP table and integer arithmetic as sigmoid_growth_cap_bps.
-/// Returns tokens per day (not basis points).
+/// Uses the same fixed-point kernel as sigmoid_growth_cap_bps.
+/// Returns raw token units per day (9 decimals).
 pub fn sigmoid_daily_emission(elapsed_days: u64) -> u64 {
     sigmoid_daily_emission_params(
         elapsed_days,
@@ -640,34 +560,7 @@ pub fn sigmoid_daily_emission_params(
     midpoint_days: u64,
     k_scaled: u64,
 ) -> u64 {
-    let range = ceiling.saturating_sub(floor);
-    if range == 0 {
-        return floor;
-    }
-
-    // Calculate k × (t - midpoint) in hundredths for exp_scaled lookup
-    // k_scaled is k × 10000, so k × (t - midpoint) = k_scaled × (t - midpoint) / 10000
-    // For exp_scaled we need x in hundredths: k × (t - midpoint) × 100
-    // = k_scaled × (t - midpoint) / 100
-    let diff = if elapsed_days >= midpoint_days {
-        (elapsed_days - midpoint_days) as i64
-    } else {
-        -((midpoint_days - elapsed_days) as i64)
-    };
-
-    let x_hundredths = (k_scaled as i64).checked_mul(diff).unwrap_or(i64::MAX) / 100;
-
-    // e^(k × (t - midpoint)), scaled by 10000
-    let exp_val = exp_scaled(x_hundredths);
-
-    // 1 + e^(...), scaled: 10000 + exp_val
-    let denominator = 10_000u64.saturating_add(exp_val);
-
-    // range / (1 + e^(...))
-    // = range * 10000 / denominator
-    let sigmoid_value = range.checked_mul(10_000).unwrap_or(u64::MAX) / denominator;
-
-    floor.saturating_add(sigmoid_value)
+    amos_protocol_math::sigmoid(elapsed_days, ceiling, floor, midpoint_days, k_scaled)
 }
 
 /// Get the maximum concurrent claims for a given trust level
@@ -747,6 +640,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn allocation_and_minimums_are_nine_decimal_raw_units() {
+        assert_eq!(TOTAL_SUPPLY, 100_000_000_000_000_000);
+        assert_eq!(TREASURY_ALLOCATION, 95_000_000_000_000_000);
+        assert_eq!(MIN_COMMERCIAL_ESCROW, 100_000_000_000);
+        assert!(1_000 * ONE_TOKEN < TREASURY_ALLOCATION);
+    }
+
+    #[test]
     fn test_treasury_allocation() {
         assert_eq!(TREASURY_ALLOCATION, TOTAL_SUPPLY * 95 / 100);
     }
@@ -797,8 +698,7 @@ mod tests {
     #[test]
     fn test_discovery_multiplier_at_midpoint() {
         let mult = discovery_multiplier_bps(DISCOVERY_SIGMOID_MIDPOINT_DAYS);
-        let expected_mid =
-            (DISCOVERY_MULTIPLIER_FLOOR_BPS + DISCOVERY_MULTIPLIER_CEILING_BPS) / 2;
+        let expected_mid = (DISCOVERY_MULTIPLIER_FLOOR_BPS + DISCOVERY_MULTIPLIER_CEILING_BPS) / 2;
         let tolerance = 500;
         assert!(
             (mult as i32 - expected_mid as i32).unsigned_abs() <= tolerance,
@@ -982,14 +882,19 @@ mod tests {
     }
 
     #[test]
-    fn test_exp_lookup_accuracy() {
-        // e^0 = 1.0 → 10000
-        assert_eq!(exp_scaled(0), 10000);
-        // e^1.0 → 27183
-        assert_eq!(exp_scaled(100), 27183);
-        // e^-1.0 → 10000/27183 ≈ 3678
-        let e_neg1 = exp_scaled(-100);
-        assert!((e_neg1 as i64 - 3679).abs() <= 10, "e^-1 = {}", e_neg1);
+    fn shared_curve_parity_and_exact_tails() {
+        for day in [0, 365, 1460, 10_000, u64::MAX] {
+            assert_eq!(
+                sigmoid_daily_emission(day),
+                amos_protocol_math::daily_emission(day)
+            );
+            assert_eq!(
+                sigmoid_growth_cap_bps(day),
+                amos_protocol_math::growth_cap_bps(day)
+            );
+        }
+        assert_eq!(sigmoid_daily_emission(u64::MAX), EMISSION_FLOOR);
+        assert_eq!(sigmoid_growth_cap_bps(u64::MAX), SIGMOID_GROWTH_FLOOR_BPS);
     }
 
     #[test]
@@ -1077,7 +982,11 @@ mod tests {
     #[test]
     fn test_sigmoid_emission_at_launch() {
         let emission = sigmoid_daily_emission(0);
-        assert!(emission >= 15_800 * ONE_TOKEN, "Launch emission too low: {}", emission);
+        assert!(
+            emission >= 15_800 * ONE_TOKEN,
+            "Launch emission too low: {}",
+            emission
+        );
         assert!(
             emission <= EMISSION_CEILING,
             "Launch emission above ceiling: {}",
@@ -1176,7 +1085,11 @@ mod tests {
             "Year 6 unexpected: {}",
             year6
         );
-        assert!(year8 > 100 * ONE_TOKEN && year8 < 500 * ONE_TOKEN, "Year 8 unexpected: {}", year8);
+        assert!(
+            year8 > 100 * ONE_TOKEN && year8 < 500 * ONE_TOKEN,
+            "Year 8 unexpected: {}",
+            year8
+        );
         assert!(
             year10 >= EMISSION_FLOOR && year10 < 200 * ONE_TOKEN,
             "Year 10 unexpected: {}",

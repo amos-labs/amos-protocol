@@ -19,7 +19,10 @@
 //! if the program were to accept duplicates — double-paying the bounty.
 
 use crate::{
-    solana::{compute_dynamic_max_reward, fallback_max_reward, SettlementParams, SolanaClient},
+    solana::{
+        compute_dynamic_max_reward, fallback_max_reward, new_daily_pool, SettlementParams,
+        SolanaClient,
+    },
     state::RelayState,
 };
 use sha2::{Digest, Sha256};
@@ -38,7 +41,7 @@ use uuid::Uuid;
 /// safe to settle normally.
 ///
 /// On success, this function updates `relay_bounties.settlement_status` to
-/// `'settled'` and `protocol_fee_ledger.settled_on_chain` to true. The
+/// `'settled'`. System settlement is not evidence of a commercial fee. The
 /// `settlement_tx` column is left as-is (NULL if no prior attempt recorded
 /// one), since the on-chain PDA does not carry the tx signature —
 /// reconciled settlements can be recognized by the combination of
@@ -57,13 +60,6 @@ pub async fn check_and_reconcile_if_settled(
         Ok(true) => {
             let _ = sqlx::query(
                 "UPDATE relay_bounties SET settlement_status = 'settled' WHERE id = $1 AND settlement_status != 'settled'",
-            )
-            .bind(bounty_id)
-            .execute(db)
-            .await;
-
-            let _ = sqlx::query(
-                "UPDATE protocol_fee_ledger SET settled_on_chain = true WHERE bounty_id = $1 AND settled_on_chain = false",
             )
             .bind(bounty_id)
             .execute(db)
@@ -160,27 +156,17 @@ async fn retry_failed_settlements(state: &RelayState) -> Result<(), String> {
         let claimed_by_wallet: Option<String> = row.get("claimed_by_wallet");
         let claimed_by_agent_id: Option<Uuid> = row.get("claimed_by_agent_id");
 
-        let wallet = match claimed_by_wallet {
-            Some(ref w) if !w.is_empty() => w.clone(),
-            _ => {
-                if let Some(aid) = claimed_by_agent_id {
-                    match sqlx::query_scalar::<_, Option<String>>(
-                        "SELECT wallet_address FROM relay_agents WHERE id = $1",
-                    )
-                    .bind(aid)
-                    .fetch_optional(&state.db)
-                    .await
-                    {
-                        Ok(Some(Some(w))) => w,
-                        _ => {
-                            warn!(bounty_id = %id, "No wallet found — skipping retry");
-                            continue;
-                        }
-                    }
-                } else {
-                    warn!(bounty_id = %id, "No agent or wallet — skipping retry");
-                    continue;
-                }
+        let wallet = match crate::identity::verified_claim_wallet(
+            &state.db,
+            claimed_by_agent_id,
+            claimed_by_wallet.as_deref(),
+        )
+        .await
+        {
+            Ok(wallet) => wallet,
+            Err(_) => {
+                warn!(bounty_id=%id, "Recipient identity is not verified; retaining failed settlement");
+                continue;
             }
         };
 
@@ -237,23 +223,26 @@ async fn retry_failed_settlements(state: &RelayState) -> Result<(), String> {
                         info!(bounty_id = %id, max_reward = mr, "Dynamic max_reward for retry");
                         mr
                     }
-                    _ => fallback_max_reward(base_points as u64),
+                    Ok(None) => compute_dynamic_max_reward(
+                        base_points as u64,
+                        &new_daily_pool(day_index),
+                        start_time,
+                        now,
+                    ),
+                    Err(_) => fallback_max_reward(base_points as u64),
                 }
             }
             Err(_) => fallback_max_reward(base_points as u64),
         };
 
-        // Use a fallback reviewer wallet
-        let reviewer_wallet: String = sqlx::query_scalar::<_, Option<String>>(
-            "SELECT reviewer_wallet FROM relay_bounties WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-        .unwrap_or_else(|| "kekPK242otEGHrNmZA7v2jLYdkg3BPYiTPMJvrDhNuj".to_string());
+        let reviewer_wallet = match crate::identity::settlement_reviewer_wallet(&state.db, id).await
+        {
+            Ok(wallet) => wallet,
+            Err(_) => {
+                warn!(bounty_id=%id, "No authenticated approval; retaining failed settlement");
+                continue;
+            }
+        };
 
         let params = SettlementParams {
             bounty_id: bounty_id_str,
@@ -304,14 +293,6 @@ async fn retry_failed_settlements(state: &RelayState) -> Result<(), String> {
                              THEN 'pending' ELSE intake_submitter_payout_status \
                          END \
                      WHERE id = $2",
-                )
-                .bind(&result.tx_signature)
-                .bind(id)
-                .execute(&state.db)
-                .await;
-
-                let _ = sqlx::query(
-                    "UPDATE protocol_fee_ledger SET settled_on_chain = true, settlement_tx = $1 WHERE bounty_id = $2",
                 )
                 .bind(&result.tx_signature)
                 .bind(id)

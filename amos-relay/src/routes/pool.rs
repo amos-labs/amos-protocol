@@ -1,7 +1,7 @@
 //! Pool status routes — exposes the on-chain daily emission pool state.
 
 use crate::{
-    solana::{compute_dynamic_max_reward, DailyPoolState},
+    solana::{compute_dynamic_max_reward, new_daily_pool},
     state::RelayState,
 };
 use axum::{extract::State, http::StatusCode, response::Json, routing::get, Router};
@@ -58,8 +58,8 @@ async fn pool_today(
     })?;
 
     let now = chrono::Utc::now().timestamp();
-    let day_start = start_time + (day_index as i64) * 86400;
-    let seconds_elapsed = (now - day_start).max(0) as u64;
+    let day_start = start_time as i128 + day_index as i128 * 86400;
+    let seconds_elapsed = (now as i128 - day_start).clamp(0, 86400) as u64;
 
     let pool = solana.read_daily_pool(day_index).await.map_err(|e| {
         warn!(error = %e, "Failed to read daily pool");
@@ -69,13 +69,7 @@ async fn pool_today(
         )
     })?;
 
-    let pool = pool.unwrap_or(DailyPoolState {
-        day_index,
-        daily_emission: 16_000 * 1_000_000_000, // default day-0 emission
-        tokens_distributed: 0,
-        total_points: 0,
-        proof_count: 0,
-    });
+    let pool = pool.unwrap_or_else(|| new_daily_pool(day_index));
 
     let daily_emission_amos = pool.daily_emission as f64 / ONE_TOKEN_F64;
     let emission_available = (pool.daily_emission as u128) * (seconds_elapsed as u128) / 86400u128;
