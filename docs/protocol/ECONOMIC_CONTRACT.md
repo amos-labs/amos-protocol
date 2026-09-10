@@ -110,6 +110,14 @@ state, not guaranteed proceeds. Settlement remains **sequential and sensitive to
 arrival order**; this is not an order-independent end-of-day pro-rata auction.
 Quality determines acceptance; it is not currently an extra payout multiplier.
 
+Relay uses one shared category adapter for listings, review and settlement:
+`content → content (3)`, `infrastructure → infrastructure (7)`, with legacy coarse
+mappings `research → content (3)` and `growth → bug_report (8)`. These are lossy
+category mappings, not separate research/growth multipliers. Unrecognized Relay
+categories retain the existing `feature (1)` default. The adapter retains the
+defined `discovery (11)` identifier, but `submit_bounty_proof` currently rejects
+IDs above 10; this reconciliation does not activate discovery settlement.
+
 Unknown RPC state defers settlement. A successful config read plus an explicit
 RPC response proving the daily account is absent permits a zero-spent pool
 projection using this kernel; the transaction prepares the real account and the

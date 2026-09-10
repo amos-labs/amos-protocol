@@ -13,12 +13,14 @@ and labeled; it no longer competes with the current agent context.
 | Caller-selected reviewer/worker wallets and open service mutations | Principal-bound identities, explicit service scopes, approval provenance checked on retries | Request-boundary regressions; operators still provision service authority |
 | Legacy verification or stale approval could authorize changed work | Authenticated verifier provenance, atomic receipt submission and observed-version approval checks | Actual blocked-update regression returns 409 after a competing resubmission |
 | System approval fabricated commercial fee revenue | Removed fee-ledger writes and false settlement marks from all system paths | Real authenticated approval creates no fee entry; old rows remain unaudited history |
+| Prefunding a proof address could falsely mark a bounty settled | Confirm program ownership, account type, full layout and matching bounty ID | RPC-boundary regression distinguishes SOL dust, absent state, malformed proof and RPC failure |
 | Anonymous harness credential overwrite | New enrollment issues a secret; reconnect requires its current credential | HTTP takeover/reconnect tests; legacy keys revoked on migration |
 | Historical unauthenticated trust carried economic authority | Trust/Council reset, fresh wallet proof and authenticated reputation reports | Disposable database migrations; operator review before restoring elevated roles |
 | Emission stopped above the documented floor | Shared bounded integer sigmoid replaces clamped exponential table | Independent continuous-reference comparison over 20,001 days and extreme inputs |
 | RPC error or zero cap could authorize payment | Unknown-state cap is zero; typed absent-account response is distinct; on-chain cap required | Shared-kernel/decoder/time regressions; quotes remain state-dependent |
 | First/small submissions could overconsume capacity | Time release and virtual points enforced on-chain; no upward minimum | Reward-cap boundary tests; sequential order effects explicitly retained |
 | Growth exhaustion paid an extra raw unit | No category-cap bypass | Zero allocation fails before transfers |
+| Content work was paid using the referral category | One shared Relay adapter maps content to on-chain content ID 3 | Mapping regression; other coarse legacy mappings are documented |
 | Conflicting trust quotas | Agent system limits fixed to 3/5/10/15/25 and enforced | Existing capability expectations updated to canonical limits |
 | Whole-token constants compared with raw balances | Nine-decimal supply, treasury, stake and escrow constants | Treasury initialization now requires the actual intended allocation and correct mint/custody |
 | Fee arithmetic overflow below total intended supply | Bounded `u128` intermediate products | Full-supply and extreme amount conservation cases |
@@ -31,7 +33,7 @@ and labeled; it no longer competes with the current agent context.
 | Decay recharged grace or same-day intervals | Full days after grace, correct checkpoint and balance/floor cap | Timing/repetition/rounding/floor tests |
 | “Permissionless mandatory decay” exceeded SPL authority | Holder signature required; per-grant/tenure/vault designs labeled proposed | Explicit source/vision boundary, not a claim of completed compulsory decay |
 | Package royalty described as live enforcement | Current proposal replaces false implementation claims; old paper archived | Conserved commercial example; no fee on system emissions |
-| Platform served obsolete token calculations | Five calculator routes return 410 with canonical contract link | Two actual Axum request tests in consumer branch; billing unchanged |
+| Platform served and advertised obsolete token calculations | Five calculator routes return 410; discovery and suggestions omit them | Four route/discovery tests in consumer branch; billing unchanged |
 | Website AI knowledge contradicted published plans | Shared pricing definitions supply page and AI knowledge | Pricing-parity, lint, typecheck and production build |
 | Marketplace quality, counts and filtering overstated data | Correct 0–100 display, labeled samples and removed unsupported filters | Display tests, lint, typecheck and production build |
 | CI treated chain failures as advisory | On-chain host tests and SBF build become required evidence | Stack overflow diagnostics fail CI even if compiler exits zero |
@@ -41,7 +43,7 @@ and labeled; it no longer competes with the current agent context.
 Local verification uses isolated synthetic state. No live signer, chain transfer,
 production database or model endpoint is needed for these checks.
 
-- Root workspace: compile and strict Clippy passed; 399 executable tests plus 6 doc tests passed. Two existing live Oracle integration tests remain intentionally unrun.
+- Root workspace: compile and strict Clippy passed; 401 executable tests plus 6 doc tests passed. Two existing live Oracle integration tests remain intentionally unrun; the normally ignored HTTP regression ran separately as described below.
 - Relay: one comprehensive HTTP regression passed against the actual router, fresh PostgreSQL/Redis and all SQL migrations,
   with proved-wallet registration, bad/replayed/expired signatures, credential
   rotation, principal boundaries and authenticated reporting.

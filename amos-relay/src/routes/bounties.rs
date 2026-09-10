@@ -3,6 +3,7 @@
 use crate::identity::Principal;
 use crate::{
     pointing::{self, PointingInput},
+    settlement_retry::category_to_contribution_type,
     solana::{compute_dynamic_max_reward, fallback_max_reward, new_daily_pool, SettlementParams},
     state::RelayState,
 };
@@ -660,19 +661,6 @@ async fn require_trust(
             )))
         }
         Some((level, is_council)) => Ok((level, is_council)),
-    }
-}
-
-/// Map relay bounty category to on-chain contribution_type.
-/// Must match the constants in amos-solana/programs/amos-bounty/src/constants.rs.
-fn category_to_contribution_type(category: &str) -> u8 {
-    match category {
-        "infrastructure" => 7,
-        "growth" => 8,
-        "research" => 3,
-        "content" => 9,
-        "discovery" => 11,
-        _ => 1, // default: feature
     }
 }
 

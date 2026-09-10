@@ -288,6 +288,29 @@ fn validate_account_identity(
     Ok(())
 }
 
+fn is_initialized_bounty_proof(
+    owner: &Pubkey,
+    data: &[u8],
+    program_id: &Pubkey,
+    bounty_id: &[u8; 32],
+) -> Result<bool> {
+    // Anyone may transfer SOL to an uninitialized PDA. That system-owned,
+    // empty account is still available for Anchor initialization, not a payout.
+    if owner == &SYSTEM_PROGRAM_ID && data.is_empty() {
+        return Ok(false);
+    }
+    validate_account_identity(owner, data, program_id, "BountyProof")?;
+    // Full current BountyProof layout, including discriminator and reserved
+    // bytes; keep in sync with programs/amos-bounty/src/state.rs::SIZE.
+    const BOUNTY_PROOF_SIZE: usize = 406;
+    if data.len() < BOUNTY_PROOF_SIZE || data.get(8..40) != Some(bounty_id.as_slice()) {
+        return Err(AmosError::Validation(
+            "Invalid BountyProof layout or bounty ID".into(),
+        ));
+    }
+    Ok(true)
+}
+
 impl SolanaClient {
     /// Create a new Solana client connected to the given RPC endpoint.
     ///
@@ -779,11 +802,10 @@ impl SolanaClient {
 
     /// Check whether a bounty has already been settled on-chain.
     ///
-    /// Returns `true` if the `bounty_proof` PDA for this `bounty_id` exists
-    /// on Solana. This is the on-chain source of truth: the PDA is created
-    /// the moment `submit_bounty_proof` is confirmed, and a repeat call
-    /// with the same `bounty_id` would fail with "account already
-    /// initialized" at the program level.
+    /// Returns `true` only for a confirmed, program-owned BountyProof with
+    /// the expected discriminator, complete layout and bounty ID. A missing
+    /// account or empty system-owned PDA is not initialized; malformed state
+    /// and RPC failures are errors, never proof of payment.
     ///
     /// Used as a pre-flight idempotency guard before calling
     /// [`process_bounty_payout`]. If the relay crashed between an
@@ -797,18 +819,25 @@ impl SolanaClient {
         );
 
         let rpc = self.rpc.clone();
-        let exists = tokio::task::spawn_blocking(move || {
+        let program_id = self.bounty_program_id;
+        let settled = tokio::task::spawn_blocking(move || {
             let mut last_err = None;
             for attempt in 0..3 {
-                match rpc.get_account(&bounty_proof_pda) {
-                    Ok(_) => return Ok::<bool, AmosError>(true),
+                match rpc
+                    .get_account_with_commitment(&bounty_proof_pda, CommitmentConfig::confirmed())
+                {
+                    Ok(response) => {
+                        return match response.value {
+                            None => Ok(false),
+                            Some(account) => is_initialized_bounty_proof(
+                                &account.owner,
+                                &account.data,
+                                &program_id,
+                                &bounty_id_bytes,
+                            ),
+                        };
+                    }
                     Err(e) => {
-                        let err_str = e.to_string();
-                        if err_str.contains("AccountNotFound")
-                            || err_str.contains("could not find account")
-                        {
-                            return Ok(false);
-                        }
                         last_err = Some(e);
                         if attempt < 2 {
                             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -818,13 +847,15 @@ impl SolanaClient {
             }
             Err(AmosError::SolanaRpc(format!(
                 "Failed to check bounty_proof PDA after 3 attempts: {}",
-                last_err.unwrap()
+                last_err
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "no error recorded".into())
             )))
         })
         .await
         .map_err(|e| AmosError::Internal(format!("Tokio join error: {}", e)))??;
 
-        Ok(exists)
+        Ok(settled)
     }
 
     /// Burn protocol fees (ops/burn share) by sending tokens to the burn address.
@@ -2462,6 +2493,61 @@ mod tests {
         assert!(checked_day_index(1, 0).is_err());
         assert!(checked_day_index(i64::MIN, i64::MAX).is_err());
         assert_eq!(checked_day_index(100, 86500).unwrap(), 1);
+    }
+
+    #[test]
+    fn settlement_rpc_requires_initialized_matching_proof() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        use solana_client::rpc_request::RpcRequest;
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let program = Pubkey::from_str(VALID_PROGRAM_ID).unwrap();
+        let mut valid = vec![0; 406];
+        valid[..8].copy_from_slice(&Sha256::digest(b"account:BountyProof")[..8]);
+        valid[8..40].copy_from_slice(&hash_to_32_bytes("settlement-regression"));
+        let mut wrong_id = valid.clone();
+        wrong_id[8] ^= 1;
+        let mut wrong_type = valid.clone();
+        wrong_type[..8].copy_from_slice(&Sha256::digest(b"account:DailyPool")[..8]);
+
+        // Exercise the public retry guard through the RPC response decoder,
+        // including an account created solely by a SOL transfer to the PDA.
+        for (name, owner, data, expected) in [
+            ("prefunded PDA", SYSTEM_PROGRAM_ID, vec![], Some(false)),
+            ("valid proof", program, valid.clone(), Some(true)),
+            ("wrong owner", SYSTEM_PROGRAM_ID, valid.clone(), None),
+            ("wrong bounty", program, wrong_id, None),
+            ("wrong account type", program, wrong_type, None),
+            ("truncated proof", program, valid[..405].to_vec(), None),
+        ] {
+            let response = serde_json::json!({
+                "context": {"slot": 1},
+                "value": {
+                    "lamports": 1,
+                    "owner": owner.to_string(),
+                    "data": [STANDARD.encode(data), "base64"],
+                    "executable": false,
+                    "rentEpoch": 0
+                }
+            });
+            let mut client = make_client();
+            client.rpc = Arc::new(RpcClient::new_mock_with_mocks(
+                "succeeds",
+                [(RpcRequest::GetAccountInfo, response)].into(),
+            ));
+            let result = runtime.block_on(client.is_bounty_settled("settlement-regression"));
+            assert_eq!(result.ok(), expected, "{name}");
+        }
+
+        let mut client = make_client();
+        client.rpc = Arc::new(RpcClient::new_mock("succeeds"));
+        assert!(!runtime
+            .block_on(client.is_bounty_settled("absent"))
+            .unwrap());
+        client.rpc = Arc::new(RpcClient::new_mock("fails"));
+        assert!(runtime
+            .block_on(client.is_bounty_settled("rpc-failure"))
+            .is_err());
     }
 
     // ── Malformed-input / fuzz tests ───────────────────────────────────

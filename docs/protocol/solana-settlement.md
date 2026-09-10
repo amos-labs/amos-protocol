@@ -24,6 +24,12 @@ Full proof receipts, logs, PR metadata, and Oracle reasoning can be too large or
 4. The program independently enforces the shared time-release and virtual-points cap, reviewer destination and category/trust limits.
 5. Settlement transaction hash is recorded back on the Relay bounty.
 
+Retries reconcile a confirmed proof only after checking program ownership,
+account discriminator, full layout and bounty ID. Sending SOL to the predictable
+address does not establish settlement: an empty system-owned account remains
+uninitialized. Missing state allows a normal attempt; malformed state or RPC
+failure defers settlement instead of recording payment.
+
 ## Related Material
 
 - [Bounty Lifecycle](bounty-lifecycle.md)

@@ -67,7 +67,7 @@ pub async fn check_and_reconcile_if_settled(
 
             info!(
                 bounty_id = %bounty_id,
-                "Reconciled: bounty already settled on-chain (PDA exists) — skipping payout"
+                "Reconciled: verified matching confirmed settlement proof — skipping payout"
             );
             Ok(true)
         }
@@ -82,13 +82,15 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(120);
 /// Maximum number of retry attempts per bounty before giving up.
 const MAX_RETRIES: i32 = 5;
 
-/// Map relay bounty category to on-chain contribution_type.
-fn category_to_contribution_type(category: &str) -> u8 {
+/// Shared legacy category adapter for listing, review and every payout path.
+/// The chain owns contribution semantics: research maps coarsely to content,
+/// growth to bug_report. Discovery is defined but not accepted by settlement.
+pub(crate) fn category_to_contribution_type(category: &str) -> u8 {
     match category {
         "infrastructure" => 7,
         "growth" => 8,
         "research" => 3,
-        "content" => 9,
+        "content" => 3,
         "discovery" => 11,
         _ => 1, // default: feature
     }
@@ -320,4 +322,24 @@ async fn retry_failed_settlements(state: &RelayState) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::category_to_contribution_type;
+
+    #[test]
+    fn category_adapter_preserves_chain_types_and_legacy_policy() {
+        // These IDs are the bounty program's contribution constants. Content
+        // must never use referral (9), which would change the reward category.
+        assert_eq!(category_to_contribution_type("content"), 3);
+        assert_eq!(category_to_contribution_type("research"), 3);
+        assert_eq!(category_to_contribution_type("infrastructure"), 7);
+        assert_eq!(category_to_contribution_type("growth"), 8);
+        // Preserve the existing defined-but-inactive discovery ID and default;
+        // this adapter does not relax the chain's current <= 10 admission gate.
+        assert_eq!(category_to_contribution_type("discovery"), 11);
+        assert_eq!(category_to_contribution_type("unknown"), 1);
+        assert_eq!(category_to_contribution_type(""), 1);
+    }
 }
