@@ -16,6 +16,7 @@ and labeled; it no longer competes with the current agent context.
 | Prefunding a proof address could falsely mark a bounty settled | Confirm program ownership, account type, full layout and matching bounty ID | RPC-boundary regression distinguishes SOL dust, absent state, malformed proof and RPC failure |
 | Anonymous harness credential overwrite | New enrollment issues a secret; reconnect requires its current credential | HTTP takeover/reconnect tests; legacy keys revoked on migration |
 | Historical unauthenticated trust carried economic authority | Trust/Council reset, fresh wallet proof and authenticated reputation reports | Disposable database migrations; operator review before restoring elevated roles |
+| Pending historical approvals lack authenticated provenance after migration | Retry refuses unavailable authority without consuming the queue; wallet re-enrollment does not bless old approvals | Actual database matrix; no public approved-to-re-review transition exists, so recovery must be qualified before live migration |
 | Emission stopped above the documented floor | Shared bounded integer sigmoid replaces clamped exponential table | Independent continuous-reference comparison over 20,001 days and extreme inputs |
 | RPC error or zero cap could authorize payment | Unknown-state cap is zero; typed absent-account response is distinct; on-chain cap required | Shared-kernel/decoder/time regressions; quotes remain state-dependent |
 | First/small submissions could overconsume capacity | Time release and virtual points enforced on-chain; no upward minimum | Reward-cap boundary tests; sequential order effects explicitly retained |
@@ -73,7 +74,9 @@ validator execution or audited economic/security correctness.
    rollback and migrations on a validator with the exact candidate binaries/IDLs.
    Confirm compute budgets and all external client account lists.
 4. Provision credentials and update Relay/Oracle together, including nullable
-   metrics. Review old trust and approvals before selectively restoring them.
+   metrics. Inventory pending historical approvals and qualify an audited
+   recovery/re-review transition before migration; the current public API does
+   not supply that transition. Wallet re-enrollment alone is insufficient.
 5. Restore/review missing extracted bot clients before enabling their workflows.
 6. Separately authorize and record live activation. Merging source or changing
    public wording alone does not perform these steps.

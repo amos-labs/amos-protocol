@@ -519,6 +519,90 @@ async fn authenticated_registration_and_http_mutation_boundaries() {
             .unwrap();
     assert_eq!(fees, 0);
 
+    // The exact lookup used by both retry paths must bind a current reviewer,
+    // while preserving queued work when migration/revocation removes authority.
+    use amos_relay::identity::settlement_reviewer_wallet;
+    sqlx::query(
+        "UPDATE relay_bounties SET settlement_status='failed',settlement_retry_count=2 WHERE id=$1",
+    )
+    .bind(approved)
+    .execute(&db)
+    .await
+    .unwrap();
+    let reviewer_id = Uuid::parse_str(reviewer["id"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        settlement_reviewer_wallet(&db, approved).await.unwrap(),
+        reviewer_wallet
+    );
+    for (verified, trust, council, state) in [
+        (false, 5, true, "active"),
+        (true, 1, true, "active"),
+        (true, 5, false, "active"),
+        (true, 5, true, "suspended"),
+        (false, 1, false, "active"), // actual migration's unverified/reset identity
+    ] {
+        sqlx::query("UPDATE relay_agents SET wallet_verified=$2,trust_level=$3,council_member=$4,status=$5 WHERE id=$1")
+            .bind(reviewer_id).bind(verified).bind(trust as i16).bind(council).bind(state).execute(&db).await.unwrap();
+        assert_eq!(
+            settlement_reviewer_wallet(&db, approved).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+        let queue: (String,String,i32) = sqlx::query_as("SELECT status,settlement_status,settlement_retry_count FROM relay_bounties WHERE id=$1")
+            .bind(approved).fetch_one(&db).await.unwrap();
+        assert_eq!(queue, ("approved".into(), "failed".into(), 2));
+    }
+    sqlx::query("UPDATE relay_agents SET wallet_verified=true,trust_level=5,council_member=true,status='active' WHERE id=$1")
+        .bind(reviewer_id).execute(&db).await.unwrap();
+    assert_eq!(
+        settlement_reviewer_wallet(&db, approved).await.unwrap(),
+        reviewer_wallet
+    );
+    // A queued pre-migration approval remains blocked even after the reviewer
+    // re-enrolls: identity recovery must not manufacture approval provenance.
+    sqlx::query("UPDATE relay_bounties SET approved_by_principal=NULL WHERE id=$1")
+        .bind(approved)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        settlement_reviewer_wallet(&db, approved).await,
+        Err(StatusCode::FORBIDDEN)
+    );
+    let retained: (String,String,i32,bool) = sqlx::query_as("SELECT status,settlement_status,settlement_retry_count,approved_by_principal IS NULL FROM relay_bounties WHERE id=$1")
+        .bind(approved).fetch_one(&db).await.unwrap();
+    assert_eq!(retained, ("approved".into(), "failed".into(), 2, true));
+    // Synthetic test restores the known authenticated approval solely to
+    // isolate missing/unknown reviewer identities; this is not recovery code.
+    for wallet in [None, Some(Keypair::new().pubkey().to_string())] {
+        sqlx::query(
+            "UPDATE relay_bounties SET approved_by_principal=$2,reviewer_wallet=$3 WHERE id=$1",
+        )
+        .bind(approved)
+        .bind(format!("agent:{reviewer_id}"))
+        .bind(wallet)
+        .execute(&db)
+        .await
+        .unwrap();
+        assert_eq!(
+            settlement_reviewer_wallet(&db, approved).await,
+            Err(StatusCode::FORBIDDEN)
+        );
+    }
+    sqlx::query("UPDATE relay_bounties SET reviewer_wallet=$2 WHERE id=$1")
+        .bind(approved)
+        .bind(&reviewer_wallet)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        settlement_reviewer_wallet(&db, approved).await.unwrap(),
+        reviewer_wallet
+    );
+    assert_eq!(
+        settlement_reviewer_wallet(&db, Uuid::new_v4()).await,
+        Err(StatusCode::FORBIDDEN)
+    );
+
     // A NULL historical wallet does not hide that the actual worker is also
     // the reviewer. Both verify and approve resolve the claimed agent.
     let self_review = submitted_system_bounty(&app, &poster_wallet, &creator_key, id, key).await;

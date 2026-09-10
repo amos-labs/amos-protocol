@@ -68,6 +68,25 @@ Apply `20260910000001_authenticated_principals.sql` with the new Relay code duri
 - Existing verifications and approvals have no authenticated principal. They cannot authorize a new payout merely by naming a wallet; require a fresh authenticated verification and legitimate review. Verification and approval compare the observed submission version before writing; revision or re-submission invalidates earlier verification. Already completed on-chain transfers are not undone. Historical system fee-ledger rows are retained as unverified history; system approval/settlement no longer creates a commercial fee or marks those old rows as paid.
 - Provision scoped service keys and update the Oracle/bot consumers before resuming their mutations. A public UUID is never a compatibility fallback.
 
+### Pending approvals are an activation prerequisite
+
+Inventory unsettled approved rows before applying this migration. The new retry
+guard refuses a missing, unverified, suspended, low-trust or non-Council reviewer,
+and refuses a historical approval without authenticated provenance. It preserves
+the queued row and does not spend a retry attempt on that authority failure.
+Re-enrolling the wallet or restoring its reviewed Council role alone does **not**
+authenticate an old approval.
+
+There is currently no public transition for moving an already-approved historical
+row back through fresh verification and approval: those endpoints accept submitted
+work. An audited recovery/re-review workflow must therefore be designed and
+rehearsed for any such inventory **before live migration**. This source change does
+not supply that workflow or promise automatic queue recovery. Do not manufacture
+an `approved_by_principal` value to unblock payment. Keep mutations paused until
+the original evidence, recipients, actual chain state and replacement authority
+have been reconciled without duplicate settlement. A blind rollback would also
+restore the unauthenticated trust boundary and is not a recovery procedure.
+
 The same release changes five metrics fields to nullable values: `daily_emission_remaining_points`, `daily_pool_points_distributed`, `growth_pool_cap_bps`, `commercial_volume_7d` and `system_emission_7d`. Deploy Relay and Oracle together. Oracle still accepts known numeric values from older responses; new null or absent measurements render as **unavailable**, not zero. Reward points are not atomic AMOS volume. A missing pool/RPC observation does not imply an available budget, and a missing commercial-volume measurement does not prove zero activity.
 
 ## Local verification
@@ -78,4 +97,4 @@ The normal workspace commands are `cargo check --workspace`, `cargo test --works
 bash amos-relay/tests/run-identity-integration.sh
 ```
 
-That script starts disposable PostgreSQL and Redis instances bound to localhost, uses a dedicated `protocol_identity_test` database, and removes both after the test. It does not consume the application's `DATABASE_URL`, contact Solana or change live tenants. It exercises registration/signature proof, public credential exclusion, rotation, expiration/replay, identity-bound mutations, harness takeover rejection, scoped/revoked service keys, positive reputation writes and authenticated system approval without a fee ledger. A real blocked database update verifies that an approval checked against submission A cannot approve replacement B; legacy timestamps and nullable worker-wallet self-review are rejected. These checks establish source behavior, not production rollout or a completed external security audit.
+That script starts disposable PostgreSQL and Redis instances bound to localhost, uses a dedicated `protocol_identity_test` database, and removes both after the test. It does not consume the application's `DATABASE_URL`, contact Solana or change live tenants. It exercises registration/signature proof, public credential exclusion, rotation, expiration/replay, identity-bound mutations, harness takeover rejection, scoped/revoked service keys, positive reputation writes and authenticated system approval without a fee ledger. A real blocked database update verifies that an approval checked against submission A cannot approve replacement B; legacy timestamps and nullable worker-wallet self-review are rejected. A queued-approval database matrix checks the actual settlement reviewer lookup, including unavailable authority, retained status/retry counters and refusal to bless historical approval through re-enrollment alone. These checks establish source behavior, not production rollout or a completed external security audit.
