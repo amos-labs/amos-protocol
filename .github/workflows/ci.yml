@@ -144,6 +144,17 @@ jobs:
       - name: On-chain host regression tests
         run: cargo test --manifest-path amos-solana/Cargo.toml --lib --locked
 
+      - name: Install Node.js for offline instruction-builder tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: amos-solana/package-lock.json
+
+      - name: Install pinned client dependencies
+        working-directory: amos-solana
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
       - name: Offline fee-recipient builder tests
         run: node --test amos-solana/programs/amos-treasury/tests/fee-recipient-builder.test.mjs
 
