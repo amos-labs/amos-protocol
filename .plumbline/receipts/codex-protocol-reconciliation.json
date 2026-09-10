@@ -67,18 +67,23 @@
       "command": "cd amos-solana && npm ci --ignore-scripts --no-audit --no-fund && npm test",
       "reason": "Reproduce dependency installation on a clean CI runner before executing the offline instruction-builder tests.",
       "required": true
+    },
+    {
+      "command": "cd amos-solana && PATH=/private/tmp/amos-agave-3.1.10/solana-release/bin:/Users/rickbarkley/.cargo/bin:$PATH anchor build",
+      "reason": "Rebuild with verified stable Agave 3.1.10, SBF platform-tools v1.52 and Rust 1.89.0; align CI compiler capability without weakening gates.",
+      "required": true
     }
   ],
   "execution_evidence": [
     {
       "command": "cargo test --workspace",
       "status": "passed",
-      "output_ref": "399 executable tests and 6 doc tests passed; 2 pre-existing live Oracle tests intentionally ignored."
+      "output_ref": "401 executable tests and 6 doc tests passed (407 total), zero failures; two existing live Oracle tests not run; default-ignored HTTP regression passed separately. Final log in coordination/artifacts/protocol-reconciliation-20260910/final-source/workspace-tests.log."
     },
     {
       "command": "cargo clippy --workspace --all-targets -- -D warnings",
       "status": "passed",
-      "output_ref": "Passed; log coordination/artifacts/protocol-reconciliation-20260910/identity/clippy.log in shared local evidence."
+      "output_ref": "Passed after final settlement-proof and shared category changes; final-source/clippy.log in shared local evidence."
     },
     {
       "command": "cargo fmt --all -- --check",
@@ -124,6 +129,11 @@
       "command": "cd amos-solana && npm ci --ignore-scripts --no-audit --no-fund && npm test",
       "status": "passed",
       "output_ref": "82 pinned packages installed;4 offline builder tests passed. No lifecycle scripts, chain calls or deployment."
+    },
+    {
+      "command": "cd amos-solana && PATH=/private/tmp/amos-agave-3.1.10/solana-release/bin:/Users/rickbarkley/.cargo/bin:$PATH anchor build",
+      "status": "passed",
+      "output_ref": "All three SBF programs and IDLs passed; no stack diagnostics. Exact versions, archive SHA and log recorded in shared final-source/anchor-toolchain-compatibility.json. Local AVM 0.32.1 dispatches pinned Anchor 0.31.1; Linux pinned AVM 0.31.1 execution remains CI evidence. Anchor auto-installs current nightly for IDL generation; that host compiler is not pinned by this change."
     }
   ],
   "changed_files": [
@@ -203,7 +213,7 @@
     "protocol-math/src/lib.rs"
   ],
   "base_sha": "359b3bdff4b5b1407c3af7a1724d648cf6d55745",
-  "diff_sha256": "56fe270ddb0d86cabc0bcf39c007e4a236d7672988fcfbb7192fd5e22d52e729",
-  "result_summary": "Source reconciliation implemented and independently reviewed. Signed single-use wallet enrollment and scoped principals replace public identifiers as credentials; authenticated verification and optimistic concurrency bind approval to the reviewed submission. Treasury work no longer fabricates commercial fees. Shared integer math enforces time/pool/zero caps; raw-unit constants are corrected. V2 treasury and governance custody plus poster-bound escrow replace unsafe legacy accounting with explicit migration boundaries. 405 workspace tests,1 real HTTP/SQL test,121 on-chain host tests,4 offline JS tests, strict lint and actual Anchor/SBF build passed. Legacy assets may become immobilized unless recovered before activation; validator lifecycle/migration and deployed binary qualification are deliberately not claimed. No live chain/production activation is included. CI/Plumbline remain required; self-modifying gate changes strengthen enforcement under the user's existing authorization.",
+  "diff_sha256": "15a837c54fd719b5f1213f7dc0b161c2f082de57d4422100062d9176def6b554",
+  "result_summary": "Source reconciliation implemented and independently reviewed. Signed single-use wallet enrollment and scoped principals replace public identifiers as credentials; authenticated verification and optimistic concurrency bind approval to the reviewed submission. Treasury work no longer fabricates commercial fees. Shared integer math enforces time, pool and zero caps; raw-unit constants are corrected. V2 treasury and governance custody plus poster-bound escrow replace unsafe accounting with explicit migration boundaries. Confirmed settlement requires a program-owned matching proof, so a prefunded empty PDA cannot fake payment. One shared adapter corrects content from referral ID 9 to content ID 3 and documents other legacy mappings. 407 workspace tests, one real HTTP/SQL test, 121 on-chain host tests, four offline JavaScript tests, strict lint and actual Anchor/SBF builds passed. Stable Agave release bytes and matching Anchor/AVM are pinned after CI exposed an incompatible implicit toolchain. Exact-head CI and semantic review remain required. Legacy assets may become immobilized unless recovered before activation; validator lifecycle, migration and deployed binary qualification are not claimed. No live chain or production activation is included. Gate changes strengthen enforcement under existing user authorization.",
   "diff_algo": "v1"
 }
