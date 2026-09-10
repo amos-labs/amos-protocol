@@ -125,21 +125,41 @@ jobs:
           workspaces: amos-solana
           cache-on-failure: true
 
-      - name: Install Solana CLI
+      - name: Install pinned stable Solana / SBF toolchain
         run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          # Agave 3.1.10 bundles platform-tools v1.52 / Rust 1.89.0, which
+          # supports the edition-2024 crates already in amos-solana/Cargo.lock.
+          # Pin the release bytes as well as the version; never use stable/edge.
+          AGAVE_VERSION=3.1.10
+          AGAVE_ARCHIVE="$RUNNER_TEMP/agave-$AGAVE_VERSION.tar.bz2"
+          curl --fail --location --silent --show-error \
+            "https://github.com/anza-xyz/agave/releases/download/v$AGAVE_VERSION/solana-release-x86_64-unknown-linux-gnu.tar.bz2" \
+            --output "$AGAVE_ARCHIVE"
+          echo "a7205ff29bcf0f7199740225ecae2b85a28ea9668892d5ec21bd9749882984a1  $AGAVE_ARCHIVE" | sha256sum --check -
+          mkdir -p "$RUNNER_TEMP/agave-$AGAVE_VERSION"
+          tar -xjf "$AGAVE_ARCHIVE" -C "$RUNNER_TEMP/agave-$AGAVE_VERSION"
+          AGAVE_BIN="$RUNNER_TEMP/agave-$AGAVE_VERSION/solana-release/bin"
+          echo "$AGAVE_BIN" >> "$GITHUB_PATH"
+          "$AGAVE_BIN/solana" --version | grep -F 'solana-cli 3.1.10 '
+          "$AGAVE_BIN/cargo-build-sbf" --version | tee "$RUNNER_TEMP/sbf-toolchain.txt"
+          grep -Fx 'solana-cargo-build-sbf 3.1.10' "$RUNNER_TEMP/sbf-toolchain.txt"
+          grep -Fx 'platform-tools v1.52' "$RUNNER_TEMP/sbf-toolchain.txt"
+          grep -Fx 'rustc 1.89.0' "$RUNNER_TEMP/sbf-toolchain.txt"
 
       - name: Install Anchor (AVM — version pinned by amos-solana/Anchor.toml)
         run: |
-          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
           # `anchor build` resolves the version from amos-solana/Anchor.toml's
           # [toolchain] anchor_version, so install exactly that to avoid a
           # "not installed" failure.
           ANCHOR_VERSION=$(grep -E '^anchor_version' amos-solana/Anchor.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          # Newer, unpinned AVM versions also replace the selected Solana CLI;
+          # pin AVM to the same release so the verified SBF toolchain is retained.
+          cargo install --git https://github.com/coral-xyz/anchor --tag "v$ANCHOR_VERSION" avm --locked --force
           echo "Installing Anchor $ANCHOR_VERSION"
           avm install "$ANCHOR_VERSION"
           avm use "$ANCHOR_VERSION"
+          anchor --version | grep -Fx "anchor-cli $ANCHOR_VERSION"
+          solana --version | grep -F 'solana-cli 3.1.10 '
 
       - name: On-chain host regression tests
         run: cargo test --manifest-path amos-solana/Cargo.toml --lib --locked
@@ -162,6 +182,9 @@ jobs:
         working-directory: amos-solana
         run: |
           set -o pipefail
+          # The verified CLI release fixes platform-tools at v1.52. Do not pass
+          # --tools-version through Anchor 0.31.1: it also forwards build args to
+          # host Cargo during IDL generation, where that SBF-only flag is invalid.
           anchor build 2>&1 | tee /tmp/amos-anchor-build.log
           if grep -E 'Stack offset.*exceeded|stack frame.*exceed' /tmp/amos-anchor-build.log; then
             echo "::error::SBF stack diagnostic is a build failure even if the compiler returned zero."

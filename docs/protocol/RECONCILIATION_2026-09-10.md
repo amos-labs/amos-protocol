@@ -37,6 +37,7 @@ and labeled; it no longer competes with the current agent context.
 | Website AI knowledge contradicted published plans | Shared pricing definitions supply page and AI knowledge | Pricing-parity, lint, typecheck and production build |
 | Marketplace quality, counts and filtering overstated data | Correct 0–100 display, labeled samples and removed unsupported filters | Display tests, lint, typecheck and production build |
 | CI treated chain failures as advisory | On-chain host tests and SBF build become required evidence | Stack overflow diagnostics fail CI even if compiler exits zero |
+| Clean CI selected an incompatible older SBF compiler | Pin stable Agave 3.1.10 release bytes and Anchor/AVM 0.31.1 | Rebuilt locally with platform-tools v1.52 / Rust 1.89.0; exact-head CI still required |
 
 ## Verification record
 
@@ -48,7 +49,8 @@ production database or model endpoint is needed for these checks.
   with proved-wallet registration, bad/replayed/expired signatures, credential
   rotation, principal boundaries and authenticated reporting.
 - Chain: 121 host tests passed (99 bounty, 13 treasury, 9 governance); actual
-  SBF compilation of each changed program, rejecting stack diagnostics.
+  SBF compilation and IDL generation of each changed program with stable Agave
+  3.1.10 / platform-tools v1.52 / Rust 1.89.0, rejecting stack diagnostics.
 - Math: four tests (included in the root count) cover monotonicity, floor/tail behavior, extreme units/times, payout and decay
   boundaries in the shared dependency-free kernel.
 - Fee builder: four offline JavaScript tests; no RPC or key loading.
