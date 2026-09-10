@@ -144,7 +144,8 @@ jobs:
           "$AGAVE_BIN/cargo-build-sbf" --version | tee "$RUNNER_TEMP/sbf-toolchain.txt"
           grep -Fx 'solana-cargo-build-sbf 3.1.10' "$RUNNER_TEMP/sbf-toolchain.txt"
           grep -Fx 'platform-tools v1.52' "$RUNNER_TEMP/sbf-toolchain.txt"
-          grep -Fx 'rustc 1.89.0' "$RUNNER_TEMP/sbf-toolchain.txt"
+          # rustc is downloaded on the first build, so its version is checked
+          # after Anchor has installed and used the pinned platform-tools.
 
       - name: Install Anchor (AVM — version pinned by amos-solana/Anchor.toml)
         run: |
@@ -190,3 +191,7 @@ jobs:
             echo "::error::SBF stack diagnostic is a build failure even if the compiler returned zero."
             exit 1
           fi
+          cargo build-sbf --version | tee "$RUNNER_TEMP/sbf-toolchain-built.txt"
+          grep -Fx 'solana-cargo-build-sbf 3.1.10' "$RUNNER_TEMP/sbf-toolchain-built.txt"
+          grep -Fx 'platform-tools v1.52' "$RUNNER_TEMP/sbf-toolchain-built.txt"
+          grep -Fx 'rustc 1.89.0' "$RUNNER_TEMP/sbf-toolchain-built.txt"
