@@ -213,7 +213,7 @@
     "protocol-math/src/lib.rs"
   ],
   "base_sha": "359b3bdff4b5b1407c3af7a1724d648cf6d55745",
-  "diff_sha256": "15a837c54fd719b5f1213f7dc0b161c2f082de57d4422100062d9176def6b554",
+  "diff_sha256": "a1eb5be4d7b1146486c84f14907a06d2a62e685989fae3da2b845fba0442f432",
   "result_summary": "Source reconciliation implemented and independently reviewed. Signed single-use wallet enrollment and scoped principals replace public identifiers as credentials; authenticated verification and optimistic concurrency bind approval to the reviewed submission. Treasury work no longer fabricates commercial fees. Shared integer math enforces time, pool and zero caps; raw-unit constants are corrected. V2 treasury and governance custody plus poster-bound escrow replace unsafe accounting with explicit migration boundaries. Confirmed settlement requires a program-owned matching proof, so a prefunded empty PDA cannot fake payment. One shared adapter corrects content from referral ID 9 to content ID 3 and documents other legacy mappings. 407 workspace tests, one real HTTP/SQL test, 121 on-chain host tests, four offline JavaScript tests, strict lint and actual Anchor/SBF builds passed. Stable Agave release bytes and matching Anchor/AVM are pinned after CI exposed an incompatible implicit toolchain. Exact-head CI and semantic review remain required. Legacy assets may become immobilized unless recovered before activation; validator lifecycle, migration and deployed binary qualification are not claimed. No live chain or production activation is included. Gate changes strengthen enforcement under existing user authorization.",
   "diff_algo": "v1"
 }
