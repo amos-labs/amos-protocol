@@ -72,6 +72,11 @@
       "command": "cd amos-solana && PATH=/private/tmp/amos-agave-3.1.10/solana-release/bin:/Users/rickbarkley/.cargo/bin:$PATH anchor build",
       "reason": "Rebuild with verified stable Agave 3.1.10, SBF platform-tools v1.52 and Rust 1.89.0; align CI compiler capability without weakening gates.",
       "required": true
+    },
+    {
+      "command": "cd amos-solana && PATH=/private/tmp/amos-agave-3.1.10/solana-release/bin:/Users/rickbarkley/.cargo/bin:$PATH anchor build --program-name amos_governance",
+      "reason": "Compile and generate the IDL for the changed governance source using the previously qualified SBF toolchain.",
+      "required": true
     }
   ],
   "execution_evidence": [
@@ -98,7 +103,7 @@
     {
       "command": "cargo test --manifest-path amos-solana/Cargo.toml --lib --locked",
       "status": "passed",
-      "output_ref": "121 tests passed:99 bounty,13 treasury,9 governance."
+      "output_ref": "126 tests passed on September11 follow-up:99 bounty,13 treasury,14 governance. This reruns all chain host tests after correcting governance units; /private/tmp/protocol-chain-reconcile-20260911.log."
     },
     {
       "command": "cd amos-solana && PATH=\"$HOME/.cargo/bin:$PATH\" anchor build",
@@ -134,6 +139,11 @@
       "command": "cd amos-solana && PATH=/private/tmp/amos-agave-3.1.10/solana-release/bin:/Users/rickbarkley/.cargo/bin:$PATH anchor build",
       "status": "passed",
       "output_ref": "All three SBF programs and IDLs passed; no stack diagnostics. Exact versions, archive SHA and log recorded in shared final-source/anchor-toolchain-compatibility.json. Local AVM 0.32.1 dispatches pinned Anchor 0.31.1; Linux pinned AVM 0.31.1 execution remains CI evidence. Anchor auto-installs current nightly for IDL generation; that host compiler is not pinned by this change."
+    },
+    {
+      "command": "cd amos-solana && PATH=/private/tmp/amos-agave-3.1.10/solana-release/bin:/Users/rickbarkley/.cargo/bin:$PATH anchor build --program-name amos_governance",
+      "status": "passed",
+      "output_ref": "Governance SBF and IDL build passed with Agave3.1.10/platform-tools v1.52, no stack-exceeded diagnostics. Log amos-solana/target/governance-units-anchor-build.log SHA256 e2d39e6daf72bc75d514c7278d51828d90d3974438bd321245a9404e694a508a. No validator or chain calls."
     }
   ],
   "changed_files": [
@@ -182,11 +192,14 @@
     "amos-solana/programs/amos-bounty/src/instructions/escrow.rs",
     "amos-solana/programs/amos-bounty/src/instructions/prepare.rs",
     "amos-solana/programs/amos-bounty/src/instructions/trust.rs",
+    "amos-solana/programs/amos-governance/src/amounts.rs",
     "amos-solana/programs/amos-governance/src/constants.rs",
     "amos-solana/programs/amos-governance/src/errors.rs",
     "amos-solana/programs/amos-governance/src/instructions/mod.rs",
     "amos-solana/programs/amos-governance/src/instructions/priority.rs",
     "amos-solana/programs/amos-governance/src/instructions/proposals.rs",
+    "amos-solana/programs/amos-governance/src/instructions/research.rs",
+    "amos-solana/programs/amos-governance/src/instructions/rewards.rs",
     "amos-solana/programs/amos-governance/src/instructions/voting_v2.rs",
     "amos-solana/programs/amos-governance/src/lib.rs",
     "amos-solana/programs/amos-governance/src/state.rs",
@@ -213,7 +226,7 @@
     "protocol-math/src/lib.rs"
   ],
   "base_sha": "359b3bdff4b5b1407c3af7a1724d648cf6d55745",
-  "diff_sha256": "67991d4ee4034a48c5f89b3621c8fa24deffeabf4c2e08cfa7ac69c7d5ddb8bc",
-  "result_summary": "Source reconciliation implemented and independently reviewed. Signed single-use wallet enrollment and scoped principals replace public identifiers as credentials; authenticated verification and optimistic concurrency bind approval to the reviewed submission. Treasury work no longer fabricates commercial fees. Shared integer math enforces time, pool and zero caps; raw-unit constants are corrected. V2 treasury and governance custody plus poster-bound escrow replace unsafe accounting with explicit migration boundaries. Confirmed settlement requires a program-owned matching proof, so a prefunded empty PDA cannot fake payment. One shared adapter corrects content from referral ID 9 to content ID 3 and documents other legacy mappings. 407 workspace tests, one real HTTP/SQL test, 121 on-chain host tests, four offline JavaScript tests, strict lint and actual Anchor/SBF builds passed. Stable Agave release bytes and matching Anchor/AVM are pinned after CI exposed an incompatible implicit toolchain. Exact-head CI and semantic review remain required. Legacy assets may become immobilized unless recovered before activation; validator lifecycle, migration and deployed binary qualification are not claimed. No live chain or production activation is included. Gate changes strengthen enforcement under existing user authorization. Automated review requested explicit queued-reviewer coverage; the expanded real-database test passes. The historical approved-to-re-review transition is not implemented and is now explicitly required before live migration; the test does not fabricate production provenance or claim an automatic recovery path.",
+  "diff_sha256": "c93f8b8474d7bcd6d5720a9651a836791fe2738ee4ec1fe0cca36e94892dd832",
+  "result_summary": "Source reconciliation implemented and independently reviewed. Signed single-use wallet enrollment and scoped principals replace public identifiers as credentials; authenticated verification and optimistic concurrency bind approval to the reviewed submission. Treasury work no longer fabricates commercial fees. Shared integer math enforces time, pool and zero caps; raw-unit constants are corrected. V2 treasury and governance custody plus poster-bound escrow replace unsafe accounting with explicit migration boundaries. Confirmed settlement requires a program-owned matching proof, so a prefunded empty PDA cannot fake payment. One shared adapter corrects content from referral ID 9 to content ID 3 and documents other legacy mappings. 407 workspace tests, one real HTTP/SQL test, 121 on-chain host tests, four offline JavaScript tests, strict lint and actual Anchor/SBF builds passed. Stable Agave release bytes and matching Anchor/AVM are pinned after CI exposed an incompatible implicit toolchain. Exact-head CI and semantic review remain required. Legacy assets may become immobilized unless recovered before activation; validator lifecycle, migration and deployed binary qualification are not claimed. No live chain or production activation is included. Gate changes strengthen enforcement under existing user authorization. Automated review requested explicit queued-reviewer coverage; the expanded real-database test passes. The historical approved-to-re-review transition is not implemented and is now explicitly required before live migration; the test does not fabricate production provenance or claim an automatic recovery path. September11 follow-up corrects the remaining six-decimal governance proposal thresholds to intended nine-decimal AMOS, using production-called boundary and payout helpers. Five new tests cover corrected bounds, rounding conservation and overflow. All126 chain host tests and governance SBF/IDL generation pass. Existing stored proposals are not rescaled. Governance 40/30/30 feature rewards and research20% plus400% of the original stipend are explicitly outside the bounty daily kernel; funding and lifecycle qualification remain required. Independent review found no material issue in this follow-up. No economic redesign, merge or deployment.",
   "diff_algo": "v1"
 }
