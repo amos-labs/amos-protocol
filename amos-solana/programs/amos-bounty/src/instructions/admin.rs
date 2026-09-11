@@ -36,11 +36,13 @@ pub struct Initialize<'info> {
     pub config: Account<'info, BountyConfig>,
 
     /// The AMOS token mint
+    #[account(constraint = mint.decimals == TOKEN_DECIMALS as u8 @ BountyError::InvalidMint)]
     pub mint: Account<'info, Mint>,
 
     /// The treasury token account holding the distribution pool
     #[account(
         constraint = treasury.mint == mint.key() @ BountyError::InvalidMint,
+        constraint = treasury.owner == config.key() @ BountyError::InvalidTreasury,
         constraint = treasury.amount >= TREASURY_ALLOCATION @ BountyError::TreasuryInsufficientFunds
     )]
     pub treasury: Account<'info, TokenAccount>,

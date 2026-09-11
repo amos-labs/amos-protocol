@@ -187,10 +187,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "amos-protocol-math"
+version = "0.1.0"
+
+[[package]]
 name = "amos-relay"
 version = "0.1.0"
 dependencies = [
  "amos-core",
+ "amos-protocol-math",
  "anyhow",
  "axum",
  "axum-extra",

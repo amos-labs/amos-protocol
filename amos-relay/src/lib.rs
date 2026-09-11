@@ -8,6 +8,7 @@
 //! - Cross-harness reputation oracle
 //! - Protocol fee collection and distribution
 
+pub mod identity;
 pub mod middleware;
 pub mod pointing;
 pub mod proof_receipt;

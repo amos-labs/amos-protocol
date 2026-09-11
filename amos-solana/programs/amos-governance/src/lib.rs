@@ -12,6 +12,7 @@
 
 use anchor_lang::prelude::*;
 
+mod amounts;
 pub mod constants;
 pub mod errors;
 pub mod instructions;
@@ -94,20 +95,7 @@ pub mod amos_governance {
         )
     }
 
-    /// Casts a weighted vote for a feature proposal
-    ///
-    /// # Arguments
-    /// * `ctx` - Context with proposal and voter accounts
-    /// * `proposal_id` - Proposal to vote on
-    /// * `vote_amount` - Number of tokens to allocate to vote
-    ///
-    /// # Access
-    /// * Public - any AMOS token holder can vote
-    ///
-    /// # Notes
-    /// * Vote weight is proportional to token amount
-    /// * Cannot vote on own proposals
-    /// * Votes are locked for 7 days
+    /// Retired liquid-balance vote ABI; always fails with CustodiedVotingRequired.
     pub fn vote_for_feature(
         ctx: Context<VoteForFeature>,
         proposal_id: u64,
@@ -116,20 +104,25 @@ pub mod amos_governance {
         instructions::vote_for_feature(ctx, proposal_id, vote_amount)
     }
 
-    /// Withdraws a vote from a proposal
-    ///
-    /// # Arguments
-    /// * `ctx` - Context with proposal and vote record
-    /// * `proposal_id` - Proposal to withdraw vote from
-    ///
-    /// # Access
-    /// * Voter only
-    ///
-    /// # Notes
-    /// * Can only withdraw after 7-day lock period
-    /// * Proposal must still be in Active state
+    /// Retired legacy withdrawal ABI; old votes never held tokens in custody.
     pub fn withdraw_vote(ctx: Context<WithdrawVote>, proposal_id: u64) -> Result<()> {
         instructions::withdraw_vote(ctx, proposal_id)
+    }
+
+    /// Transfer AMOS into a canonical per-proposal/per-voter vault before counting.
+    /// Amount is raw SPL units; custody remains until an authorized withdrawal.
+    pub fn vote_for_feature_v2(
+        ctx: Context<VoteForFeatureV2>,
+        proposal_id: u64,
+        vote_amount: u64,
+    ) -> Result<()> {
+        instructions::vote_for_feature_v2(ctx, proposal_id, vote_amount)
+    }
+
+    /// Remove an active vote after seven days (or expiry), or refund terminal
+    /// custody without modifying the immutable historical terminal tally.
+    pub fn withdraw_vote_v2(ctx: Context<WithdrawVoteV2>, proposal_id: u64) -> Result<()> {
+        instructions::withdraw_vote_v2(ctx, proposal_id)
     }
 
     /// Updates the status of a proposal
@@ -147,7 +140,7 @@ pub mod amos_governance {
     /// * InDevelopment -> AwaitingGates
     /// * AwaitingGates -> RewardsDistribution
     /// * RewardsDistribution -> Finalized
-    /// * Any -> Cancelled
+    /// * Any nonterminal state -> Cancelled; terminal states cannot reopen
     pub fn update_proposal_status(
         ctx: Context<UpdateProposalStatus>,
         proposal_id: u64,
@@ -379,7 +372,8 @@ pub mod amos_governance {
     ///
     /// # Notes
     /// * All milestones must be completed
-    /// * Pays success bonus (default 400% of remaining budget)
+    /// * Pays success bonus (default 400% of the original recorded stipend,
+    ///   in addition to the 20% upfront payment)
     /// * Research can then be converted to a feature proposal
     pub fn graduate_research(ctx: Context<GraduateResearch>, proposal_id: u64) -> Result<()> {
         instructions::graduate_research(ctx, proposal_id)

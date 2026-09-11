@@ -1,0 +1,9 @@
+[package]
+name = "amos-protocol-math"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Versioned, deterministic AMOS protocol accounting shared by Relay and Solana"
+
+[lib]
+path = "src/lib.rs"

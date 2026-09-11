@@ -19,7 +19,10 @@
 //! if the program were to accept duplicates — double-paying the bounty.
 
 use crate::{
-    solana::{compute_dynamic_max_reward, fallback_max_reward, SettlementParams, SolanaClient},
+    solana::{
+        compute_dynamic_max_reward, fallback_max_reward, new_daily_pool, SettlementParams,
+        SolanaClient,
+    },
     state::RelayState,
 };
 use sha2::{Digest, Sha256};
@@ -38,7 +41,7 @@ use uuid::Uuid;
 /// safe to settle normally.
 ///
 /// On success, this function updates `relay_bounties.settlement_status` to
-/// `'settled'` and `protocol_fee_ledger.settled_on_chain` to true. The
+/// `'settled'`. System settlement is not evidence of a commercial fee. The
 /// `settlement_tx` column is left as-is (NULL if no prior attempt recorded
 /// one), since the on-chain PDA does not carry the tx signature —
 /// reconciled settlements can be recognized by the combination of
@@ -62,16 +65,9 @@ pub async fn check_and_reconcile_if_settled(
             .execute(db)
             .await;
 
-            let _ = sqlx::query(
-                "UPDATE protocol_fee_ledger SET settled_on_chain = true WHERE bounty_id = $1 AND settled_on_chain = false",
-            )
-            .bind(bounty_id)
-            .execute(db)
-            .await;
-
             info!(
                 bounty_id = %bounty_id,
-                "Reconciled: bounty already settled on-chain (PDA exists) — skipping payout"
+                "Reconciled: verified matching confirmed settlement proof — skipping payout"
             );
             Ok(true)
         }
@@ -86,13 +82,15 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(120);
 /// Maximum number of retry attempts per bounty before giving up.
 const MAX_RETRIES: i32 = 5;
 
-/// Map relay bounty category to on-chain contribution_type.
-fn category_to_contribution_type(category: &str) -> u8 {
+/// Shared legacy category adapter for listing, review and every payout path.
+/// The chain owns contribution semantics: research maps coarsely to content,
+/// growth to bug_report. Discovery is defined but not accepted by settlement.
+pub(crate) fn category_to_contribution_type(category: &str) -> u8 {
     match category {
         "infrastructure" => 7,
         "growth" => 8,
         "research" => 3,
-        "content" => 9,
+        "content" => 3,
         "discovery" => 11,
         _ => 1, // default: feature
     }
@@ -160,27 +158,17 @@ async fn retry_failed_settlements(state: &RelayState) -> Result<(), String> {
         let claimed_by_wallet: Option<String> = row.get("claimed_by_wallet");
         let claimed_by_agent_id: Option<Uuid> = row.get("claimed_by_agent_id");
 
-        let wallet = match claimed_by_wallet {
-            Some(ref w) if !w.is_empty() => w.clone(),
-            _ => {
-                if let Some(aid) = claimed_by_agent_id {
-                    match sqlx::query_scalar::<_, Option<String>>(
-                        "SELECT wallet_address FROM relay_agents WHERE id = $1",
-                    )
-                    .bind(aid)
-                    .fetch_optional(&state.db)
-                    .await
-                    {
-                        Ok(Some(Some(w))) => w,
-                        _ => {
-                            warn!(bounty_id = %id, "No wallet found — skipping retry");
-                            continue;
-                        }
-                    }
-                } else {
-                    warn!(bounty_id = %id, "No agent or wallet — skipping retry");
-                    continue;
-                }
+        let wallet = match crate::identity::verified_claim_wallet(
+            &state.db,
+            claimed_by_agent_id,
+            claimed_by_wallet.as_deref(),
+        )
+        .await
+        {
+            Ok(wallet) => wallet,
+            Err(_) => {
+                warn!(bounty_id=%id, "Recipient identity is not verified; retaining failed settlement");
+                continue;
             }
         };
 
@@ -237,23 +225,26 @@ async fn retry_failed_settlements(state: &RelayState) -> Result<(), String> {
                         info!(bounty_id = %id, max_reward = mr, "Dynamic max_reward for retry");
                         mr
                     }
-                    _ => fallback_max_reward(base_points as u64),
+                    Ok(None) => compute_dynamic_max_reward(
+                        base_points as u64,
+                        &new_daily_pool(day_index),
+                        start_time,
+                        now,
+                    ),
+                    Err(_) => fallback_max_reward(base_points as u64),
                 }
             }
             Err(_) => fallback_max_reward(base_points as u64),
         };
 
-        // Use a fallback reviewer wallet
-        let reviewer_wallet: String = sqlx::query_scalar::<_, Option<String>>(
-            "SELECT reviewer_wallet FROM relay_bounties WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-        .unwrap_or_else(|| "kekPK242otEGHrNmZA7v2jLYdkg3BPYiTPMJvrDhNuj".to_string());
+        let reviewer_wallet = match crate::identity::settlement_reviewer_wallet(&state.db, id).await
+        {
+            Ok(wallet) => wallet,
+            Err(_) => {
+                warn!(bounty_id=%id, "No authenticated approval; retaining failed settlement");
+                continue;
+            }
+        };
 
         let params = SettlementParams {
             bounty_id: bounty_id_str,
@@ -310,14 +301,6 @@ async fn retry_failed_settlements(state: &RelayState) -> Result<(), String> {
                 .execute(&state.db)
                 .await;
 
-                let _ = sqlx::query(
-                    "UPDATE protocol_fee_ledger SET settled_on_chain = true, settlement_tx = $1 WHERE bounty_id = $2",
-                )
-                .bind(&result.tx_signature)
-                .bind(id)
-                .execute(&state.db)
-                .await;
-
                 info!(bounty_id = %id, tx = %result.tx_signature, "Settlement retry succeeded");
             }
             Err(e) => {
@@ -339,4 +322,24 @@ async fn retry_failed_settlements(state: &RelayState) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::category_to_contribution_type;
+
+    #[test]
+    fn category_adapter_preserves_chain_types_and_legacy_policy() {
+        // These IDs are the bounty program's contribution constants. Content
+        // must never use referral (9), which would change the reward category.
+        assert_eq!(category_to_contribution_type("content"), 3);
+        assert_eq!(category_to_contribution_type("research"), 3);
+        assert_eq!(category_to_contribution_type("infrastructure"), 7);
+        assert_eq!(category_to_contribution_type("growth"), 8);
+        // Preserve the existing defined-but-inactive discovery ID and default;
+        // this adapter does not relax the chain's current <= 10 admission gate.
+        assert_eq!(category_to_contribution_type("discovery"), 11);
+        assert_eq!(category_to_contribution_type("unknown"), 1);
+        assert_eq!(category_to_contribution_type(""), 1);
+    }
 }

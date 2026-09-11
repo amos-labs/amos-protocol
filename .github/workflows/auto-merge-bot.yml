@@ -40,17 +40,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Require extracted bot source
+        run: |
+          if [ ! -f scripts/auto-merge-bot.sh ]; then
+            echo "::error::Protocol extraction omitted scripts/auto-merge-bot.sh. This schedule cannot operate until reviewed bot source is restored."
+            exit 1
+          fi
+
       - name: Run auto-merge bot
         env:
-          # Reuses QA bot's relay credential — same Bearer token has the
-          # auth scope required for /record-merge. Override via the
-          # AUTO_MERGE_BOT_RELAY_API_KEY secret if you ever want different
-          # credentials per worker.
-          RELAY_API_KEY: ${{ secrets.AUTO_MERGE_BOT_RELAY_API_KEY || secrets.QA_BOT_RELAY_API_KEY }}
+          # A separate service principal must explicitly hold bounties:merge.
+          # QA/reviewer credentials never implicitly authorize repository merges.
+          RELAY_API_KEY: ${{ secrets.AUTO_MERGE_BOT_RELAY_API_KEY }}
           GH_TOKEN: ${{ secrets.AUTO_MERGE_BOT_GH_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           if [ -z "$RELAY_API_KEY" ]; then
-            echo "::error::QA_BOT_RELAY_API_KEY (or AUTO_MERGE_BOT_RELAY_API_KEY override) is not set"
+            echo "::error::AUTO_MERGE_BOT_RELAY_API_KEY service credential is not set"
             exit 1
           fi
           chmod +x scripts/auto-merge-bot.sh

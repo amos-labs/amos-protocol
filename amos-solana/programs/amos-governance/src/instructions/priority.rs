@@ -85,7 +85,7 @@ pub fn calculate_priority(
 
     // Calculate community vote component
     // Score = total_votes × (community_weight / BPS_DENOMINATOR)
-    let community_score = (proposal.total_votes as u128)
+    let community_score = (proposal.custodied_vote_total() as u128)
         .checked_mul(params.community_weight_bps as u128)
         .ok_or(GovernanceError::ArithmeticOverflow)?
         .checked_div(BPS_DENOMINATOR as u128)

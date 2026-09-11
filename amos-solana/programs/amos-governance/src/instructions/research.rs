@@ -1,6 +1,7 @@
 // AMOS Governance Program - Research Instructions
 // Handles research proposal submission, approval, milestones, and graduation
 
+use crate::amounts::{reward_at_bps, validate_research_stipend};
 use crate::constants::*;
 use crate::errors::GovernanceError;
 use crate::state::*;
@@ -55,14 +56,7 @@ pub fn submit_research_proposal(
         milestones.len() <= MAX_MILESTONES,
         GovernanceError::TooManyMilestones
     );
-    require!(
-        stipend >= MIN_RESEARCH_STIPEND,
-        GovernanceError::StipendTooLow
-    );
-    require!(
-        stipend <= MAX_RESEARCH_STIPEND,
-        GovernanceError::StipendTooHigh
-    );
+    validate_research_stipend(stipend)?;
 
     let proposal = &mut ctx.accounts.research_proposal;
     let clock = Clock::get()?;
@@ -161,14 +155,7 @@ pub fn approve_research(ctx: Context<ApproveResearch>, proposal_id: u64) -> Resu
     let governance = &ctx.accounts.governance_config;
 
     // Calculate stipend amount (percentage of total research budget)
-    let stipend_amount = (proposal.stipend as u128)
-        .checked_mul(params.research_stipend_bps as u128)
-        .ok_or(GovernanceError::RewardCalculationOverflow)?
-        .checked_div(BPS_DENOMINATOR as u128)
-        .ok_or(GovernanceError::DivisionByZero)?;
-
-    let stipend_amount =
-        u64::try_from(stipend_amount).map_err(|_| GovernanceError::RewardCalculationOverflow)?;
+    let stipend_amount = reward_at_bps(proposal.stipend, params.research_stipend_bps)?;
 
     // Verify treasury has sufficient funds
     require!(
@@ -353,14 +340,7 @@ pub fn graduate_research(ctx: Context<GraduateResearch>, proposal_id: u64) -> Re
     require!(all_completed, GovernanceError::NotAllMilestonesCompleted);
 
     // Calculate success bonus
-    let success_bonus = (proposal.stipend as u128)
-        .checked_mul(params.research_success_bps as u128)
-        .ok_or(GovernanceError::RewardCalculationOverflow)?
-        .checked_div(BPS_DENOMINATOR as u128)
-        .ok_or(GovernanceError::DivisionByZero)?;
-
-    let success_bonus =
-        u64::try_from(success_bonus).map_err(|_| GovernanceError::RewardCalculationOverflow)?;
+    let success_bonus = reward_at_bps(proposal.stipend, params.research_success_bps)?;
 
     // Verify treasury has sufficient funds
     require!(

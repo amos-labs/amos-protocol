@@ -16,6 +16,12 @@ use crate::decision::Decision;
 use crate::metrics::RelaySnapshot;
 use crate::mission::MissionSnapshot;
 
+fn measurement<T: std::fmt::Display>(value: Option<T>, unit: &str) -> String {
+    value
+        .map(|n| format!("{n} {unit}"))
+        .unwrap_or_else(|| "unavailable".into())
+}
+
 /// Build the full user message for an Oracle LLM call. The system prompt
 /// (from the constitutional doc) is passed separately; this is only the
 /// user-turn payload.
@@ -53,35 +59,48 @@ pub fn assemble(
         let _ = writeln!(msg, "\n## Relay state (past 7 days)");
         let _ = writeln!(
             msg,
-            "- Commercial volume: {} atomic AMOS",
-            m.commercial_volume_7d
+            "- Commercial volume: {}",
+            measurement(m.commercial_volume_7d, "atomic AMOS")
         );
         let _ = writeln!(
             msg,
-            "- System emission: {} atomic AMOS",
-            m.system_emission_7d
+            "- System emission: {}",
+            measurement(m.system_emission_7d, "atomic AMOS")
         );
         let _ = writeln!(msg, "- Bounties posted: {}", m.bounties_posted_7d);
         let _ = writeln!(msg, "- Bounties settled: {}", m.bounties_settled_7d);
         let _ = writeln!(
             msg,
-            "- Daily emission remaining: {} points",
-            m.daily_emission_remaining_points
+            "- Daily emission remaining: {}",
+            measurement(m.daily_emission_remaining_points, "points")
+        );
+        let _ = writeln!(
+            msg,
+            "- Daily pool distributed: {}",
+            measurement(m.daily_pool_points_distributed, "points")
+        );
+        let _ = writeln!(
+            msg,
+            "- Growth pool cap: {}",
+            measurement(m.growth_pool_cap_bps, "bps")
         );
         let _ = writeln!(msg, "- Active agents: {}", m.active_agents_7d);
-        if m.commercial_volume_7d == 0 {
+        if m.commercial_volume_7d == Some(0) {
             let _ = writeln!(
                 msg,
                 "\n**External signal warning:** commercial volume is zero over the 7-day window. \
                  Per constitutional §4, weight decisions harder toward escalation and treasury preservation."
             );
+        } else if m.commercial_volume_7d.is_none() {
+            let _ = writeln!(msg, "\n**External signal unavailable:** commercial volume has not been measured. \
+                Do not infer zero activity or available budget; prefer escalation and treasury preservation when this evidence is needed.");
         }
     } else {
         let _ = writeln!(
             msg,
             "\n## Relay state\n\
-             (Metrics snapshot unavailable. Treat this as equivalent to zero commercial signal: \
-             weight decisions harder toward escalate per constitutional §4.)"
+             (Metrics snapshot unavailable. Do not infer zero activity or available budget; \
+             weight decisions harder toward escalation and treasury preservation per constitutional §4.)"
         );
     }
 
@@ -168,25 +187,26 @@ mod tests {
     }
 
     #[test]
-    fn no_metrics_produces_explicit_zero_signal_note() {
+    fn no_metrics_is_unknown_rather_than_zero() {
         let msg = assemble(&snap(), None, &[], "## Input", INTAKE_SCHEMA);
-        assert!(msg.contains("equivalent to zero commercial signal"));
-        assert!(msg.contains("weight decisions harder toward escalate"));
+        assert!(msg.contains("Metrics snapshot unavailable"));
+        assert!(msg.contains("Do not infer zero activity or available budget"));
+        assert!(!msg.contains("equivalent to zero"));
     }
 
     #[test]
     fn zero_commercial_volume_triggers_warning() {
         let m = RelaySnapshot {
             taken_at: chrono::Utc::now(),
-            daily_emission_remaining_points: 1000,
-            daily_pool_points_distributed: 0,
-            growth_pool_cap_bps: 2000,
+            daily_emission_remaining_points: Some(1000),
+            daily_pool_points_distributed: Some(0),
+            growth_pool_cap_bps: Some(2000),
             bounties_posted_7d: 2,
             bounties_claimed_7d: 2,
             bounties_settled_7d: 1,
             bounties_rejected_7d: 0,
-            commercial_volume_7d: 0,
-            system_emission_7d: 5000,
+            commercial_volume_7d: Some(0),
+            system_emission_7d: Some(5000),
             active_agents_7d: 3,
             avg_quality_score_7d: 85.0,
             category_counts_7d: Default::default(),
@@ -200,21 +220,59 @@ mod tests {
     fn nonzero_commercial_volume_no_warning() {
         let m = RelaySnapshot {
             taken_at: chrono::Utc::now(),
-            daily_emission_remaining_points: 1000,
-            daily_pool_points_distributed: 0,
-            growth_pool_cap_bps: 2000,
+            daily_emission_remaining_points: Some(1000),
+            daily_pool_points_distributed: Some(0),
+            growth_pool_cap_bps: Some(2000),
             bounties_posted_7d: 2,
             bounties_claimed_7d: 2,
             bounties_settled_7d: 1,
             bounties_rejected_7d: 0,
-            commercial_volume_7d: 50_000,
-            system_emission_7d: 5000,
+            commercial_volume_7d: Some(50_000),
+            system_emission_7d: Some(5000),
             active_agents_7d: 3,
             avg_quality_score_7d: 85.0,
             category_counts_7d: Default::default(),
         };
         let msg = assemble(&snap(), Some(&m), &[], "## Input", INTAKE_SCHEMA);
         assert!(!msg.contains("External signal warning"));
+    }
+
+    #[test]
+    fn nullable_metrics_preserve_unknown_and_known_numeric_values() {
+        let mut wire = serde_json::json!({
+            "taken_at": "2026-09-10T00:00:00Z",
+            "daily_emission_remaining_points": null,
+            "daily_pool_points_distributed": null,
+            "growth_pool_cap_bps": null,
+            "bounties_posted_7d": 2, "bounties_claimed_7d": 2,
+            "bounties_settled_7d": 1, "bounties_rejected_7d": 0,
+            "commercial_volume_7d": null, "system_emission_7d": null,
+            "active_agents_7d": 3, "avg_quality_score_7d": 85.0,
+            "category_counts_7d": {}
+        });
+        let m: RelaySnapshot = serde_json::from_value(wire.clone()).unwrap();
+        let msg = assemble(&snap(), Some(&m), &[], "## Input", INTAKE_SCHEMA);
+        for label in [
+            "Commercial volume",
+            "System emission",
+            "Daily emission remaining",
+            "Daily pool distributed",
+            "Growth pool cap",
+        ] {
+            assert!(msg.contains(&format!("- {label}: unavailable")));
+        }
+        assert!(!msg.contains("commercial volume is zero"));
+        assert!(msg.contains("has not been measured"));
+        wire["commercial_volume_7d"] = serde_json::json!(0);
+        wire["system_emission_7d"] = serde_json::json!(5000);
+        wire["growth_pool_cap_bps"] = serde_json::json!(2000);
+        let known: RelaySnapshot = serde_json::from_value(wire).unwrap();
+        assert_eq!(known.commercial_volume_7d, Some(0));
+        assert_eq!(known.system_emission_7d, Some(5000));
+        assert_eq!(known.growth_pool_cap_bps, Some(2000));
+        let msg = assemble(&snap(), Some(&known), &[], "## Input", INTAKE_SCHEMA);
+        assert!(msg.contains("commercial volume is zero"));
+        assert!(msg.contains("- System emission: 5000 atomic AMOS"));
     }
 
     #[test]

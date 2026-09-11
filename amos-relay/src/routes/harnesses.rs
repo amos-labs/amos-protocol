@@ -1,8 +1,12 @@
 //! Harness connection management routes.
 
-use crate::state::RelayState;
+use crate::{
+    identity::Principal,
+    middleware::{generate_api_key, hash_api_key},
+    state::RelayState,
+};
 use axum::{
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
     response::Json,
     routing::{get, post},
@@ -31,7 +35,9 @@ pub struct ConnectHarnessRequest {
     pub name: String,
     pub version: String,
     pub endpoint_url: String,
-    pub api_key: String,
+    /// Legacy input is ignored; the Relay generates its own credentials.
+    #[serde(default)]
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +61,14 @@ pub struct HarnessResponse {
     pub last_heartbeat: Option<DateTime<Utc>>,
 }
 
+#[derive(Serialize)]
+struct ConnectedHarness {
+    #[serde(flatten)]
+    harness: HarnessResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_key: Option<String>,
+}
+
 // =============================================================================
 // HANDLERS
 // =============================================================================
@@ -62,8 +76,9 @@ pub struct HarnessResponse {
 /// Connect a harness to the relay.
 async fn connect_harness(
     State(state): State<RelayState>,
+    principal: Option<Extension<Principal>>,
     Json(req): Json<ConnectHarnessRequest>,
-) -> Result<(StatusCode, Json<HarnessResponse>), StatusCode> {
+) -> Result<(StatusCode, Json<ConnectedHarness>), StatusCode> {
     // Input validation
     if req.harness_id.is_empty() || req.harness_id.len() > 255 {
         warn!("Invalid harness_id length: {}", req.harness_id.len());
@@ -84,57 +99,41 @@ async fn connect_harness(
         );
         return Err(StatusCode::BAD_REQUEST);
     }
-    if req.api_key.is_empty() || req.api_key.len() > 500 {
-        warn!("Invalid harness api_key length");
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
     let now = Utc::now();
 
-    // Insert or update the harness record
-    let harness = sqlx::query_as::<_, HarnessResponse>(
-        r#"
-        INSERT INTO relay_harnesses (
-            harness_id, name, version, endpoint_url, api_key_hash,
-            healthy, agent_count, active_bounties,
-            connected_at, last_heartbeat
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        ON CONFLICT (harness_id) DO UPDATE SET
-            name = EXCLUDED.name,
-            version = EXCLUDED.version,
-            endpoint_url = EXCLUDED.endpoint_url,
-            api_key_hash = EXCLUDED.api_key_hash,
-            last_heartbeat = EXCLUDED.last_heartbeat
-        RETURNING
-            harness_id, name, version, endpoint_url,
-            healthy, agent_count, active_bounties,
-            connected_at, last_heartbeat
-        "#,
-    )
-    .bind(&req.harness_id)
-    .bind(&req.name)
-    .bind(&req.version)
-    .bind(&req.endpoint_url)
-    .bind(hash_api_key(&req.api_key))
-    .bind(true)
-    .bind(0i32)
-    .bind(0i32)
-    .bind(now)
-    .bind(Some(now))
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| {
-        warn!("Failed to connect harness: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let existing: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM relay_harnesses WHERE harness_id = $1)")
+            .bind(&req.harness_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let columns = "harness_id, name, version, endpoint_url, healthy, agent_count, active_bounties, connected_at, last_heartbeat";
+    let api_key = if existing {
+        None
+    } else {
+        Some(generate_api_key("harness"))
+    };
+    let harness = if existing {
+        principal.as_ref().ok_or(StatusCode::FORBIDDEN)?.0.require_harness(&req.harness_id)?;
+        sqlx::query_as::<_, HarnessResponse>(&format!("UPDATE relay_harnesses SET name=$2, version=$3, endpoint_url=$4, last_heartbeat=$5 WHERE harness_id=$1 AND status IN ('active','inactive') RETURNING {columns}"))
+            .bind(&req.harness_id).bind(&req.name).bind(&req.version).bind(&req.endpoint_url).bind(now)
+            .fetch_optional(&state.db).await
+    } else {
+        sqlx::query_as::<_, HarnessResponse>(&format!("INSERT INTO relay_harnesses (harness_id,name,version,endpoint_url,api_key_hash,healthy,agent_count,active_bounties,connected_at,last_heartbeat) VALUES ($1,$2,$3,$4,$5,true,0,0,$6,$6) ON CONFLICT(harness_id) DO NOTHING RETURNING {columns}"))
+            .bind(&req.harness_id).bind(&req.name).bind(&req.version).bind(&req.endpoint_url)
+            .bind(hash_api_key(api_key.as_deref().expect("new harness key"))).bind(now)
+            .fetch_optional(&state.db).await
+    }.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?.ok_or(StatusCode::CONFLICT)?;
 
     info!(
         "Harness {} ({}) connected at {}",
         req.harness_id, req.name, req.endpoint_url
     );
 
-    Ok((StatusCode::CREATED, Json(harness)))
+    Ok((
+        StatusCode::CREATED,
+        Json(ConnectedHarness { harness, api_key }),
+    ))
 }
 
 /// List all connected harnesses.
@@ -191,9 +190,11 @@ async fn get_harness(
 /// Harness heartbeat to report health and metrics.
 async fn harness_heartbeat(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<String>,
     Json(req): Json<HarnessHeartbeatRequest>,
 ) -> Result<Json<HarnessResponse>, StatusCode> {
+    principal.require_harness(&id)?;
     let now = Utc::now();
 
     let harness = sqlx::query_as::<_, HarnessResponse>(
@@ -227,13 +228,4 @@ async fn harness_heartbeat(
     .ok_or(StatusCode::NOT_FOUND)?;
 
     Ok(Json(harness))
-}
-
-/// Hash API key for storage (simple SHA-256 for now).
-fn hash_api_key(api_key: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(api_key.as_bytes());
-    let result = hasher.finalize();
-    hex::encode(result)
 }

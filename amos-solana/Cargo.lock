@@ -69,6 +69,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 name = "amos-bounty"
 version = "0.1.0"
 dependencies = [
+ "amos-protocol-math",
  "anchor-lang",
  "anchor-spl",
 ]
@@ -80,6 +81,10 @@ dependencies = [
  "anchor-lang",
  "anchor-spl",
 ]
+
+[[package]]
+name = "amos-protocol-math"
+version = "0.1.0"
 
 [[package]]
 name = "amos-treasury"

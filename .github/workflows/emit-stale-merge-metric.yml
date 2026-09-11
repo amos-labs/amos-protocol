@@ -31,6 +31,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Require extracted bot source
+        run: |
+          if [ ! -f scripts/emit-stale-merge-metric.sh ]; then
+            echo "::error::Protocol extraction omitted scripts/emit-stale-merge-metric.sh. This schedule cannot operate until reviewed bot source is restored."
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
