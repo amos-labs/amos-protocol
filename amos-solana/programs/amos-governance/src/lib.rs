@@ -12,6 +12,7 @@
 
 use anchor_lang::prelude::*;
 
+mod amounts;
 pub mod constants;
 pub mod errors;
 pub mod instructions;
@@ -371,7 +372,8 @@ pub mod amos_governance {
     ///
     /// # Notes
     /// * All milestones must be completed
-    /// * Pays success bonus (default 400% of remaining budget)
+    /// * Pays success bonus (default 400% of the original recorded stipend,
+    ///   in addition to the 20% upfront payment)
     /// * Research can then be converted to a feature proposal
     pub fn graduate_research(ctx: Context<GraduateResearch>, proposal_id: u64) -> Result<()> {
         instructions::graduate_research(ctx, proposal_id)

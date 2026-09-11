@@ -37,16 +37,21 @@ the company's financing.
   30–100; a numerical score is still the Oracle's judgment of the evidence.
 - Minimum new commercial escrow and V2 stake are each **100 AMOS**. Old raw
   constants corresponding to fractions of a token are corrected.
+- New governance feature proposals accept **1–1,000,000 AMOS**; the recorded
+  research stipend accepts **0.1–100,000 AMOS**. These inclusive bounds use raw
+  nine-decimal units. Existing proposal amounts remain their stored raw values;
+  upgrading these limits does not multiply or reprice historical awards.
 
-## 3. Two funding paths; one commercial fee
+## 3. Bounty settlement and separate governance funding
 
-**System work** receives a bounded transfer from the work treasury. There is no
-3% commercial fee on this path. Its payout is split 95% worker / 5% reviewer.
+**System bounties through `amos-bounty`** receive a bounded transfer from the work
+treasury. There is no 3% commercial fee on this path. Their payout is split
+95% worker / 5% reviewer.
 Relay no longer creates fictitious commercial fee-ledger records for system
 approvals or marks those records as settled. Historical fee rows require separate
 reconciliation against actual chain transfers.
 
-**Commercial work** is funded by the poster's escrow. It pays 3% of gross as the
+**Commercial bounties** are funded by the poster's escrow. They pay 3% of gross as the
 protocol fee. Of that fee, 50% goes to the holder reward vault, 40% is burned and
 10% goes to Labs. The remaining 97% splits 95% worker / 5% reviewer.
 
@@ -70,10 +75,40 @@ Package attribution at 0.5% of commercial gross (historical proposed range
 requires an explicit new contract and authorization. The corrected illustrative
 proposal is in [Package Economy Integration](../packages/economy-integration.md).
 
-## 4. Emission and system payout kernel
+**Governance features and research use a separate treasury-transfer path** in
+`amos-governance`; the preceding 95/5 split is not universal across the protocol.
+They pay the proposal's proposer from the configured governance treasury. They
+do not apply the commercial 3% fee, the bounty reviewer split, or the daily bounty
+emission/points kernel in §4.
+
+| Governance path | Current default payment formula | Authority and payment conditions |
+|---|---|---|
+| Feature proposal | 40% of `estimated_bounty` at completion/benchmark, 30% at A/B pass, 30% at finalization | Proposer claims passed benchmark/A/B gates; Oracle finalizes after all required gates pass |
+| Research proposal | 20% of the original recorded `stipend` on approval, plus 400% of that same original amount on successful graduation | Governance authority approves and graduates; graduation requires completed milestones |
+
+Each payment is floored independently in raw units and requires sufficient
+treasury funds. At unchanged defaults, all three feature stages total the
+proposal amount less at most two raw units of rounding dust. Research's combined
+default is **420% of the recorded stipend**, not 100% or 400% of a remaining
+balance: a recorded 100 AMOS pays 20 upfront and a 400 AMOS success bonus. The
+authority can change stored parameters; these are current defaults, not immutable
+promises. This reconciliation preserves those formulas rather than redesigning
+research compensation.
+
+This is implemented research source, **not evidence of an activated or funded
+governance reward service**. Before activation, verify the canonical nine-decimal
+mint and governance-controlled treasury, funding sufficient for the complete
+reward lifecycle, parameter-change effects, and claim/finalization ordering.
+No per-proposal funding reservation or shared daily bounty limit is enforced on
+these transfers. The limits in §4 therefore do not cap all protocol treasury
+outflows. Governance funding and any future integration with that kernel need
+their own reviewed activation policy and validator rehearsal.
+
+## 4. Emission and system-bounty payout kernel
 
 `protocol-math/src/lib.rs` is the shared, dependency-free integer implementation
-used by Relay and the bounty program. Floating point examples are explanatory;
+used by Relay and the bounty program, not governance feature/research rewards.
+Floating point examples are explanatory;
 integer results govern settlement. With `d` as days since program start:
 
 ```

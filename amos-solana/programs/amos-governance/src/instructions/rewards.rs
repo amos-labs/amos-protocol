@@ -1,6 +1,7 @@
 // AMOS Governance Program - Reward Instructions
 // Handles staged bounty reward distribution
 
+use crate::amounts::reward_at_bps;
 use crate::constants::*;
 use crate::errors::GovernanceError;
 use crate::state::*;
@@ -132,14 +133,7 @@ pub fn claim_bounty_reward(
     );
 
     // Calculate reward amount
-    let reward_amount = (estimated_bounty as u128)
-        .checked_mul(reward_bps as u128)
-        .ok_or(GovernanceError::RewardCalculationOverflow)?
-        .checked_div(BPS_DENOMINATOR as u128)
-        .ok_or(GovernanceError::DivisionByZero)?;
-
-    let reward_amount =
-        u64::try_from(reward_amount).map_err(|_| GovernanceError::RewardCalculationOverflow)?;
+    let reward_amount = reward_at_bps(estimated_bounty, reward_bps)?;
 
     // Verify treasury has sufficient funds
     require!(
@@ -279,14 +273,7 @@ pub fn finalize_rewards(ctx: Context<FinalizeRewards>, proposal_id: u64) -> Resu
     );
 
     // Calculate remaining reward (merge reward = bounty_merge_bps)
-    let remaining_reward = (proposal.estimated_bounty as u128)
-        .checked_mul(params.bounty_merge_bps as u128)
-        .ok_or(GovernanceError::RewardCalculationOverflow)?
-        .checked_div(BPS_DENOMINATOR as u128)
-        .ok_or(GovernanceError::DivisionByZero)?;
-
-    let remaining_reward =
-        u64::try_from(remaining_reward).map_err(|_| GovernanceError::RewardCalculationOverflow)?;
+    let remaining_reward = reward_at_bps(proposal.estimated_bounty, params.bounty_merge_bps)?;
 
     // Verify treasury has sufficient funds
     require!(

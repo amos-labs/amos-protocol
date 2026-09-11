@@ -40,8 +40,13 @@ bytes, not that the work was good. Do not describe this as fully trustless revie
   revocation, current balances and reserve control need separate chain evidence.
 - Commercial fee: 3%; of that fee, 50% holders, 40% burn, 10% Labs. The 97% net
   reward splits 95% worker /5% reviewer. These are percentages of different bases.
-- System payout is bounded by released daily emission, prior points, virtual
+- System bounty payout is bounded by released daily emission, prior points, virtual
   points, category capacity and the explicit authorized maximum. Zero pays zero.
+- Governance has separate treasury payouts outside that daily bounty kernel:
+  feature rewards default to 40/30/30 stages; research pays 20% upfront plus
+  400% of the original recorded stipend at graduation. Its full funding and
+  claim lifecycle need separate qualification. New feature bounds are 1–1M AMOS
+  and recorded research stipend bounds are 0.1–100K AMOS, in nine-decimal units.
 - Agent levels 1–5 permit 3/5/10/15/25 system completions per day and maximum
   base points 100/200/500/1000/2000. Non-agent submissions require Oracle approval;
   they are not an anonymous bypass around Relay permissions.

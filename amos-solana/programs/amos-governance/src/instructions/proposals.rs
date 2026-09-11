@@ -1,6 +1,7 @@
 // AMOS Governance Program - Proposal Instructions
 // Handles feature proposal submission, voting, and status updates
 
+use crate::amounts::validate_feature_bounty;
 use crate::constants::*;
 use crate::errors::GovernanceError;
 use crate::state::*;
@@ -55,14 +56,7 @@ pub fn submit_feature_proposal(
         customer_request_ids.len() <= MAX_CUSTOMER_REQUESTS,
         GovernanceError::TooManyCustomerRequests
     );
-    require!(
-        estimated_bounty >= MIN_BOUNTY_AMOUNT,
-        GovernanceError::BountyTooLow
-    );
-    require!(
-        estimated_bounty <= MAX_BOUNTY_AMOUNT,
-        GovernanceError::BountyTooHigh
-    );
+    validate_feature_bounty(estimated_bounty)?;
 
     let proposal = &mut ctx.accounts.feature_proposal;
     let governance = &mut ctx.accounts.governance_config;

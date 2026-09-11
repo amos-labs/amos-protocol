@@ -24,8 +24,10 @@ and labeled; it no longer competes with the current agent context.
 | Content work was paid using the referral category | One shared Relay adapter maps content to on-chain content ID 3 | Mapping regression; other coarse legacy mappings are documented |
 | Conflicting trust quotas | Agent system limits fixed to 3/5/10/15/25 and enforced | Existing capability expectations updated to canonical limits |
 | Whole-token constants compared with raw balances | Nine-decimal supply, treasury, stake and escrow constants | Treasury initialization now requires the actual intended allocation and correct mint/custody |
+| Governance proposal limits still assumed six decimals | Named nine-decimal AMOS unit restores intended feature 1–1M and research 0.1–100K bounds | Production validator boundary tests reject the old fractional minima; existing stored proposal amounts are not rescaled |
+| All protocol rewards described as two bounty paths and a universal 95/5 split | Scope bounty settlement separately from governance feature 40/30/30 and research 20% upfront + 400% original-stipend bonus | Shared production reward arithmetic tested at the corrected limits; governance transfers have no daily bounty kernel or automatic funding reservation, and activation remains separate |
 | Fee arithmetic overflow below total intended supply | Bounded `u128` intermediate products | Full-supply and extreme amount conservation cases |
-| 3% fee versus Labs revenue confused | Distinct percentage bases and conserved worked examples | Labs receives 0.3% of commercial gross; system work has no commercial fee |
+| 3% fee versus Labs revenue confused | Distinct percentage bases and conserved worked examples | Labs receives 0.3% of commercial bounty gross; system bounties have no commercial fee |
 | Points presented as AMOS or as two revenue streams | Marketplace labels points; unavailable Oracle economic fields become null | Display-helper tests and nullable-metric regressions |
 | Escrow refund unbound to original poster/deadline | V2 metadata and signer/mint/time/status checks | Actual generated Anchor account validation; legacy recovery not guessed |
 | Stake accepted arbitrary custody | Separate canonical V2 stake/reward vaults | Wrong vault, mint, authority and unsigned-owner account tests |
@@ -52,6 +54,10 @@ production database or model endpoint is needed for these checks.
 - Chain: 121 host tests passed (99 bounty, 13 treasury, 9 governance); actual
   SBF compilation and IDL generation of each changed program with stable Agave
   3.1.10 / platform-tools v1.52 / Rust 1.89.0, rejecting stack diagnostics.
+- Governance amount follow-up: 14 host tests passed (the prior 9 plus 5 boundary,
+  rounding/conservation and overflow tests). The updated governance program also
+  completed SBF compilation and IDL generation with the same pinned toolchain;
+  no validator or live reward transfer was executed.
 - Math: four tests (included in the root count) cover monotonicity, floor/tail behavior, extreme units/times, payout and decay
   boundaries in the shared dependency-free kernel.
 - Fee builder: four offline JavaScript tests; no RPC or key loading.
@@ -78,7 +84,12 @@ validator execution or audited economic/security correctness.
    recovery/re-review transition before migration; the current public API does
    not supply that transition. Wallet re-enrollment alone is insufficient.
 5. Restore/review missing extracted bot clients before enabling their workflows.
-6. Separately authorize and record live activation. Merging source or changing
+6. Before governance rewards activate, verify the nine-decimal mint and treasury
+   authority, fund the full feature/research lifecycle, and rehearse claim order
+   and parameter changes. At default parameters successful research needs 4.2
+   times its recorded stipend; neither those payments nor feature rewards consume
+   the daily bounty pool. Existing recorded amounts remain raw units.
+7. Separately authorize and record live activation. Merging source or changing
    public wording alone does not perform these steps.
 
 Per-grant vesting, mandatory decay, package attribution, generalized asset/compute

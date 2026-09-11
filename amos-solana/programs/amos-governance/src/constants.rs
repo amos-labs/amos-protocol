@@ -26,6 +26,9 @@ pub const MAX_MILESTONES: usize = 10;
 /// Basis points denominator (10000 = 100%)
 pub const BPS_DENOMINATOR: u16 = 10000;
 
+/// Raw SPL units in one AMOS (the canonical mint uses nine decimals).
+pub const ONE_AMOS: u64 = 1_000_000_000;
+
 // ============================================================================
 // Default Governance Parameters (in basis points)
 // ============================================================================
@@ -114,17 +117,17 @@ pub const STEWARD_RECORD_SEED: &[u8] = b"steward_record";
 // Validation Constants
 // ============================================================================
 
-/// Minimum bounty amount (in lamports or smallest token unit)
-pub const MIN_BOUNTY_AMOUNT: u64 = 1_000_000; // 1 token with 6 decimals
+/// Minimum feature bounty: 1 AMOS, expressed in raw SPL units.
+pub const MIN_BOUNTY_AMOUNT: u64 = ONE_AMOS;
 
-/// Maximum bounty amount (in lamports or smallest token unit)
-pub const MAX_BOUNTY_AMOUNT: u64 = 1_000_000_000_000; // 1 million tokens with 6 decimals
+/// Maximum feature bounty: 1 million AMOS, expressed in raw SPL units.
+pub const MAX_BOUNTY_AMOUNT: u64 = 1_000_000 * ONE_AMOS;
 
-/// Minimum research stipend
-pub const MIN_RESEARCH_STIPEND: u64 = 100_000; // 0.1 token with 6 decimals
+/// Minimum recorded research stipend: 0.1 AMOS, expressed in raw SPL units.
+pub const MIN_RESEARCH_STIPEND: u64 = ONE_AMOS / 10;
 
-/// Maximum research stipend
-pub const MAX_RESEARCH_STIPEND: u64 = 100_000_000_000; // 100k tokens with 6 decimals
+/// Maximum recorded research stipend: 100,000 AMOS, expressed in raw SPL units.
+pub const MAX_RESEARCH_STIPEND: u64 = 100_000 * ONE_AMOS;
 
 /// Minimum vote amount
 pub const MIN_VOTE_AMOUNT: u64 = 1;
