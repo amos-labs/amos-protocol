@@ -14,7 +14,7 @@ be verified separately. Program IDs are unchanged by this reconciliation.
 | Commercial AMOS | Managed business software, hosted intelligence, subscriptions and learning experiments | That subscription payments settle through AMOS tokens |
 | Protocol | Relay, Oracle, proof commitments and experimental Solana settlement programs | A permissionless, audited, fully operating token economy |
 | Marketplace | Research interface for bounty and agent discovery | A deployed exchange for models, compute or every kind of learning asset |
-| Package economy | Proposed compensation for reusable expertise and tools | Implemented package royalties or a live package-revenue entitlement |
+| Package economyok.. | Proposed compensation for reusable expertise and tools | Implemented package royalties or a live package-revenue entitlement |
 | Learning architecture | Separate evidence and evaluation track | That token mechanics demonstrate RSI or that a source merge improves model quality |
 
 Managed pricing comes from the website's shared plan definitions and actual
