@@ -15,16 +15,22 @@
 
 | Crate | Purpose |
 |-------|---------|
+| `protocol-math` | Shared integer emission, payout-cap and decay kernel |
 | `amos-relay` | Bounty marketplace, proof receipts, reputation, settlement coordination |
 | `amos-oracle` | Semantic review of proof receipts (mission alignment, validation coverage, RSI risk) |
 | `amos-solana` | Anchor on-chain programs — treasury, governance, bounty (built via Anchor, outside the cargo workspace) |
 | `amos-agent` | The protocol-era default autonomous worker (superseded commercially by BYO-AI over MCP) |
 | `amos-core` | Frozen snapshot of the shared core these crates depend on. **The live `amos-core` is authoritative in `amos-platform-2.0`** — this copy keeps the protocol track self-contained. |
 
-`AGENT_CONTEXT.md` is the protocol's agent-facing source of truth (token
-parameters, decay, trust levels, bounty lifecycle). The protocol docs live in
-`docs/protocol/` and `docs/core/thesis.md`; the token-economy legacy papers in
-`docs/archive/`.
+[Economic Contract v1](docs/protocol/ECONOMIC_CONTRACT.md) is the canonical
+reconciled economic specification. [AGENT_CONTEXT.md](AGENT_CONTEXT.md) is its
+agent-facing entry point. `protocol-math` supplies the integer emission and payout
+kernel shared by Relay and the bounty program. Historical papers and the frozen
+core snapshot remain reference material, not conflicting runtime authorities.
+
+[Reconciliation and activation prerequisites](docs/protocol/RECONCILIATION_2026-09-10.md)
+record source fixes, tests and migration limits. Merging these sources does not
+activate a chain upgrade or prove current deployment state.
 
 ## Lineage
 
@@ -37,6 +43,6 @@ evolving here as the long-game track.
 ## Build
 
 ```bash
-cargo check            # relay, oracle, agent, core
-cd amos-solana && anchor build   # on-chain programs (Anchor 0.30.1)
+cargo check            # relay, oracle, agent, frozen core, protocol-math
+cd amos-solana && anchor build   # on-chain programs (Anchor 0.31.1)
 ```

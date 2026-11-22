@@ -244,4 +244,14 @@ pub enum GovernanceError {
 
     #[msg("Operation would result in negative value")]
     NegativeValue,
+
+    // Append only: retain all existing deployed error numbers.
+    #[msg("Legacy liquid-balance voting is retired; use vote_for_feature_v2 / withdraw_vote_v2")]
+    CustodiedVotingRequired,
+
+    #[msg("Legacy proposal has no verified vote custody; cancel and recreate with a fresh proposal ID")]
+    LegacyProposalRequiresResubmission,
+
+    #[msg("Vote vault does not cover the recorded vote")]
+    VoteVaultUnderfunded,
 }

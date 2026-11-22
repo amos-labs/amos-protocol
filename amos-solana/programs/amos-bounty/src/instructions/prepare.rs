@@ -96,8 +96,6 @@ fn calculate_day_index(start_time: i64) -> Result<u32> {
         .unix_timestamp
         .checked_sub(start_time)
         .ok_or(BountyError::InvalidTimestamp)?;
-    let days = (elapsed as u64)
-        .checked_div(86400)
-        .ok_or(BountyError::ArithmeticOverflow)?;
-    Ok(days as u32)
+    require!(elapsed >= 0, BountyError::InvalidTimestamp);
+    u32::try_from(elapsed / 86400).map_err(|_| error!(BountyError::InvalidDayIndex))
 }

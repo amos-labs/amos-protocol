@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 # Internal dependencies
 amos-core = { path = "../amos-core", features = ["db", "http"] }
+amos-protocol-math = { path = "../protocol-math" }
 
 # Async runtime
 tokio = { workspace = true }

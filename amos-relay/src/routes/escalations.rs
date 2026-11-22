@@ -6,7 +6,9 @@
 //!
 //! All endpoints under this router require Bearer-token auth.
 
+use crate::identity::Principal;
 use crate::state::RelayState;
+use axum::Extension;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -89,8 +91,10 @@ pub struct ResolveEscalationRequest {
 
 async fn create_escalation(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Json(req): Json<CreateEscalationRequest>,
 ) -> Result<(StatusCode, Json<EscalationResponse>), StatusCode> {
+    principal.require_scope("escalations:create")?;
     if req.path != "intake" && req.path != "review" {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -236,9 +240,22 @@ async fn list_escalations(
 /// All steps run in a single transaction.
 async fn resolve_escalation(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
-    Json(req): Json<ResolveEscalationRequest>,
+    Json(mut req): Json<ResolveEscalationRequest>,
 ) -> Result<Json<EscalationResponse>, StatusCode> {
+    if let Principal::Agent { wallet, .. } = &principal {
+        let council: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM relay_agents WHERE wallet_address=$1 AND wallet_verified AND status='active' AND trust_level>=5 AND council_member)").bind(wallet).fetch_one(&state.db).await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        if !council {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    } else {
+        principal.require_scope("escalations:resolve")?;
+    }
+    req.resolved_by = principal.audit_id();
+    if let Some(wallet) = &req.poster_wallet {
+        principal.require_wallet(wallet)?;
+    }
     if req.council_reasoning.trim().is_empty() || req.council_reasoning.len() > 10_000 {
         return Err(StatusCode::BAD_REQUEST);
     }

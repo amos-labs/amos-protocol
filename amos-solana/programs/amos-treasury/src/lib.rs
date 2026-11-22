@@ -1,6 +1,8 @@
 /// AMOS Treasury Program
 ///
-/// Immutable fee distribution system for the AMOS ecosystem.
+/// Versioned custody and fee distribution for the AMOS ecosystem.
+/// Legacy stake/claim/distribution entrypoints fail closed. Use the V2 instruction
+/// family described in MIGRATION_V2.md; deployment and account migration are separate.
 /// All transactions denominated in AMOS tokens. No USDC track.
 ///
 /// ## Fee Distribution (from Commercial Bounties)
@@ -12,13 +14,13 @@
 /// - All percentages hardcoded in constants.rs
 /// - No approval needed for claims (fully permissionless)
 /// - Proportional distribution based on stake weight
-/// - 30-day minimum stake period prevents gaming
+/// - 30-day claim eligibility delay after new/increased stake
 /// - All arithmetic uses checked operations
 /// - Complete transparency via immutable distribution records
 ///
 /// ## Staking Requirements
 /// - Minimum stake: 100 AMOS tokens
-/// - Minimum hold period: 30 days before claiming
+/// - Claim eligibility delay: 30 days (principal is not time-locked)
 /// - Can increase/decrease stake (maintaining minimum)
 use anchor_lang::prelude::*;
 
@@ -129,5 +131,25 @@ pub mod amos_treasury {
     /// Get specific distribution by index (view function).
     pub fn get_distribution(ctx: Context<GetDistribution>, index: u64) -> Result<Distribution> {
         instructions::transparency::get_distribution(ctx, index)
+    }
+
+    /// New, separately funded V2 pool. Does not import legacy balances.
+    pub fn initialize_revenue_v2(ctx: Context<InitializeRevenueV2>) -> Result<()> {
+        instructions::v2::initialize_revenue_v2(ctx)
+    }
+    pub fn open_stake_v2(ctx: Context<OpenStakeV2>, amount: u64) -> Result<()> {
+        instructions::v2::open_stake_v2(ctx, amount)
+    }
+    pub fn set_stake_v2(ctx: Context<ManageStakeV2>, amount: u64) -> Result<()> {
+        instructions::v2::set_stake_v2(ctx, amount)
+    }
+    pub fn claim_revenue_v2(ctx: Context<ManageStakeV2>) -> Result<()> {
+        instructions::v2::claim_revenue_v2(ctx)
+    }
+    pub fn distribute_fee_v2(ctx: Context<DistributeFeeV2>, amount: u64) -> Result<()> {
+        instructions::v2::distribute_fee_v2(ctx, amount)
+    }
+    pub fn sync_rewards_v2(ctx: Context<SyncRewardsV2>) -> Result<()> {
+        instructions::v2::sync_rewards_v2(ctx)
     }
 }

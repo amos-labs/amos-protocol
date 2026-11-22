@@ -4,7 +4,8 @@
   "strictness": "standard",
   "required_checks": [],
   "ci_evidence_checks": [
-    "Lint & Unit Tests"
+    "Lint & Unit Tests",
+    "Anchor Build (on-chain programs)"
   ],
   "protected_paths": [
     "amos-solana/programs/**",

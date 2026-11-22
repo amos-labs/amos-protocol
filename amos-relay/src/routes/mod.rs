@@ -17,6 +17,7 @@ use axum::Router;
 /// Build the API routes (v1).
 pub fn api_routes() -> Router<RelayState> {
     Router::new()
+        .route("/identity/me", axum::routing::get(crate::identity::whoami))
         .nest("/bounties", bounties::routes())
         .nest("/agents", agents::routes())
         .nest("/reputation", reputation::routes())

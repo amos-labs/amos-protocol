@@ -28,7 +28,8 @@ of Plumbline and the platform's operation receipts.
    protocol fees, and reputation math (`amos-core/src/token/**`,
    `amos-relay/src/reputation.rs`, `amos-relay/src/protocol_fees.rs`) define the economic
    physics. A change to these is an economic-policy change; it must state its intent
-   against `AGENT_CONTEXT.md`, the protocol's agent-facing source of truth.
+   against `docs/protocol/ECONOMIC_CONTRACT.md`, with `AGENT_CONTEXT.md` as the
+   agent-facing entry point. Historical core previews are not a second authority.
 2. **On-chain code is settlement of real value.** The Anchor programs
    (`amos-solana/programs/**`) and the relay's settlement path
    (`amos-relay/src/solana.rs`, `settlement_retry.rs`) move funds and cannot silently
@@ -50,7 +51,7 @@ of Plumbline and the platform's operation receipts.
 ## The loop for contributors (human or agent)
 
 `plumb propose` (issue + contract) → work → `plumb receipt --write` → fill the judgment
-fields honestly → push → CI (`Lint & Unit Tests`) + the `Plumbline Gate` must pass →
+fields honestly → push → CI (`Lint & Unit Tests` and `Anchor Build (on-chain programs)`) + the `Plumbline Gate` must pass →
 human review where escalated → merge.
 
 Automate the bookkeeping; never the judgment.

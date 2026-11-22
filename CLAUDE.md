@@ -1,3 +1,5 @@
+> Economic source priority: [Economic Contract v1](docs/protocol/ECONOMIC_CONTRACT.md), then [AGENT_CONTEXT.md](AGENT_CONTEXT.md). Frozen core formulas and historical papers do not override this revision.
+
 # CLAUDE.md
 
 This is **amos-protocol** — the AMOS protocol: the long-game economic layer
@@ -11,7 +13,7 @@ Read `README.md` first; `AGENT_CONTEXT.md` is the protocol source of truth.
 ```bash
 cargo check --workspace
 cargo test --lib -p amos-relay -p amos-oracle -p amos-agent -p amos-core
-cd amos-solana && anchor build     # Anchor 0.30.1, built outside the workspace
+cd amos-solana && anchor build     # Anchor 0.31.1, built outside the workspace
 ```
 
 ## Ground rules

@@ -15,3 +15,6 @@ pub use admin::*;
 pub use claims::*;
 pub use revenue::*;
 pub use transparency::*;
+
+pub mod v2;
+pub use v2::*;

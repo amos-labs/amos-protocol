@@ -7,6 +7,7 @@ pub mod priority;
 pub mod proposals;
 pub mod research;
 pub mod rewards;
+pub mod voting_v2;
 
 pub use gates::*;
 pub use governance::*;
@@ -14,3 +15,4 @@ pub use priority::*;
 pub use proposals::*;
 pub use research::*;
 pub use rewards::*;
+pub use voting_v2::*;

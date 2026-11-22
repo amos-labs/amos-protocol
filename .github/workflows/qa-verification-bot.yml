@@ -40,6 +40,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Require extracted bot source
+        run: |
+          if [ ! -f scripts/qa-verification-bot.sh ]; then
+            echo "::error::Protocol extraction omitted scripts/qa-verification-bot.sh. This schedule cannot operate until reviewed bot source is restored."
+            exit 1
+          fi
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

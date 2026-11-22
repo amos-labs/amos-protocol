@@ -19,10 +19,10 @@ use crate::Result;
 pub struct RelaySnapshot {
     pub taken_at: DateTime<Utc>,
 
-    // Pool state
-    pub daily_emission_remaining_points: u64,
-    pub daily_pool_points_distributed: u64,
-    pub growth_pool_cap_bps: u16,
+    // Pool state. None means unavailable, not zero or an unlimited budget.
+    pub daily_emission_remaining_points: Option<u64>,
+    pub daily_pool_points_distributed: Option<u64>,
+    pub growth_pool_cap_bps: Option<u16>,
 
     // Bounty lifecycle counts (rolling 7d)
     pub bounties_posted_7d: u32,
@@ -30,9 +30,10 @@ pub struct RelaySnapshot {
     pub bounties_settled_7d: u32,
     pub bounties_rejected_7d: u32,
 
-    // Value flow (rolling 7d, in AMOS atomic units)
-    pub commercial_volume_7d: u64,
-    pub system_emission_7d: u64,
+    // Value flow (rolling 7d, in AMOS atomic units). None until measured;
+    // reward points must never stand in for actual settled value.
+    pub commercial_volume_7d: Option<u64>,
+    pub system_emission_7d: Option<u64>,
 
     // Agent activity
     pub active_agents_7d: u32,
@@ -74,11 +75,9 @@ impl AmosMetricsProvider {
 #[async_trait]
 impl MetricsProvider for AmosMetricsProvider {
     async fn snapshot(&self) -> Result<RelaySnapshot> {
-        // Single call to a dedicated relay endpoint. If the endpoint doesn't
-        // yet exist (tracked as a separate relay-side task), this errors and
-        // the Oracle's prompt-assembly path treats it as "zero commercial
-        // signal" — weighting decisions harder toward escalate per
-        // constitutional §4. That graceful degradation is intentional.
+        // An unavailable endpoint or nullable measurement means evidence is
+        // unavailable. Prompt assembly must not turn missing evidence into a
+        // claim of zero volume, zero spending, or available treasury budget.
         let url = format!(
             "{}/api/v1/metrics/snapshot",
             self.relay_url.trim_end_matches('/')

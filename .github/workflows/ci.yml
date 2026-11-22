@@ -35,14 +35,31 @@ jobs:
   #
   # The Anchor on-chain programs under amos-solana/ are a SEPARATE cargo
   # workspace, deliberately excluded from the root workspace, and only build
-  # under the Solana BPF toolchain via `anchor build`. They are covered by the
-  # dedicated `anchor-build` job below rather than by `cargo fmt/clippy/test`
-  # here — running plain clippy/test against them would fail on the missing
-  # solana-program BPF target, not on any real defect.
+  # under the Solana SBF toolchain via `anchor build`. The dedicated job below
+  # also runs their host regression tests; the root cargo commands do not include
+  # that separate workspace.
   # ============================================================================
   check:
     name: Lint & Unit Tests
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: runner
+          POSTGRES_DB: protocol_identity_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["127.0.0.1:5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U runner -d protocol_identity_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["127.0.0.1:6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
 
     steps:
       - name: Checkout code
@@ -73,6 +90,12 @@ jobs:
       - name: Run doc tests
         run: cargo test --doc
 
+      - name: Relay identity HTTP and SQL migration regression
+        env:
+          PROTOCOL_TEST_DATABASE_URL: postgresql://127.0.0.1:5432/protocol_identity_test
+          PROTOCOL_TEST_REDIS_URL: redis://127.0.0.1:6379/
+        run: cargo test -p amos-relay --test identity_integration -- --ignored --nocapture
+
   # ============================================================================
   # GATE 2: Anchor build — on-chain programs (treasury, governance, bounty)
   #
@@ -81,26 +104,13 @@ jobs:
   # `anchor build` so a change that breaks the on-chain programs is caught,
   # without dragging the BPF target into the fast fmt/clippy/test path above.
   #
-  # ADVISORY, NOT GATING — the protocol is public ALPHA.
-  #
-  # While the protocol repo is in alpha, on-chain CI is informational only: an
-  # Anchor/BPF compile (or a flaky Anchor toolchain install) must never block an
-  # ordinary docs/relay/agent change. This job still RUNS on every PR so we can
-  # see on-chain breakage, but it does not gate merges in two ways:
-  #   1. `continue-on-error: true` — a failure here never fails the CI workflow.
-  #   2. This check ("Anchor Build (on-chain programs)") is deliberately absent
-  #      from `.plumbline/policy.json` -> `ci_evidence_checks`, so the Plumbline
-  #      gate never requires it to certify. Only "Lint & Unit Tests" gates.
-  #
-  # Program IDs are frozen (mainnet/devnet unchanged), which is why alpha =
-  # advisory on-chain. Flip `continue-on-error` off AND add this check to
-  # `ci_evidence_checks` once the on-chain programs re-enter active change and
-  # the alpha posture moves to "active".
+  # Required for this active revision of on-chain custody and accounting.
+  # Host tests exercise invariants; the SBF build verifies deployable compilation.
+  # Neither substitutes for a validator migration rehearsal before deployment.
   # ============================================================================
   anchor-build:
     name: Anchor Build (on-chain programs)
     runs-on: ubuntu-latest
-    continue-on-error: true
 
     steps:
       - name: Checkout code
@@ -115,22 +125,73 @@ jobs:
           workspaces: amos-solana
           cache-on-failure: true
 
-      - name: Install Solana CLI
+      - name: Install pinned stable Solana / SBF toolchain
         run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          # Agave 3.1.10 bundles platform-tools v1.52 / Rust 1.89.0, which
+          # supports the edition-2024 crates already in amos-solana/Cargo.lock.
+          # Pin the release bytes as well as the version; never use stable/edge.
+          AGAVE_VERSION=3.1.10
+          AGAVE_ARCHIVE="$RUNNER_TEMP/agave-$AGAVE_VERSION.tar.bz2"
+          curl --fail --location --silent --show-error \
+            "https://github.com/anza-xyz/agave/releases/download/v$AGAVE_VERSION/solana-release-x86_64-unknown-linux-gnu.tar.bz2" \
+            --output "$AGAVE_ARCHIVE"
+          echo "a7205ff29bcf0f7199740225ecae2b85a28ea9668892d5ec21bd9749882984a1  $AGAVE_ARCHIVE" | sha256sum --check -
+          mkdir -p "$RUNNER_TEMP/agave-$AGAVE_VERSION"
+          tar -xjf "$AGAVE_ARCHIVE" -C "$RUNNER_TEMP/agave-$AGAVE_VERSION"
+          AGAVE_BIN="$RUNNER_TEMP/agave-$AGAVE_VERSION/solana-release/bin"
+          echo "$AGAVE_BIN" >> "$GITHUB_PATH"
+          "$AGAVE_BIN/solana" --version | grep -F 'solana-cli 3.1.10 '
+          "$AGAVE_BIN/cargo-build-sbf" --version | tee "$RUNNER_TEMP/sbf-toolchain.txt"
+          grep -Fx 'solana-cargo-build-sbf 3.1.10' "$RUNNER_TEMP/sbf-toolchain.txt"
+          grep -Fx 'platform-tools v1.52' "$RUNNER_TEMP/sbf-toolchain.txt"
+          # rustc is downloaded on the first build, so its version is checked
+          # after Anchor has installed and used the pinned platform-tools.
 
       - name: Install Anchor (AVM — version pinned by amos-solana/Anchor.toml)
         run: |
-          cargo install --git https://github.com/coral-xyz/anchor avm --locked --force
           # `anchor build` resolves the version from amos-solana/Anchor.toml's
           # [toolchain] anchor_version, so install exactly that to avoid a
           # "not installed" failure.
           ANCHOR_VERSION=$(grep -E '^anchor_version' amos-solana/Anchor.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          # Newer, unpinned AVM versions also replace the selected Solana CLI;
+          # pin AVM to the same release so the verified SBF toolchain is retained.
+          cargo install --git https://github.com/coral-xyz/anchor --tag "v$ANCHOR_VERSION" avm --locked --force
           echo "Installing Anchor $ANCHOR_VERSION"
           avm install "$ANCHOR_VERSION"
           avm use "$ANCHOR_VERSION"
+          anchor --version | grep -Fx "anchor-cli $ANCHOR_VERSION"
+          solana --version | grep -F 'solana-cli 3.1.10 '
+
+      - name: On-chain host regression tests
+        run: cargo test --manifest-path amos-solana/Cargo.toml --lib --locked
+
+      - name: Install Node.js for offline instruction-builder tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: amos-solana/package-lock.json
+
+      - name: Install pinned client dependencies
+        working-directory: amos-solana
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Offline fee-recipient builder tests
+        run: node --test amos-solana/programs/amos-treasury/tests/fee-recipient-builder.test.mjs
 
       - name: Anchor build
         working-directory: amos-solana
-        run: anchor build
+        run: |
+          set -o pipefail
+          # The verified CLI release fixes platform-tools at v1.52. Do not pass
+          # --tools-version through Anchor 0.31.1: it also forwards build args to
+          # host Cargo during IDL generation, where that SBF-only flag is invalid.
+          anchor build 2>&1 | tee /tmp/amos-anchor-build.log
+          if grep -E 'Stack offset.*exceeded|stack frame.*exceed' /tmp/amos-anchor-build.log; then
+            echo "::error::SBF stack diagnostic is a build failure even if the compiler returned zero."
+            exit 1
+          fi
+          cargo build-sbf --version | tee "$RUNNER_TEMP/sbf-toolchain-built.txt"
+          grep -Fx 'solana-cargo-build-sbf 3.1.10' "$RUNNER_TEMP/sbf-toolchain-built.txt"
+          grep -Fx 'platform-tools v1.52' "$RUNNER_TEMP/sbf-toolchain-built.txt"
+          grep -Fx 'rustc 1.89.0' "$RUNNER_TEMP/sbf-toolchain-built.txt"

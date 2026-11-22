@@ -30,7 +30,9 @@ pub const FEE_LABS_SHARE_BPS: u16 = 1000;
 pub const MIN_STAKE_DAYS: u64 = 30;
 
 /// Minimum AMOS tokens required to register a stake
-pub const MIN_STAKE_AMOUNT: u64 = 100;
+pub const AMOS_DECIMALS: u8 = 9;
+pub const AMOS_UNIT: u64 = 1_000_000_000;
+pub const MIN_STAKE_AMOUNT: u64 = 100 * AMOS_UNIT;
 
 // ============================================================================
 // Basis Points Denominator

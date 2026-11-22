@@ -5,10 +5,12 @@
 //! `GET /api/v1/intakes?status=pending`, evaluates each, and posts the
 //! verdict. This route owns the CRUD surface around the queue.
 //!
-//! Auth: creating an intake requires a Bearer token; listing is public
-//! read-only (falls under the existing marketplace-public rule for GETs).
+//! All intake routes require a credential. Creating records binds the submitter
+//! to that principal; recording an evaluation also requires its service scope.
 
+use crate::identity::Principal;
 use crate::state::RelayState;
+use axum::Extension;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -45,7 +47,7 @@ pub struct CreateIntakeRequest {
     pub suggested_capabilities: Vec<String>,
     /// Optional Solana wallet — when set, submitter is eligible for a
     /// finder's fee on commissioned + settled bounties derived from this
-    /// intake. Anonymous reports (no wallet) are still accepted.
+    /// intake. Authenticated reports without a payout wallet are accepted.
     #[serde(default)]
     pub submitter_wallet: Option<String>,
 }
@@ -93,8 +95,13 @@ pub struct RecordEvaluationRequest {
 
 async fn create_intake(
     State(state): State<RelayState>,
-    Json(req): Json<CreateIntakeRequest>,
+    Extension(principal): Extension<Principal>,
+    Json(mut req): Json<CreateIntakeRequest>,
 ) -> Result<(StatusCode, Json<IntakeResponse>), StatusCode> {
+    req.submitter = principal.audit_id();
+    if let Some(wallet) = &req.submitter_wallet {
+        principal.require_wallet(wallet)?;
+    }
     if req.title.trim().is_empty() || req.title.len() > 500 {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -107,7 +114,7 @@ async fn create_intake(
     if req.suggested_capabilities.len() > 20 {
         return Err(StatusCode::BAD_REQUEST);
     }
-    // Validate submitter_wallet format if provided (anonymous reports OK).
+    // Validate an optional authenticated submitter payout wallet.
     if let Some(ref w) = req.submitter_wallet {
         if !crate::validate_wallet_address(w) {
             return Err(StatusCode::BAD_REQUEST);
@@ -249,9 +256,11 @@ async fn get_intake(
 
 async fn record_evaluation(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     Json(req): Json<RecordEvaluationRequest>,
 ) -> Result<Json<IntakeResponse>, StatusCode> {
+    principal.require_scope("intakes:evaluate")?;
     let valid_verdicts = ["commission", "reject", "refine", "escalate"];
     if !valid_verdicts.contains(&req.verdict.as_str()) {
         return Err(StatusCode::BAD_REQUEST);

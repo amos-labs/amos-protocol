@@ -1,7 +1,7 @@
 /// AMOS Bounty Program - Distribution Instructions
 ///
 /// This module handles the core bounty submission and token distribution logic.
-/// It implements trustless, transparent token allocation based on contribution value.
+/// It implements oracle-authorized, transparent token allocation based on contribution value.
 ///
 /// IMPORTANT: Call `prepare_bounty_submission` in the same transaction BEFORE
 /// this instruction to ensure daily_pool and operator_stats accounts exist.
@@ -19,7 +19,7 @@ use crate::state::*;
 /// Submit a validated bounty proof and distribute tokens proportionally.
 ///
 /// This is the CORE distribution mechanism. Token allocation is calculated as:
-/// `tokens = (adjusted_points / total_points_today) × remaining_daily_emission`
+/// `tokens <= points / (prior_points + 10000 + points) × time_released_pool`
 ///
 /// Prerequisites: `prepare_bounty_submission` must be called first in the same
 /// transaction to create daily_pool and operator_stats if they don't exist.
@@ -32,7 +32,7 @@ use crate::state::*;
 /// * `is_agent` - Whether this is an AI agent submission
 /// * `agent_id` - Agent identifier if applicable
 /// * `day_index` - Current day index since program start
-/// * `max_reward` - Maximum token payout for this bounty (in lamports, 0 = no cap)
+/// * `max_reward` - Maximum token payout for this bounty (in raw token units; zero rejects payout)
 /// * `reviewer` - Address of the reviewer who validated this work
 /// * `evidence_hash` - Hash of the work product/evidence
 /// * `external_reference` - External ID (issue number, PR number, etc.)
@@ -138,7 +138,7 @@ pub fn handler_submit_proof(
     // ========================================================================
 
     require!(
-        quality_score >= MIN_QUALITY_SCORE,
+        (MIN_QUALITY_SCORE..=100).contains(&quality_score),
         BountyError::QualityScoreTooLow
     );
     require!(
@@ -154,6 +154,12 @@ pub fn handler_submit_proof(
         BountyError::ReviewerSameAsOperator
     );
     require!(evidence_hash != [0u8; 32], BountyError::InvalidEvidenceHash);
+    require_keys_eq!(
+        ctx.accounts.reviewer_token_account.owner,
+        reviewer,
+        BountyError::InvalidOperator
+    );
+    require!(max_reward > 0, BountyError::ZeroTokensCalculated);
 
     // Verify operator_stats was properly initialized by prepare instruction
     require!(
@@ -195,10 +201,14 @@ pub fn handler_submit_proof(
         let max_points = get_max_points_for_trust_level(trust_level)?;
         require!(base_points <= max_points, BountyError::InvalidBountyPoints);
 
-        // No daily bounty count limit — the finite daily emission pool is the
-        // natural throttle. More bounties just means smaller per-bounty shares.
-    } else {
-        // Non-agent submissions: no daily limit either
+        require!(
+            agent_id == ctx.accounts.operator.key().to_bytes(),
+            BountyError::InvalidAgentId
+        );
+        require!(
+            operator_stats.daily_bounty_count < get_daily_limit_for_trust_level(trust_level)?,
+            BountyError::DailyLimitExceeded
+        );
     }
 
     // ========================================================================
@@ -242,60 +252,27 @@ pub fn handler_submit_proof(
         .checked_div(BPS_DENOMINATOR as u64)
         .ok_or(BountyError::ArithmeticOverflow)?;
 
-    let tokens_before_split = if is_growth {
-        // Growth bounty: distribute from growth pool (capped)
-        let growth_remaining = growth_pool_max.saturating_sub(daily_pool.growth_tokens_distributed);
-
-        if growth_remaining == 0 {
-            // Growth pool exhausted for today — still record points but award minimum
-            1u64
-        } else {
-            let new_growth_points = daily_pool
-                .growth_points
-                .checked_add(adjusted_points as u64)
-                .ok_or(BountyError::ArithmeticOverflow)?;
-
-            let tokens = (adjusted_points as u64)
-                .checked_mul(growth_remaining)
-                .ok_or(BountyError::ArithmeticOverflow)?
-                .checked_div(new_growth_points)
-                .ok_or(BountyError::ArithmeticOverflow)?;
-            tokens.max(1).min(growth_remaining)
-        }
+    let day_start = config
+        .start_time
+        .checked_add(day_index as i64 * 86400)
+        .ok_or(BountyError::InvalidTimestamp)?;
+    let available_cap = amos_protocol_math::reward_cap(
+        adjusted_points as u64,
+        daily_pool.daily_emission,
+        daily_pool.tokens_distributed,
+        daily_pool.total_points,
+        day_start,
+        clock.unix_timestamp,
+    );
+    // Growth cannot exceed its allocation. Technical work can consume unused
+    // growth capacity; every payout remains bounded by the shared time release.
+    let category_remaining = if is_growth {
+        growth_pool_max.saturating_sub(daily_pool.growth_tokens_distributed)
     } else {
-        // Technical bounty: distribute from technical pool (protected)
-        let technical_pool_max = daily_pool.daily_emission.saturating_sub(growth_pool_max);
-        let technical_remaining =
-            technical_pool_max.saturating_sub(daily_pool.technical_tokens_distributed);
-
-        // Technical pool also gets any unused growth allocation
-        let unused_growth = growth_pool_max.saturating_sub(daily_pool.growth_tokens_distributed);
-        let effective_remaining = technical_remaining
-            .checked_add(unused_growth)
-            .ok_or(BountyError::ArithmeticOverflow)?
-            .min(remaining_emission);
-
-        let new_technical_points = daily_pool
-            .technical_points
-            .checked_add(adjusted_points as u64)
-            .ok_or(BountyError::ArithmeticOverflow)?;
-
-        let tokens = (adjusted_points as u64)
-            .checked_mul(effective_remaining)
-            .ok_or(BountyError::ArithmeticOverflow)?
-            .checked_div(new_technical_points)
-            .ok_or(BountyError::ArithmeticOverflow)?;
-        tokens.max(1)
+        remaining_emission
     };
-
-    // Cap payout at the bounty's stated reward (max_reward, in lamports).
-    // The pool share can exceed the bounty value when few contributors are active.
-    // Unclaimed tokens stay in the pool for later bounties that day.
-    let tokens_before_split = if max_reward > 0 {
-        tokens_before_split.min(max_reward)
-    } else {
-        tokens_before_split
-    };
+    let tokens_before_split = available_cap.min(category_remaining).min(max_reward);
+    require!(tokens_before_split > 0, BountyError::ZeroTokensCalculated);
 
     let new_total_points = daily_pool
         .total_points
@@ -418,6 +395,7 @@ pub fn handler_submit_proof(
         .ok_or(BountyError::ArithmeticOverflow)?;
 
     operator_stats.last_activity_time = clock.unix_timestamp;
+    operator_stats.last_decay_time = clock.unix_timestamp;
 
     config.total_tokens_distributed = config
         .total_tokens_distributed
@@ -519,11 +497,8 @@ fn calculate_day_index(start_time: i64) -> Result<u32> {
         .checked_sub(start_time)
         .ok_or(BountyError::InvalidTimestamp)?;
 
-    let days = (elapsed as u64)
-        .checked_div(86400)
-        .ok_or(BountyError::ArithmeticOverflow)?;
-
-    Ok(days as u32)
+    require!(elapsed >= 0, BountyError::InvalidTimestamp);
+    u32::try_from(elapsed / 86400).map_err(|_| error!(BountyError::InvalidDayIndex))
 }
 
 /// Determine the current growth pool cap using sigmoid decay.

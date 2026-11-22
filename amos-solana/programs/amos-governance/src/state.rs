@@ -473,3 +473,35 @@ pub struct StewardVoteRecord {
     /// Reserved space for future fields
     pub reserved: [u8; 64],
 }
+
+/// Custodied vote, distinct from the legacy balance-observation VoteRecord.
+/// Never closed: withdrawn_at is a permanent same-proposal replay tombstone.
+#[account]
+pub struct VoteRecordV2 {
+    pub version: u8,
+    pub voter: Pubkey,
+    pub proposal: Pubkey,
+    pub proposal_id: u64,
+    pub mint: Pubkey,
+    /// Actual raw SPL token units transferred to this record's vault.
+    pub amount: u64,
+    pub voted_at: i64,
+    pub withdrawn_at: Option<i64>,
+    pub bump: u8,
+    pub vault_bump: u8,
+}
+
+impl FeatureProposal {
+    pub fn has_custodied_voting(&self) -> bool {
+        self.reserved[..8] == CUSTODIED_VOTING_MARKER[..]
+    }
+
+    /// Legacy liquid-balance observations never count as custodied influence.
+    pub fn custodied_vote_total(&self) -> u64 {
+        if self.has_custodied_voting() {
+            self.total_votes
+        } else {
+            0
+        }
+    }
+}

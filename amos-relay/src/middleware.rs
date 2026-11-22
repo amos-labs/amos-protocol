@@ -3,7 +3,7 @@
 use amos_core::AmosError;
 use axum::{
     extract::{Request, State},
-    http::{header, Method, StatusCode},
+    http::{header, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Json,
@@ -47,70 +47,17 @@ pub async fn api_key_auth(
     req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let path = req.uri().path().to_string();
-    let method = req.method().clone();
-
-    // Skip auth for health, public read-only, and webhook endpoints (use HMAC auth)
-    if path == "/health"
-        || path.starts_with("/api/v1/harnesses/connect")
-        || path.starts_with("/api/v1/agents/register")
-        || path.starts_with("/api/v1/pool/")
-        || path.starts_with("/api/v1/webhooks/")
-    {
+    let mut req = req;
+    let authorization = req.headers().get(header::AUTHORIZATION);
+    if authorization.is_none() && crate::identity::public_route(req.method(), req.uri().path()) {
         return Ok(next.run(req).await);
     }
-
-    // Public read-only access to bounty board and agent directory (marketplace)
-    if method == Method::GET
-        && (path.starts_with("/api/v1/bounties") || path.starts_with("/api/v1/agents"))
-    {
-        return Ok(next.run(req).await);
-    }
-
-    // Extract Bearer token
-    let auth_header = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-
-    let token = match auth_header {
-        Some(h) if h.starts_with("Bearer ") => &h[7..],
-        _ => {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-    };
-
-    // Two valid auth shapes:
-    //   - Harness API key:  hash and compare to relay_harnesses.api_key_hash
-    //   - Agent UUID:        compare raw token to relay_agents.id::text
-    // The previous query bound only the hash for both branches, so agent-UUID
-    // auth was effectively broken — no agent ID will ever equal its own SHA256.
-    let token_hash = hash_api_key(token);
-
-    let is_valid = sqlx::query_scalar::<_, bool>(
-        r#"
-        SELECT EXISTS(
-            SELECT 1 FROM relay_harnesses
-              WHERE api_key_hash = $1 AND status = 'active'
-            UNION ALL
-            SELECT 1 FROM relay_agents
-              WHERE id::text = $2 AND status = 'active'
-        )
-        "#,
-    )
-    .bind(&token_hash)
-    .bind(token)
-    .fetch_one(&db)
-    .await
-    .unwrap_or(false);
-
-    if !is_valid {
-        tracing::warn!(
-            path = %path,
-            "API key authentication failed — rejecting request"
-        );
-        return Err(StatusCode::UNAUTHORIZED);
-    }
+    let token = authorization
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let principal = crate::identity::authenticate(&db, token).await?;
+    req.extensions_mut().insert(principal);
 
     Ok(next.run(req).await)
 }
@@ -176,7 +123,7 @@ pub fn hash_api_key(key: &str) -> String {
 pub fn generate_api_key(prefix: &str) -> String {
     use rand::RngCore;
     let mut random_bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut random_bytes);
+    rand::rngs::OsRng.fill_bytes(&mut random_bytes);
     format!("{}_{}", prefix, hex::encode(random_bytes))
 }
 

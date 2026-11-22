@@ -215,4 +215,8 @@ pub enum TreasuryError {
 
     #[msg("Invalid input parameter")]
     InvalidInput,
+    #[msg("Legacy staking and distribution are disabled; use separately funded V2 accounts")]
+    LegacyAccountingDisabled,
+    #[msg("Unsupported accounting version")]
+    UnsupportedVersion,
 }

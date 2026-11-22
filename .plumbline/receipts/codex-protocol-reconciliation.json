@@ -1,0 +1,232 @@
+{
+  "receipt_version": "1.0",
+  "task_id": "codex-protocol-reconciliation",
+  "agent_id": "codex",
+  "intent": "Reconcile the research Protocol economics and authority with executable source: prove Relay identities and reviews, prevent stale approvals and fabricated system fees, share bounded payout math, add real escrow/stake/vote custody, and replace contradictory economic authorities with a versioned contract. Preserve program IDs and legacy layouts; require recovery and validator rehearsal before any deployed upgrade.",
+  "self_modifying": true,
+  "policy_refs": [
+    ".plumbline/MISSION.md",
+    ".plumbline/policy.json",
+    "CLAUDE.md",
+    "docs/protocol/ECONOMIC_CONTRACT.md"
+  ],
+  "validation_plan": [
+    {
+      "command": "cargo test --workspace",
+      "reason": "Exercise all root libraries, binaries, deterministic tests and doc examples.",
+      "required": true
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "reason": "Reject root compile/lint regressions including new identity and metrics contracts.",
+      "required": true
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "reason": "Ensure workspace source formatting.",
+      "required": true
+    },
+    {
+      "command": "bash amos-relay/tests/run-identity-integration.sh",
+      "reason": "Run real router and migrations against fresh local PostgreSQL/Redis; assert wallet proof, scopes, stale approval409, legacy provenance refusal and no fabricated system fee rows.",
+      "required": true
+    },
+    {
+      "command": "cargo test --manifest-path amos-solana/Cargo.toml --lib --locked",
+      "reason": "Check custody, refund, voting, reward-debt, units and shared math behaviors in all on-chain crates.",
+      "required": true
+    },
+    {
+      "command": "cd amos-solana && PATH=\"$HOME/.cargo/bin:$PATH\" anchor build",
+      "reason": "Compile every program to SBF and generate IDLs; reject stack overflow diagnostics even if compiler exits zero.",
+      "required": true
+    },
+    {
+      "command": "cd amos-solana && npm test",
+      "reason": "Exercise offline fee-recipient instruction builder, account decoders and dry-run default.",
+      "required": true
+    },
+    {
+      "command": "git diff --check",
+      "reason": "Check patch whitespace.",
+      "required": true
+    },
+    {
+      "command": "Lint & Unit Tests",
+      "reason": "Required GitHub evidence for this exact PR head; on-chain checks are now gating.",
+      "required": true,
+      "ci_covered": true
+    },
+    {
+      "command": "Anchor Build (on-chain programs)",
+      "reason": "Required GitHub evidence for this exact PR head; on-chain checks are now gating.",
+      "required": true,
+      "ci_covered": true
+    },
+    {
+      "command": "cd amos-solana && npm ci --ignore-scripts --no-audit --no-fund && npm test",
+      "reason": "Reproduce dependency installation on a clean CI runner before executing the offline instruction-builder tests.",
+      "required": true
+    },
+    {
+      "command": "cd amos-solana && PATH=/private/tmp/amos-agave-3.1.10/solana-release/bin:/Users/rickbarkley/.cargo/bin:$PATH anchor build",
+      "reason": "Rebuild with verified stable Agave 3.1.10, SBF platform-tools v1.52 and Rust 1.89.0; align CI compiler capability without weakening gates.",
+      "required": true
+    },
+    {
+      "command": "cd amos-solana && PATH=/private/tmp/amos-agave-3.1.10/solana-release/bin:/Users/rickbarkley/.cargo/bin:$PATH anchor build --program-name amos_governance",
+      "reason": "Compile and generate the IDL for the changed governance source using the previously qualified SBF toolchain.",
+      "required": true
+    }
+  ],
+  "execution_evidence": [
+    {
+      "command": "cargo test --workspace",
+      "status": "passed",
+      "output_ref": "401 executable tests and 6 doc tests passed (407 total), zero failures; two existing live Oracle tests not run; default-ignored HTTP regression passed separately. Final log in coordination/artifacts/protocol-reconciliation-20260910/final-source/workspace-tests.log."
+    },
+    {
+      "command": "cargo clippy --workspace --all-targets -- -D warnings",
+      "status": "passed",
+      "output_ref": "Passed after final settlement-proof and shared category changes; final-source/clippy.log in shared local evidence."
+    },
+    {
+      "command": "cargo fmt --all -- --check",
+      "status": "passed",
+      "output_ref": "Passed."
+    },
+    {
+      "command": "bash amos-relay/tests/run-identity-integration.sh",
+      "status": "passed",
+      "output_ref": "One comprehensive real HTTP/SQL regression passed after adding queued reviewer matrix in amos-relay/tests/identity_integration.rs:522. It tests the actual settlement_reviewer_wallet lookup: valid authority, missing identity, NULL reviewer/provenance, unverified, suspended, low-trust and non-Council cases; restoring wallet authority alone never validates a historical approval. Disposable services cleaned up; no chain calls. Shared log identity/queued-settlement-reviewer-regression.log."
+    },
+    {
+      "command": "cargo test --manifest-path amos-solana/Cargo.toml --lib --locked",
+      "status": "passed",
+      "output_ref": "126 tests passed on September11 follow-up:99 bounty,13 treasury,14 governance. This reruns all chain host tests after correcting governance units; /private/tmp/protocol-chain-reconcile-20260911.log."
+    },
+    {
+      "command": "cd amos-solana && PATH=\"$HOME/.cargo/bin:$PATH\" anchor build",
+      "status": "passed",
+      "output_ref": "Passed all programs; /private/tmp/amos-anchor-final.log contains no stack overflow or error diagnostics. This is not validator lifecycle qualification."
+    },
+    {
+      "command": "cd amos-solana && npm test",
+      "status": "passed",
+      "output_ref": "4 passed. Shared Anchor JavaScript package lock pinned to0.31.1 matching CLI/Rust."
+    },
+    {
+      "command": "git diff --check",
+      "status": "passed",
+      "output_ref": "Passed."
+    },
+    {
+      "command": "Lint & Unit Tests",
+      "status": "skipped",
+      "skip_reason": "Runs on the published PR head; not represented as locally observed CI success."
+    },
+    {
+      "command": "Anchor Build (on-chain programs)",
+      "status": "skipped",
+      "skip_reason": "Runs on the published PR head; not represented as locally observed CI success."
+    },
+    {
+      "command": "cd amos-solana && npm ci --ignore-scripts --no-audit --no-fund && npm test",
+      "status": "passed",
+      "output_ref": "82 pinned packages installed;4 offline builder tests passed. No lifecycle scripts, chain calls or deployment."
+    },
+    {
+      "command": "cd amos-solana && PATH=/private/tmp/amos-agave-3.1.10/solana-release/bin:/Users/rickbarkley/.cargo/bin:$PATH anchor build",
+      "status": "passed",
+      "output_ref": "All three SBF programs and IDLs passed; no stack diagnostics. Exact versions, archive SHA and log recorded in shared final-source/anchor-toolchain-compatibility.json. Local AVM 0.32.1 dispatches pinned Anchor 0.31.1; Linux pinned AVM 0.31.1 execution remains CI evidence. Anchor auto-installs current nightly for IDL generation; that host compiler is not pinned by this change."
+    },
+    {
+      "command": "cd amos-solana && PATH=/private/tmp/amos-agave-3.1.10/solana-release/bin:/Users/rickbarkley/.cargo/bin:$PATH anchor build --program-name amos_governance",
+      "status": "passed",
+      "output_ref": "Governance SBF and IDL build passed with Agave3.1.10/platform-tools v1.52, no stack-exceeded diagnostics. Log amos-solana/target/governance-units-anchor-build.log SHA256 e2d39e6daf72bc75d514c7278d51828d90d3974438bd321245a9404e694a508a. No validator or chain calls."
+    }
+  ],
+  "changed_files": [
+    ".github/workflows/auto-merge-bot.yml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/emit-stale-merge-metric.yml",
+    ".github/workflows/plumbline.yml",
+    ".github/workflows/qa-verification-bot.yml",
+    ".plumbline/MISSION.md",
+    ".plumbline/policy.json",
+    "AGENT_CONTEXT.md",
+    "CLAUDE.md",
+    "Cargo.lock",
+    "Cargo.toml",
+    "README.md",
+    "amos-oracle/src/bin/oracle_agent.rs",
+    "amos-oracle/src/metrics.rs",
+    "amos-oracle/src/prompt.rs",
+    "amos-relay/Cargo.toml",
+    "amos-relay/migrations/20260910000001_authenticated_principals.sql",
+    "amos-relay/src/identity.rs",
+    "amos-relay/src/lib.rs",
+    "amos-relay/src/middleware.rs",
+    "amos-relay/src/protocol_fees.rs",
+    "amos-relay/src/routes/agents.rs",
+    "amos-relay/src/routes/bounties.rs",
+    "amos-relay/src/routes/escalations.rs",
+    "amos-relay/src/routes/harnesses.rs",
+    "amos-relay/src/routes/intakes.rs",
+    "amos-relay/src/routes/metrics.rs",
+    "amos-relay/src/routes/mod.rs",
+    "amos-relay/src/routes/pool.rs",
+    "amos-relay/src/routes/reputation.rs",
+    "amos-relay/src/settlement_retry.rs",
+    "amos-relay/src/solana.rs",
+    "amos-relay/tests/identity_integration.rs",
+    "amos-relay/tests/run-identity-integration.sh",
+    "amos-solana/Cargo.lock",
+    "amos-solana/package-lock.json",
+    "amos-solana/package.json",
+    "amos-solana/programs/amos-bounty/Cargo.toml",
+    "amos-solana/programs/amos-bounty/src/constants.rs",
+    "amos-solana/programs/amos-bounty/src/instructions/admin.rs",
+    "amos-solana/programs/amos-bounty/src/instructions/decay.rs",
+    "amos-solana/programs/amos-bounty/src/instructions/distribution.rs",
+    "amos-solana/programs/amos-bounty/src/instructions/escrow.rs",
+    "amos-solana/programs/amos-bounty/src/instructions/prepare.rs",
+    "amos-solana/programs/amos-bounty/src/instructions/trust.rs",
+    "amos-solana/programs/amos-governance/src/amounts.rs",
+    "amos-solana/programs/amos-governance/src/constants.rs",
+    "amos-solana/programs/amos-governance/src/errors.rs",
+    "amos-solana/programs/amos-governance/src/instructions/mod.rs",
+    "amos-solana/programs/amos-governance/src/instructions/priority.rs",
+    "amos-solana/programs/amos-governance/src/instructions/proposals.rs",
+    "amos-solana/programs/amos-governance/src/instructions/research.rs",
+    "amos-solana/programs/amos-governance/src/instructions/rewards.rs",
+    "amos-solana/programs/amos-governance/src/instructions/voting_v2.rs",
+    "amos-solana/programs/amos-governance/src/lib.rs",
+    "amos-solana/programs/amos-governance/src/state.rs",
+    "amos-solana/programs/amos-treasury/MIGRATION_V2.md",
+    "amos-solana/programs/amos-treasury/src/constants.rs",
+    "amos-solana/programs/amos-treasury/src/errors.rs",
+    "amos-solana/programs/amos-treasury/src/instructions/claims.rs",
+    "amos-solana/programs/amos-treasury/src/instructions/mod.rs",
+    "amos-solana/programs/amos-treasury/src/instructions/revenue.rs",
+    "amos-solana/programs/amos-treasury/src/instructions/v2.rs",
+    "amos-solana/programs/amos-treasury/src/lib.rs",
+    "amos-solana/programs/amos-treasury/tests/fee-recipient-builder.test.mjs",
+    "amos-solana/scripts/set-fee-recipients.mjs",
+    "docs/archive/agent-context-2026-04.md",
+    "docs/archive/package-economy-integration-2026-04.md",
+    "docs/packages/economy-integration.md",
+    "docs/protocol/ECONOMIC_CONTRACT.md",
+    "docs/protocol/GOVERNANCE_MIGRATION.md",
+    "docs/protocol/IDENTITY.md",
+    "docs/protocol/RECONCILIATION_2026-09-10.md",
+    "docs/protocol/solana-settlement.md",
+    "docs/protocol/token-economy.md",
+    "protocol-math/Cargo.toml",
+    "protocol-math/src/lib.rs"
+  ],
+  "base_sha": "359b3bdff4b5b1407c3af7a1724d648cf6d55745",
+  "diff_sha256": "c93f8b8474d7bcd6d5720a9651a836791fe2738ee4ec1fe0cca36e94892dd832",
+  "result_summary": "Source reconciliation implemented and independently reviewed. Signed single-use wallet enrollment and scoped principals replace public identifiers as credentials; authenticated verification and optimistic concurrency bind approval to the reviewed submission. Treasury work no longer fabricates commercial fees. Shared integer math enforces time, pool and zero caps; raw-unit constants are corrected. V2 treasury and governance custody plus poster-bound escrow replace unsafe accounting with explicit migration boundaries. Confirmed settlement requires a program-owned matching proof, so a prefunded empty PDA cannot fake payment. One shared adapter corrects content from referral ID 9 to content ID 3 and documents other legacy mappings. 407 workspace tests, one real HTTP/SQL test, 121 on-chain host tests, four offline JavaScript tests, strict lint and actual Anchor/SBF builds passed. Stable Agave release bytes and matching Anchor/AVM are pinned after CI exposed an incompatible implicit toolchain. Exact-head CI and semantic review remain required. Legacy assets may become immobilized unless recovered before activation; validator lifecycle, migration and deployed binary qualification are not claimed. No live chain or production activation is included. Gate changes strengthen enforcement under existing user authorization. Automated review requested explicit queued-reviewer coverage; the expanded real-database test passes. The historical approved-to-re-review transition is not implemented and is now explicitly required before live migration; the test does not fabricate production provenance or claim an automatic recovery path. September11 follow-up corrects the remaining six-decimal governance proposal thresholds to intended nine-decimal AMOS, using production-called boundary and payout helpers. Five new tests cover corrected bounds, rounding conservation and overflow. All126 chain host tests and governance SBF/IDL generation pass. Existing stored proposals are not rescaled. Governance 40/30/30 feature rewards and research20% plus400% of the original stipend are explicitly outside the bounty daily kernel; funding and lifecycle qualification remain required. Independent review found no material issue in this follow-up. No economic redesign, merge or deployment.",
+  "diff_algo": "v1"
+}

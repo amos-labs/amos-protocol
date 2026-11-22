@@ -124,6 +124,7 @@ async fn run() -> anyhow::Result<()> {
         base: cfg.relay_url.trim_end_matches('/').to_string(),
         api_key: cfg.relay_api_key.clone(),
     });
+    relay.validate_authority(&cfg).await?;
 
     info!("oracle agent constructed; entering poll loop");
 
@@ -477,6 +478,17 @@ struct CreateBountyResponse {
 }
 
 impl RelayClient {
+    async fn validate_authority(&self, cfg: &Config) -> anyhow::Result<()> {
+        let response = self
+            .http
+            .get(format!("{}/api/v1/identity/me", self.base))
+            .bearer_auth(&self.api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+        let identity: serde_json::Value = response.json().await?;
+        validate_service_identity(&identity, &cfg.poster_wallet, &cfg.reviewer_wallet)
+    }
     async fn list_pending_intakes(&self) -> anyhow::Result<Vec<IntakeRow>> {
         let url = format!("{}/api/v1/intakes?status=pending", self.base);
         let resp = self
@@ -748,10 +760,14 @@ impl Config {
             env::var(key).unwrap_or_else(|_| default.to_string())
         }
 
+        let relay_api_key = req("ORACLE_RELAY_API_KEY")?;
+        if !valid_service_key(&relay_api_key) {
+            anyhow::bail!("ORACLE_RELAY_API_KEY must be a provisioned service credential; UUID and harness credentials do not authorize Oracle actions");
+        }
         Ok(Self {
             database_url: req("DATABASE_URL")?,
             relay_url: req("ORACLE_RELAY_URL")?,
-            relay_api_key: req("ORACLE_RELAY_API_KEY")?,
+            relay_api_key,
             aws_region: req("AWS_REGION")?,
             poster_wallet: req("ORACLE_POSTER_WALLET")?,
             reviewer_wallet: req("ORACLE_REVIEWER_WALLET")?,
@@ -765,5 +781,61 @@ impl Config {
                 .max(5),
             model_id: opt("ORACLE_BEDROCK_MODEL_ID", DEFAULT_MODEL_ID),
         })
+    }
+}
+
+fn valid_service_key(key: &str) -> bool {
+    key.strip_prefix("service_").is_some_and(|s| {
+        s.len() == 64
+            && s.bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    })
+}
+
+fn validate_service_identity(
+    identity: &serde_json::Value,
+    poster: &str,
+    reviewer: &str,
+) -> anyhow::Result<()> {
+    let scopes = [
+        "bounties:create",
+        "bounties:review",
+        "intakes:evaluate",
+        "escalations:create",
+    ];
+    let has = |field: &str, expected: &str| {
+        identity[field]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|i| i.as_str() == Some(expected)))
+    };
+    if identity["kind"] != "service"
+        || scopes.iter().any(|s| !has("scopes", s))
+        || !has("wallets", poster)
+        || !has("wallets", reviewer)
+        || poster == reviewer
+    {
+        anyhow::bail!("Relay service identity lacks required Oracle scopes or distinct authorized poster/reviewer wallets");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    #[test]
+    fn oracle_requires_scoped_service_and_both_wallet_bindings() {
+        let identity = serde_json::json!({"kind":"service","scopes":["bounties:create","bounties:review","intakes:evaluate","escalations:create"],"wallets":["poster","reviewer"]});
+        assert!(validate_service_identity(&identity, "poster", "reviewer").is_ok());
+        assert!(validate_service_identity(&identity, "poster", "unbound").is_err());
+        assert!(validate_service_identity(&identity, "poster", "poster").is_err());
+        let mut no_scope = identity.clone();
+        no_scope["scopes"] = serde_json::json!([]);
+        assert!(validate_service_identity(&no_scope, "poster", "reviewer").is_err());
+        let mut harness = identity;
+        harness["kind"] = "harness".into();
+        assert!(validate_service_identity(&harness, "poster", "reviewer").is_err());
+        assert!(!valid_service_key(&Uuid::new_v4().to_string()));
+        assert!(!valid_service_key("service_short"));
+        assert!(valid_service_key(&format!("service_{}", "a".repeat(64))));
     }
 }

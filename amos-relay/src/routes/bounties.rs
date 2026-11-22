@@ -1,12 +1,14 @@
 //! Bounty marketplace routes.
 
+use crate::identity::Principal;
 use crate::{
     pointing::{self, PointingInput},
-    protocol_fees::calculate_fee,
-    solana::{compute_dynamic_max_reward, fallback_max_reward, SettlementParams},
+    settlement_retry::category_to_contribution_type,
+    solana::{compute_dynamic_max_reward, fallback_max_reward, new_daily_pool, SettlementParams},
     state::RelayState,
 };
 use amos_core::types::BountyStatus;
+use axum::Extension;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -164,7 +166,7 @@ async fn list_pending_review(
             acceptance_criteria, test_command
         FROM relay_bounties
         WHERE status = 'submitted'
-          AND verified_at IS NOT NULL
+          AND verified_at IS NOT NULL AND verified_by_principal IS NOT NULL
           AND approved_at IS NULL
           AND rejected_at IS NULL
           AND oracle_review_escalation_id IS NULL
@@ -617,7 +619,7 @@ async fn require_trust(
     bounty_id: Uuid,
 ) -> Result<(i16, bool), ApiError> {
     let row: Option<(i16, bool)> = sqlx::query_as(
-        "SELECT trust_level, council_member FROM relay_agents WHERE wallet_address = $1 AND status = 'active'",
+        "SELECT trust_level, council_member FROM relay_agents WHERE wallet_address = $1 AND wallet_verified AND status = 'active'",
     )
     .bind(wallet)
     .fetch_optional(db)
@@ -662,19 +664,6 @@ async fn require_trust(
     }
 }
 
-/// Map relay bounty category to on-chain contribution_type.
-/// Must match the constants in amos-solana/programs/amos-bounty/src/constants.rs.
-fn category_to_contribution_type(category: &str) -> u8 {
-    match category {
-        "infrastructure" => 7,
-        "growth" => 8,
-        "research" => 3,
-        "content" => 9,
-        "discovery" => 11,
-        _ => 1, // default: feature
-    }
-}
-
 // =============================================================================
 // HANDLERS
 // =============================================================================
@@ -682,8 +671,11 @@ fn category_to_contribution_type(category: &str) -> u8 {
 /// Create a new bounty.
 async fn create_bounty(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Json(req): Json<CreateBountyRequest>,
 ) -> Result<(StatusCode, Json<BountyResponse>), StatusCode> {
+    principal.require_scope("bounties:create")?;
+    principal.require_wallet(&req.poster_wallet)?;
     // Input validation
     if req.title.len() > MAX_TITLE_LEN {
         warn!("Bounty title too long: {} chars", req.title.len());
@@ -995,18 +987,11 @@ async fn list_bounties(
     if let Some(ref solana) = state.solana {
         if let Ok((start_time, day_index)) = solana.read_config_timing().await {
             let now = chrono::Utc::now().timestamp();
-            let pool = solana
-                .read_daily_pool(day_index)
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or(crate::solana::DailyPoolState {
-                    day_index,
-                    daily_emission: 16_000 * 1_000_000_000,
-                    tokens_distributed: 0,
-                    total_points: 0,
-                    proof_count: 0,
-                });
+            let pool = match solana.read_daily_pool(day_index).await {
+                Ok(Some(pool)) => pool,
+                Ok(None) => new_daily_pool(day_index),
+                Err(_) => return Ok(Json(bounties)), // No payout estimate without authoritative state.
+            };
             for b in bounties.iter_mut() {
                 if matches!(b.status, BountyStatus::Open | BountyStatus::Claimed) {
                     let points = (b.reward_tokens as u64).min(2000); // conservative cap
@@ -1044,9 +1029,16 @@ async fn get_bounty(
 /// Claim a bounty for an agent.
 async fn claim_bounty(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
-    Json(req): Json<ClaimBountyRequest>,
+    Json(mut req): Json<ClaimBountyRequest>,
 ) -> Result<Json<BountyResponse>, StatusCode> {
+    req.wallet_address = Some(principal.agent_wallet(req.agent_id, req.wallet_address.as_deref())?);
+    let harness: Option<String> = sqlx::query_scalar("SELECT h.harness_id FROM relay_agents a LEFT JOIN relay_harnesses h ON a.harness_id=h.id WHERE a.id=$1")
+        .bind(req.agent_id).fetch_one(&state.db).await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if req.harness_id != harness.unwrap_or_default() {
+        return Err(StatusCode::FORBIDDEN);
+    }
     // Validate wallet address if provided
     if let Some(ref addr) = req.wallet_address {
         if !crate::validate_wallet_address(addr) {
@@ -1087,9 +1079,11 @@ async fn claim_bounty(
 /// Submit work for a claimed bounty.
 async fn submit_work(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
-    Json(req): Json<SubmitWorkRequest>,
+    Json(mut req): Json<SubmitWorkRequest>,
 ) -> Result<Json<BountyResponse>, StatusCode> {
+    req.wallet_address = Some(principal.agent_wallet(req.agent_id, req.wallet_address.as_deref())?);
     // Validate wallet address if provided
     if let Some(ref addr) = req.wallet_address {
         if !crate::validate_wallet_address(addr) {
@@ -1134,65 +1128,14 @@ async fn submit_work(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    // If wallet_address provided at submit time and not yet stored, update it
-    let wallet_clause = if req.wallet_address.is_some() {
-        ", claimed_by_wallet = COALESCE(claimed_by_wallet, $9)"
-    } else {
-        ""
-    };
-    // pr_url is always the last bind ($9 or $10 depending on wallet)
-    let pr_bind_idx = if req.wallet_address.is_some() {
-        "$10"
-    } else {
-        "$9"
-    };
-    let sql = format!("UPDATE relay_bounties SET status = $1, submitted_at = $2, result = $3, quality_evidence = $4, updated_at = $5, pr_url = COALESCE({pr_bind_idx}, pr_url){wallet_clause} WHERE id = $6 AND status = $7 AND claimed_by_agent_id = $8 RETURNING {BOUNTY_SELECT}");
-    let mut query = sqlx::query(&sql)
-        .bind(BountyStatus::Submitted.as_str())
-        .bind(now)
-        .bind(&req.result)
-        .bind(&req.quality_evidence)
-        .bind(now)
-        .bind(id)
-        .bind(BountyStatus::Claimed.as_str())
-        .bind(req.agent_id);
-    if let Some(ref wallet) = req.wallet_address {
-        query = query.bind(wallet);
-    }
-    query = query.bind(&pr_url);
-    let row = query
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| {
-            warn!("Failed to submit work for bounty {}: {}", id, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or(StatusCode::CONFLICT)?;
-    let mut bounty = bounty_from_row(row).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    // Persist the proof receipt (if any) on the same row. Already shape-validated.
-    if let Some(receipt) = req.proof_receipt {
-        let res = sqlx::query(
-            "UPDATE relay_bounties SET proof_receipt = $1, updated_at = $2 WHERE id = $3",
-        )
-        .bind(&receipt)
-        .bind(now)
-        .bind(id)
-        .execute(&state.db)
-        .await;
-        match res {
-            Ok(_) => {
-                bounty.proof_receipt = Some(receipt);
-                info!(bounty = %id, "proof_receipt stored");
-            }
-            Err(e) => {
-                // Submit succeeded; receipt persist failed. Surface a 207-ish
-                // signal by logging — caller can re-submit the receipt. We
-                // don't roll back the submit because it already happened.
-                warn!(bounty = %id, error = %e, "proof_receipt persist failed; submit succeeded without it");
-            }
-        }
-    }
+    // Publish result, receipt and canonical worker identity atomically. Every
+    // new submission clears verification/approval of its predecessor.
+    let row = sqlx::query(&format!("UPDATE relay_bounties SET status=$1, submitted_at=$2, result=$3, quality_evidence=$4, updated_at=$2, pr_url=COALESCE($9,pr_url), claimed_by_wallet=$8, proof_receipt=$10, verified_at=NULL, verified_by_wallet=NULL, verified_by_principal=NULL, verification_evidence=NULL, approved_by_principal=NULL WHERE id=$5 AND status=$6 AND claimed_by_agent_id=$7 AND (claimed_by_wallet IS NULL OR claimed_by_wallet=$8) RETURNING {BOUNTY_SELECT}"))
+        .bind(BountyStatus::Submitted.as_str()).bind(now).bind(&req.result).bind(&req.quality_evidence)
+        .bind(id).bind(BountyStatus::Claimed.as_str()).bind(req.agent_id).bind(&req.wallet_address)
+        .bind(&pr_url).bind(&req.proof_receipt).fetch_optional(&state.db).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::CONFLICT)?;
+    let bounty = bounty_from_row(row).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     info!("Work submitted for bounty {} by agent {}", id, req.agent_id);
 
@@ -1206,9 +1149,11 @@ async fn submit_work(
 /// The bounty lifecycle is: submitted → verified → approved → settled.
 async fn verify_submission(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
     Json(req): Json<VerifySubmissionRequest>,
 ) -> Result<Json<BountyResponse>, ApiError> {
+    principal.require_reviewer(&req.verifier_wallet)?;
     if !crate::validate_wallet_address(&req.verifier_wallet) {
         warn!("Invalid verifier wallet: {}", req.verifier_wallet);
         return Err(ApiError::bad_request(
@@ -1235,12 +1180,30 @@ async fn verify_submission(
         return Err(ApiError::bad_request("Verification evidence is required. Provide proof that the work is live (e.g., git SHA, CI pass, test results)."));
     }
 
+    let current = sqlx::query("SELECT claimed_by_agent_id, claimed_by_wallet, poster_wallet, updated_at FROM relay_bounties WHERE id=$1 AND status='submitted'")
+        .bind(id).fetch_optional(&state.db).await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .ok_or(StatusCode::CONFLICT)?;
+    let claim_wallet: Option<String> = current.get("claimed_by_wallet");
+    let recipient = crate::identity::verified_claim_wallet(
+        &state.db,
+        current.get("claimed_by_agent_id"),
+        claim_wallet.as_deref(),
+    )
+    .await?;
+    if recipient == req.verifier_wallet
+        || current.get::<Option<String>, _>("poster_wallet").as_deref()
+            == Some(&req.verifier_wallet)
+    {
+        return Err(StatusCode::FORBIDDEN.into());
+    }
+    let observed_version: DateTime<Utc> = current.get("updated_at");
+
     let now = Utc::now();
 
     let row = sqlx::query(&format!(
         "UPDATE relay_bounties \
-         SET verified_at = $1, verified_by_wallet = $2, verification_evidence = $3, updated_at = $4 \
-         WHERE id = $5 AND status = $6 AND verified_at IS NULL \
+         SET verified_at = $1, verified_by_wallet = $2, verification_evidence = $3, updated_at = $4, verified_by_principal = $7 \
+         WHERE id = $5 AND status = $6 AND verified_by_principal IS NULL AND updated_at = $8 AND poster_wallet IS DISTINCT FROM $2 AND claimed_by_wallet IS DISTINCT FROM $2 \
          RETURNING {BOUNTY_SELECT}"
     ))
     .bind(now)
@@ -1249,6 +1212,8 @@ async fn verify_submission(
     .bind(now)
     .bind(id)
     .bind(BountyStatus::Submitted.as_str())
+    .bind(principal.audit_id())
+    .bind(observed_version)
     .fetch_optional(&state.db)
     .await
     .map_err(|e| {
@@ -1279,9 +1244,11 @@ async fn verify_submission(
 /// before on-chain settlement occurs.
 async fn approve_submission(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
     Json(req): Json<ApproveSubmissionRequest>,
 ) -> Result<Json<BountyResponse>, ApiError> {
+    principal.require_reviewer(&req.reviewer_wallet)?;
     // Validate reviewer wallet format
     if !crate::validate_wallet_address(&req.reviewer_wallet) {
         warn!(
@@ -1308,7 +1275,7 @@ async fn approve_submission(
     // category, and the proof_receipt (META-007 phase 5 strict gate).
     let current_bounty = sqlx::query(
         r#"
-        SELECT reward_tokens, poster_wallet, claimed_by_wallet, verified_at,
+        SELECT reward_tokens, poster_wallet, claimed_by_wallet, claimed_by_agent_id, verified_at, verified_by_principal, updated_at,
                category, proof_receipt
         FROM relay_bounties
         WHERE id = $1 AND status = $2
@@ -1331,7 +1298,8 @@ async fn approve_submission(
 
     // --- Verification gate: deliverable must be verified before approval ---
     let verified_at: Option<DateTime<Utc>> = current_bounty.get("verified_at");
-    if verified_at.is_none() {
+    let verified_principal: Option<String> = current_bounty.get("verified_by_principal");
+    if verified_at.is_none() || verified_principal.is_none() {
         warn!(
             "Approval blocked: bounty {} has not been verified yet. \
              Call POST /{}/verify first with evidence that the deliverable is pushed and tested.",
@@ -1402,19 +1370,20 @@ async fn approve_submission(
         }
     }
 
-    // 2. Claimer/submitter cannot approve their own submission
-    let claimed_by_wallet: Option<String> = current_bounty.get("claimed_by_wallet");
-    if let Some(ref claimer) = claimed_by_wallet {
-        if claimer == &req.reviewer_wallet {
-            warn!(
-                "Self-approval blocked: claimer {} tried to approve bounty {}",
-                req.reviewer_wallet, id
-            );
-            return Err(ApiError::forbidden(
-                "The bounty claimer cannot approve their own submission. A different reviewer with trust level >= 5 must approve it.",
-            ));
-        }
+    // Resolve the actual worker even for legacy rows without claimed_by_wallet.
+    let claimed_wallet: Option<String> = current_bounty.get("claimed_by_wallet");
+    let recipient = crate::identity::verified_claim_wallet(
+        &state.db,
+        current_bounty.get("claimed_by_agent_id"),
+        claimed_wallet.as_deref(),
+    )
+    .await?;
+    if recipient == req.reviewer_wallet {
+        return Err(ApiError::forbidden(
+            "The worker cannot approve their own submission.",
+        ));
     }
+    let observed_version: DateTime<Utc> = current_bounty.get("updated_at");
 
     // 3. Reviewer must be trust >= 5 and council member
     require_trust(
@@ -1427,26 +1396,21 @@ async fn approve_submission(
     )
     .await?;
 
-    // Calculate protocol fee
+    // System rewards are contribution points, not commercial volume. Treasury
+    // settlement charges no commercial protocol fee and creates no fee ledger.
     let reward_tokens: i64 = current_bounty.get("reward_tokens");
     let reward_tokens = reward_tokens as u64;
-    let fee = calculate_fee(reward_tokens);
-
-    info!(
-        "Approving bounty {}: reward={}, protocol_fee={}, holder_share={}, burn_share={}, labs_share={}",
-        id, reward_tokens, fee.total_fee, fee.holder_share, fee.burn_share, fee.labs_share
-    );
 
     // Update the bounty status (also store reviewer_wallet for settlement
     // retry) + persist any META-007 strict-gate override.
     let row = sqlx::query(&format!(
         "UPDATE relay_bounties SET \
              status = $1, approved_at = $2, quality_score = $3, updated_at = $4, \
-             reviewer_wallet = $7, \
+             reviewer_wallet = $7, approved_by_principal = $9, \
              gate_override_reason = $8, \
              gate_override_by    = CASE WHEN $8 IS NOT NULL THEN $7 ELSE NULL END, \
              gate_override_at    = CASE WHEN $8 IS NOT NULL THEN $2 ELSE NULL END \
-             WHERE id = $5 AND status = $6 RETURNING {BOUNTY_SELECT}"
+             WHERE id = $5 AND status = $6 AND updated_at = $10 AND verified_by_principal IS NOT NULL AND verified_at IS NOT NULL RETURNING {BOUNTY_SELECT}"
     ))
     .bind(BountyStatus::Approved.as_str())
     .bind(now)
@@ -1456,6 +1420,8 @@ async fn approve_submission(
     .bind(BountyStatus::Submitted.as_str())
     .bind(&req.reviewer_wallet)
     .bind(gate_override_reason.as_deref())
+    .bind(principal.audit_id())
+    .bind(observed_version)
     .fetch_optional(&state.db)
     .await
     .map_err(|e| {
@@ -1465,46 +1431,17 @@ async fn approve_submission(
     .ok_or(StatusCode::CONFLICT)?;
     let bounty = bounty_from_row(row).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Record protocol fee in the ledger
-    let fee_id = Uuid::new_v4();
-    if let Err(e) = sqlx::query(
-        r#"
-        INSERT INTO protocol_fee_ledger (id, bounty_id, total_fee, holder_share, burn_share, labs_share)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        "#,
-    )
-    .bind(fee_id)
-    .bind(id)
-    .bind(fee.total_fee as i64)
-    .bind(fee.holder_share as i64)
-    .bind(fee.burn_share as i64)
-    .bind(fee.labs_share as i64)
-    .execute(&state.db)
-    .await
-    {
-        warn!("Failed to record protocol fee: {}", e);
-    }
-
     // Trigger Solana settlement if configured
     let mut settlement_tx: Option<String> = None;
     if let Some(ref solana) = state.solana {
         if solana.is_settlement_ready() {
-            // Prefer wallet stored directly on the bounty claim; fall back to relay_agents lookup
-            let agent_wallet = if let Some(ref w) = bounty.claimed_by_wallet {
-                Some(w.clone())
-            } else if let Some(agent_id) = bounty.claimed_by_agent_id {
-                sqlx::query_scalar::<_, Option<String>>(
-                    "SELECT wallet_address FROM relay_agents WHERE id = $1",
-                )
-                .bind(agent_id)
-                .fetch_optional(&state.db)
-                .await
-                .ok()
-                .flatten()
-                .flatten()
-            } else {
-                None
-            };
+            let agent_wallet = crate::identity::verified_claim_wallet(
+                &state.db,
+                bounty.claimed_by_agent_id,
+                bounty.claimed_by_wallet.as_deref(),
+            )
+            .await
+            .ok();
 
             if let Some(wallet) = agent_wallet {
                 // Use wallet pubkey bytes as agent_id (portable across relays)
@@ -1571,21 +1508,26 @@ async fn approve_submission(
                                 }
                                 Ok(None) => {
                                     // Pool not created yet today (first submission)
-                                    let mr = fallback_max_reward(base_points as u64);
+                                    let mr = compute_dynamic_max_reward(
+                                        base_points as u64,
+                                        &new_daily_pool(day_index),
+                                        start_time,
+                                        now,
+                                    );
                                     info!(bounty_id = %id, max_reward = mr,
-                                          "Using fallback max_reward (pool not yet created)");
+                                          "RPC verified no pool exists yet; using scheduled first-payout cap");
                                     mr
                                 }
                                 Err(e) => {
                                     warn!(bounty_id = %id, error = %e,
-                                          "Failed to read daily pool — using fallback max_reward");
+                                          "Failed to read daily pool — settlement blocked until verified pool state is available");
                                     fallback_max_reward(base_points as u64)
                                 }
                             }
                         }
                         Err(e) => {
                             warn!(bounty_id = %id, error = %e,
-                                  "Failed to read config timing — using fallback max_reward");
+                                  "Failed to read config timing — settlement blocked until verified pool state is available");
                             fallback_max_reward(base_points as u64)
                         }
                     }
@@ -1625,15 +1567,6 @@ async fn approve_submission(
                                 tx = %result.tx_signature,
                                 "On-chain settlement successful"
                             );
-
-                            // Update fee ledger with settlement tx
-                            let _ = sqlx::query(
-                                "UPDATE protocol_fee_ledger SET settled_on_chain = true, settlement_tx = $1 WHERE id = $2",
-                            )
-                            .bind(&result.tx_signature)
-                            .bind(fee_id)
-                            .execute(&state.db)
-                            .await;
 
                             // Update bounty with settlement info. Also flag
                             // intake_submitter_payout_status='pending' when a
@@ -1692,7 +1625,7 @@ async fn approve_submission(
         } else {
             info!(
                 bounty_id = %id,
-                "Solana settlement not fully configured — fee recorded in ledger only"
+                "Solana settlement not fully configured — approval recorded without a token transfer"
             );
         }
     }
@@ -1700,7 +1633,6 @@ async fn approve_submission(
     info!(
         bounty_id = %id,
         reward = reward_tokens,
-        fee = fee.total_fee,
         settlement = ?settlement_tx,
         "Bounty approved"
     );
@@ -1711,9 +1643,11 @@ async fn approve_submission(
 /// Reject a bounty submission.
 async fn reject_submission(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
     Json(req): Json<RejectSubmissionRequest>,
 ) -> Result<Json<BountyResponse>, ApiError> {
+    principal.require_reviewer(&req.reviewer_wallet)?;
     if req.reason.len() > MAX_REJECTION_REASON_LEN {
         warn!("Rejection reason too long: {} chars", req.reason.len());
         return Err(ApiError::bad_request(format!(
@@ -1821,9 +1755,11 @@ async fn reject_submission(
 /// Max 3 revisions before hard rejection is required.
 async fn request_revision(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
     Json(req): Json<RequestRevisionRequest>,
 ) -> Result<Json<BountyResponse>, ApiError> {
+    principal.require_reviewer(&req.reviewer_wallet)?;
     if !crate::validate_wallet_address(&req.reviewer_wallet) {
         warn!("Invalid reviewer wallet in revision request");
         return Err(ApiError::bad_request(
@@ -1935,6 +1871,8 @@ async fn request_revision(
          submitted_at = NULL, \
          verified_at = NULL, \
          verified_by_wallet = NULL, \
+         verified_by_principal = NULL, \
+         approved_by_principal = NULL, \
          verification_evidence = NULL, \
          failure_capsule = $6, \
          proof_receipt = NULL, \
@@ -1973,9 +1911,11 @@ async fn request_revision(
 /// a reputation hit: -30 quality score. Repeated pushbacks degrade agent trust level.
 async fn pushback(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
     Json(req): Json<PushbackRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    principal.require_reviewer(&req.reviewer_wallet)?;
     if !crate::validate_wallet_address(&req.reviewer_wallet) {
         warn!("Invalid reviewer wallet in pushback");
         return Err(ApiError::bad_request(
@@ -2046,8 +1986,10 @@ async fn pushback(
 /// Only bounties with status=approved and settlement_status=failed can be retried.
 async fn retry_settlement(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<BountyResponse>, StatusCode> {
+    principal.require_scope("settlement:retry")?;
     // Fetch the bounty — must be approved with failed settlement
     let current_bounty = sqlx::query("SELECT * FROM relay_bounties WHERE id = $1")
         .bind(id)
@@ -2093,44 +2035,13 @@ async fn retry_settlement(
     let claimed_by_wallet: Option<String> = current_bounty.get("claimed_by_wallet");
     let claimed_by_agent_id: Option<Uuid> = current_bounty.get("claimed_by_agent_id");
 
-    let agent_wallet = if let Some(ref w) = claimed_by_wallet {
-        Some(w.clone())
-    } else if let Some(agent_id) = claimed_by_agent_id {
-        sqlx::query_scalar::<_, Option<String>>(
-            "SELECT wallet_address FROM relay_agents WHERE id = $1",
-        )
-        .bind(agent_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-    } else {
-        None
-    };
-
-    let wallet = agent_wallet.ok_or_else(|| {
-        warn!("No wallet address for bounty {} — cannot settle", id);
-        StatusCode::UNPROCESSABLE_ENTITY
-    })?;
-
-    // Get reviewer wallet from the fee ledger or use a default
-    let reviewer_wallet: String =
-        sqlx::query_scalar("SELECT reviewer_wallet FROM relay_bounties WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-
-    // If no reviewer wallet stored on bounty, look it up from agents with trust >= 3
-    let reviewer_wallet = if reviewer_wallet.is_empty() {
-        // Fall back to any trust-3+ agent wallet — the original reviewer
-        "kekPK242otEGHrNmZA7v2jLYdkg3BPYiTPMJvrDhNuj".to_string()
-    } else {
-        reviewer_wallet
-    };
+    let wallet = crate::identity::verified_claim_wallet(
+        &state.db,
+        claimed_by_agent_id,
+        claimed_by_wallet.as_deref(),
+    )
+    .await?;
+    let reviewer_wallet = crate::identity::settlement_reviewer_wallet(&state.db, id).await?;
 
     // Use wallet pubkey bytes as agent_id (portable across relays)
     let bounty_id_str = id.to_string();
@@ -2184,7 +2095,13 @@ async fn retry_settlement(
                     info!(bounty_id = %id, max_reward = mr, "Dynamic max_reward for retry");
                     mr
                 }
-                _ => fallback_max_reward(base_points as u64),
+                Ok(None) => compute_dynamic_max_reward(
+                    base_points as u64,
+                    &new_daily_pool(day_index),
+                    start_time,
+                    now,
+                ),
+                Err(_) => fallback_max_reward(base_points as u64),
             }
         }
         Err(_) => fallback_max_reward(base_points as u64),
@@ -2225,15 +2142,6 @@ async fn retry_settlement(
                              THEN 'pending' ELSE intake_submitter_payout_status \
                          END \
                      WHERE id = $2",
-                )
-                .bind(&result.tx_signature)
-                .bind(id)
-                .execute(&state.db)
-                .await;
-
-                // Update fee ledger too
-                let _ = sqlx::query(
-                    "UPDATE protocol_fee_ledger SET settled_on_chain = true, settlement_tx = $1 WHERE bounty_id = $2",
                 )
                 .bind(&result.tx_signature)
                 .bind(id)
@@ -2281,9 +2189,12 @@ async fn retry_settlement(
 /// bounty's PR, which is a bug worth surfacing.
 async fn record_merge(
     State(state): State<RelayState>,
+    Extension(principal): Extension<Principal>,
     Path(id): Path<Uuid>,
-    Json(req): Json<RecordMergeRequest>,
+    Json(mut req): Json<RecordMergeRequest>,
 ) -> Result<Json<BountyResponse>, ApiError> {
+    principal.require_scope("bounties:merge")?;
+    req.merged_by = principal.audit_id();
     let sha = req.merge_commit_sha.trim();
     if sha.len() != 40 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(ApiError::bad_request(
